@@ -56,7 +56,7 @@ struct ShellV4Tests {
         let window = try #require(main.window)
         #expect(window.title == "Launch plan")
         #expect(window.subtitle == "Field Notes")
-        #expect(window.toolbar?.items.map(\.itemIdentifier).contains(WindowToolbar.preview) == true)
+        #expect(window.toolbar?.items.map(\.itemIdentifier).contains(WindowToolbar.tabs) == true)
         #expect(main.tabName == "Launch plan")
         #expect(main.statusBar.stateText == "Saved")
         #expect(main.statusBar.wordsText.hasSuffix("words"))
@@ -110,7 +110,7 @@ struct ShellV4Tests {
         main.display(try document(root.appending(path: "a.md")))
         main.showWindow(nil)
         defer { close([main]) }
-        let split = try #require(main.window?.contentViewController as? StationSplitController)
+        let split = try #require(main.window?.contentViewController?.children.first as? StationSplitController)
         let textView = try #require(main.textView)
         let item = NSMenuItem(title: "Show Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "")
         #expect(NSApp.target(forAction: item.action!, to: nil, from: item) == nil || split.responds(to: item.action))

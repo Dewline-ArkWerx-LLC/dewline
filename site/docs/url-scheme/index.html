@@ -98,14 +98,13 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>URL scheme</h1>
-      <p class="lead"><code>dewline://</code> links open a note at a line, export a note, or join a shared session. Any app that opens URLs can use them, and so can <code>open</code> in Terminal.</p>
+      <p class="lead"><code>dewline://</code> links open a note at a line, join a shared session, or run the Welcome demo. Any app that opens URLs can use them, and so can <code>open</code> in Terminal.</p>
 
       <div class="table" tabindex="0" role="region" aria-label="The dewline:// links">
         <table>
           <thead><tr><th scope="col">Link</th><th scope="col">What it does</th></tr></thead>
           <tbody>
             <tr><td><a href="#open"><code>dewline://open</code></a></td><td>Opens a file, with the caret on a line when given.</td></tr>
-            <tr><td><a href="#export"><code>dewline://export</code></a></td><td>Writes a file as HTML or PDF with the app's export.</td></tr>
             <tr><td><a href="#join"><code>dewline://join</code></a></td><td>Asks to join someone's live editing session.</td></tr>
             <tr><td><a href="#demo"><code>dewline://demo</code></a></td><td>Runs the change demo in Welcome.md.</td></tr>
           </tbody>
@@ -118,25 +117,13 @@
       </div>
       <dl>
         <dt><code>path</code></dt>
-        <dd>The file. Required. Follows the <a href="#paths">path rules</a>.</dd>
+        <dd>The Markdown file. Required. Follows the <a href="#paths">path rules</a>.</dd>
         <dt><code>line</code></dt>
         <dd>Puts the caret on this line, counting from 1. Optional. A value that isn't a positive whole number is ignored.</dd>
       </dl>
       <p>The link has no column. For a line and a column, use <a href="/docs/cli/#open"><code>dewline open FILE:LINE:COLUMN</code></a>.</p>
 
-      <h2 id="export"><code>dewline://export</code></h2>
-      <div class="code" data-lang="URL">
-<pre tabindex="0"><code>dewline://export?path=/Users/you/Notes/reading.md&amp;to=pdf&amp;out=/Users/you/Desktop/reading.pdf</code></pre>
-      </div>
-      <dl>
-        <dt><code>path</code></dt>
-        <dd>The Markdown file to export. Required.</dd>
-        <dt><code>out</code></dt>
-        <dd>Where the export goes. Required. Its extension must match the format: <code>.pdf</code> or <code>.html</code>. The folder must exist.</dd>
-        <dt><code>to</code></dt>
-        <dd><code>pdf</code> or <code>html</code>, in any case. Optional; the default is <code>pdf</code>.</dd>
-      </dl>
-      <p>The app writes the export in the background with its own layout. Since <code>out</code> must carry the format's extension, a link can't overwrite a file of another kind. A link can't write DOCX; use <a href="/docs/cli/#export"><code>dewline export --to docx</code></a>.</p>
+      <p>No link exports or writes a note. <a href="/docs/cli/#export"><code>dewline export</code></a> reaches the app through its control socket.</p>
 
       <h2 id="join"><code>dewline://join</code></h2>
       <div class="code" data-lang="URL">
@@ -148,17 +135,17 @@
       <p>Runs the change demo on Welcome.md: a demo writer edits the paragraph that holds the link, and the change is marked. Welcome.md uses it for “Show me a change”. Help &gt; Replay the Demo does the same.</p>
 
       <h2 id="paths">Path rules</h2>
-      <p><code>open</code> and <code>export</code> check every path before they touch it:</p>
+      <p><code>open</code> checks its path before it touches it:</p>
       <ul>
         <li>Percent-encode the path in the query: a space is <code>%20</code>. A leading <code>~</code> is your home folder.</li>
         <li>The path must be absolute once <code>~</code> is expanded.</li>
         <li>Dewline resolves every symlink, and the result must lie inside your home folder.</li>
         <li>Nothing inside <code>~/Library</code>, and nothing inside a <code>.ssh</code> folder. These checks ignore case.</li>
-        <li>A file that doesn't exist yet, such as an export's <code>out</code>, needs a folder that does.</li>
+        <li>The file must end in <code>.md</code>, <code>.markdown</code>, <code>.mdown</code> or <code>.mkd</code>, after links are resolved.</li>
       </ul>
 
       <h2 id="errors">Errors</h2>
-      <p>A refused link opens nothing and writes nothing. The app shows the reason in an alert:</p>
+      <p>A refused link opens nothing. The app shows the reason in an alert:</p>
       <div class="table" tabindex="0" role="region" aria-label="Errors a link can show">
         <table>
           <thead><tr><th scope="col">Alert</th><th scope="col">Cause</th></tr></thead>
@@ -169,9 +156,8 @@
             <tr><td><code>&lt;path&gt;: it is inside ~/Library</code></td><td>The path is inside <code>~/Library</code>.</td></tr>
             <tr><td><code>&lt;path&gt;: it is inside .ssh</code></td><td>The path is inside a <code>.ssh</code> folder.</td></tr>
             <tr><td><code>&lt;path&gt;: No such file or directory (os error 2)</code></td><td>Neither the file nor its folder exists.</td></tr>
-            <tr><td><code>Dewline exports HTML or PDF, not docx.</code></td><td><code>to</code> names another format.</td></tr>
-            <tr><td><code>The export has to be named .pdf.</code></td><td><code>out</code> has the wrong extension for <code>to</code>.</td></tr>
-            <tr><td><code>Dewline can't open this kind of link.</code></td><td>Any other action after <code>dewline://</code>.</td></tr>
+            <tr><td><code>&lt;path&gt;: a link opens only Markdown notes</code></td><td>The file isn't Markdown.</td></tr>
+            <tr><td><code>Dewline can't open this kind of link.</code></td><td>Any other action after <code>dewline://</code>, <code>export</code> included.</td></tr>
           </tbody>
         </table>
       </div>

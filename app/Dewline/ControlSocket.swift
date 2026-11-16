@@ -5,7 +5,9 @@ import Synchronization
 /// carries one request, a JSON line such as `{"v":1,"op":"open","path":"/Users/me/plan.md","line":12,"col":4,
 /// "wait":true}`. The answers are JSON lines too: `{"reply":"opened","v":1}`, then `{"reply":"closed","v":1}` once
 /// the document closes or the app quits if the request waits, or `{"error":"not_a_file","reply":"error","v":1}`.
-/// Only absolute paths of existing regular files get through, and nothing that arrives here writes to a file.
+/// Only absolute paths of existing regular files get through. `dewline export --to pdf` sends
+/// `{"v":1,"op":"export","path":"/Users/me/plan.md","out":"/Users/me/plan.pdf"}`, the one request that writes a file:
+/// a Markdown file's PDF to the `.pdf` the command was given, answered `{"reply":"exported","v":1}` once written.
 /// `dewline notify` sends a hook's claim, such as `{"v":1,"op":"notify","event":"PreToolUse","vendor":"claude",
 /// "session":"s1","tool_use_id":"toolu_1","tool":"Edit","path":"/Users/me/plan.md","hash":"…","declared":"…"}`;
 /// a valid one gets no answer, only the close.
@@ -15,6 +17,13 @@ final class ControlSocket: @unchecked Sendable {
         let line: Int?
         let column: Int?
         let wait: Bool
+    }
+
+    struct PDFExport: Sendable, Equatable {
+        /// An existing regular file with a Markdown extension.
+        let path: String
+        /// An absolute path ending in `.pdf`.
+        let out: String
     }
 
     /// Why a request was refused, as its `error` field names it.
@@ -27,10 +36,13 @@ final class ControlSocket: @unchecked Sendable {
         case notFound = "not_found"
         case notAFile = "not_a_file"
         case cannotOpen = "cannot_open"
+        case notMarkdown = "not_markdown"
+        case exportFailed = "export_failed"
     }
 
     enum Request: Sendable, Equatable {
         case open(Open)
+        case export(PDFExport)
         case notify(Claim)
     }
 
@@ -78,6 +90,7 @@ final class ControlSocket: @unchecked Sendable {
     enum Reply: Sendable, Equatable {
         case opened
         case closed
+        case exported
         case refused(Failure, message: String? = nil)
     }
 
@@ -107,21 +120,24 @@ final class ControlSocket: @unchecked Sendable {
     private let uid: uid_t
     private let handler: @MainActor @Sendable (Open, Connection) -> Void
     private let notify: @MainActor @Sendable (Claim) -> Void
+    private let export: @MainActor @Sendable (PDFExport, Connection) -> Void
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.control")
     // Touched only on `queue`.
     private var listener: DispatchSourceRead?
     private var connections: [ObjectIdentifier: Connection] = [:]
     private var socketFile: (device: dev_t, inode: ino_t)?
 
-    /// Only `uid` may connect. The handler gets each valid open request on the main actor and must reply to it;
-    /// `notify` gets each valid claim on the main actor.
+    /// Only `uid` may connect. The handler gets each valid open request on the main actor and must reply to it, as
+    /// `export` must to each valid export request; `notify` gets each valid claim on the main actor.
     init(
         path: String, uid: uid_t = geteuid(), notify: @escaping @MainActor @Sendable (Claim) -> Void = { _ in },
+        export: @escaping @MainActor @Sendable (PDFExport, Connection) -> Void = { $1.reply(.refused(.unknownOp)) },
         handler: @escaping @MainActor @Sendable (Open, Connection) -> Void
     ) {
         self.path = path
         self.uid = uid
         self.notify = notify
+        self.export = export
         self.handler = handler
     }
 
@@ -167,7 +183,7 @@ final class ControlSocket: @unchecked Sendable {
             listener?.cancel()
             listener = nil
             for connection in Array(connections.values) {
-                if connection.request?.wait == true { send(.closed, to: connection) }
+                if connection.waits { send(.closed, to: connection) }
                 drop(connection)
             }
             var info = stat()
@@ -179,7 +195,7 @@ final class ControlSocket: @unchecked Sendable {
     }
 
     /// The request in `line`, without its newline, when it is well formed: an open request naming an absolute path,
-    /// or a claim claims.rs would take.
+    /// an export from one absolute path to another ending in `.pdf`, or a claim claims.rs would take.
     static func parse(_ line: Data) -> Result<Request, Failure> {
         struct Wire: Decodable {
             let v: Int
@@ -195,6 +211,7 @@ final class ControlSocket: @unchecked Sendable {
             let tool: String?
             let hash: String?
             let declared: String?
+            let out: String?
         }
         guard let wire = try? JSONDecoder().decode(Wire.self, from: line) else { return .failure(.malformed) }
         guard wire.v == version else { return .failure(.version) }
@@ -204,9 +221,18 @@ final class ControlSocket: @unchecked Sendable {
                 tool: wire.tool, path: wire.path, hash: wire.hash, declared: wire.declared)
             return claim.map { .success(.notify($0)) } ?? .failure(.malformed)
         }
+        func valid(_ path: String?) -> Bool {
+            path.map { !$0.utf8.contains(0) && $0.utf8.count < PATH_MAX } ?? false
+        }
+        if wire.op == "export" {
+            guard let path = wire.path, let out = wire.out, valid(path), valid(out),
+                (out as NSString).pathExtension.lowercased() == "pdf"
+            else { return .failure(.malformed) }
+            guard path.hasPrefix("/"), out.hasPrefix("/") else { return .failure(.notAbsolute) }
+            return .success(.export(PDFExport(path: path, out: out)))
+        }
         guard wire.op == "open" else { return .failure(.unknownOp) }
-        guard let path = wire.path, !path.utf8.contains(0), path.utf8.count < PATH_MAX,
-            wire.line ?? 1 >= 1, wire.col ?? 1 >= 1, wire.line != nil || wire.col == nil
+        guard let path = wire.path, valid(path), wire.line ?? 1 >= 1, wire.col ?? 1 >= 1, wire.line != nil || wire.col == nil
         else { return .failure(.malformed) }
         guard path.hasPrefix("/") else { return .failure(.notAbsolute) }
         return .success(.open(Open(path: path, line: wire.line, column: wire.col, wait: wire.wait ?? false)))
@@ -217,6 +243,14 @@ final class ControlSocket: @unchecked Sendable {
         var info = stat()
         guard stat(path, &info) == 0 else { return .notFound }
         return info.st_mode & S_IFMT == S_IFREG ? nil : .notAFile
+    }
+
+    /// Why `path` can't be exported, or nil when it names an existing regular file whose realpath has a Markdown
+    /// extension.
+    static func refusal(ofExport path: String) -> Failure? {
+        if let refusal = refusal(of: path) { return refusal }
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        return FolderEntry.markdownExtensions.contains(real.pathExtension.lowercased()) ? nil : .notMarkdown
     }
 
     static func address(of path: String) -> sockaddr_un? {
@@ -294,8 +328,23 @@ final class ControlSocket: @unchecked Sendable {
             drop(connection)
             let notify = notify
             Task { @MainActor in notify(claim) }
+        case .success(.export(let request)):
+            connection.request = .export(request)
+            connection.buffer = []
+            let export = export
+            DispatchQueue.global().async { [weak self] in
+                let refusal = Self.refusal(ofExport: request.path)
+                guard let self else { return }
+                self.queue.async {
+                    if let refusal {
+                        self.send(.refused(refusal), to: connection)
+                    } else if connection.isOpen {
+                        Task { @MainActor in export(request, connection) }
+                    }
+                }
+            }
         case .success(.open(let open)):
-            connection.request = open
+            connection.request = .open(open)
             connection.buffer = []
             let handler = handler
             // stat can hang on a dead network volume, and this queue has to stay free for other clients and stop().
@@ -319,7 +368,7 @@ final class ControlSocket: @unchecked Sendable {
         guard connection.writable else { return drop(connection) }
         let line = reply.line
         let written = line.withUnsafeBytes { write(connection.fd, $0.baseAddress, $0.count) }
-        if written != line.count || reply != .opened || connection.request?.wait != true {
+        if written != line.count || reply != .opened || !connection.waits {
             drop(connection)
         }
     }
@@ -343,7 +392,12 @@ final class ControlSocket: @unchecked Sendable {
         // Touched only on the socket's queue.
         fileprivate var source: DispatchSourceRead?
         fileprivate var buffer: [UInt8] = []
-        fileprivate var request: Open?
+        fileprivate var request: Request?
+
+        /// Whether the request is an open that waits for its document to close.
+        fileprivate var waits: Bool {
+            if case .open(let open)? = request { open.wait } else { false }
+        }
 
         fileprivate init(fd: Int32, socket: ControlSocket, writable: Bool) {
             self.fd = fd
@@ -420,6 +474,7 @@ extension ControlSocket.Reply {
         let wire = switch self {
         case .opened: Wire(reply: "opened")
         case .closed: Wire(reply: "closed")
+        case .exported: Wire(reply: "exported")
         case .refused(let failure, let message): Wire(reply: "error", error: failure.rawValue, message: message)
         }
         let encoder = JSONEncoder()

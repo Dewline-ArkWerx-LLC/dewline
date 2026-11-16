@@ -143,7 +143,9 @@ struct CaretTests {
             caret.window.displayIfNeeded()
             let line = try #require(mark.path).boundingBox
             let target = try #require(caret.systemCaret)
-            #expect(line.minY <= target.minY + 1 && line.maxY >= target.maxY - 1 && line.width > 600, "\(line) around \(target)")
+            // The mark spans the text column, not just the line's words; its 1 pt stroke sits half a point inside.
+            let column = try #require(caret.view.textContainer).size.width
+            #expect(line.minY <= target.minY + 1 && line.maxY >= target.maxY - 1 && line.width >= column - 1, "\(line) around \(target) in a \(column) pt column")
         }
     }
 }

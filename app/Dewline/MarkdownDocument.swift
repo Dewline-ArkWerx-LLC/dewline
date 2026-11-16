@@ -186,10 +186,11 @@ final class MarkdownDocument: NSDocument {
     func saved(token: Any) {
         // Typing after a save is a new undo entry, which makes the document edited again.
         textView?.breakUndoCoalescing()
-        updateChangeCount(withToken: token, for: .saveOperation)
+        // The date first, so the tab that hears of the save reads its time.
         if let fileURL, let date = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date {
             fileModificationDate = date
         }
+        updateChangeCount(withToken: token, for: .saveOperation)
     }
 
     override func data(ofType typeName: String) throws -> Data {

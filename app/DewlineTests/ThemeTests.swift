@@ -57,17 +57,19 @@ struct ThemeTests {
         }
     }
 
-    @Test func theDefaultsAreNeutralWithOneAccent() {
+    @Test func theDefaultsReadAtWCAGLevels() {
         for theme in [Theme.tidewater, .nightwatch] {
             for (dark, tokens) in [(false, theme.light), (true, theme.dark)] {
                 let label = "\(theme.name) \(dark ? "dark" : "light")"
-                for token in [Token.paper, .chrome, .ink, .ink2, .rule, .codeBackground, .heading, .link, .selection, .syntax, .quoteRule] {
-                    #expect(tokens[token]!.c <= 0.006, "\(label) \(token)")
+                for ground in [Token.paper, .chrome] {
+                    for text in [Token.ink, .ink2, .gitModified] {
+                        #expect(tokens[text]!.contrast(with: tokens[ground]!) >= 4.5, "\(label) \(text) on \(ground)")
+                    }
+                    for glyph in [Token.ink3, .cursor, .writerClaude, .writerCodex, .writerApp] {
+                        #expect(tokens[glyph]!.contrast(with: tokens[ground]!) >= 3, "\(label) \(glyph) on \(ground)")
+                    }
                 }
                 #expect(tokens[.accent] == (dark ? Brand.accent.dark : Brand.accent.light), "\(label)")
-                for token in [Token.signal, .glow] {
-                    #expect(tokens[token] == tokens[.accent], "\(label) \(token)")
-                }
             }
         }
     }
@@ -77,12 +79,12 @@ struct ThemeTests {
         #expect(abs(gray.l - 0.35) < 1e-9 && gray.c == 0)
     }
 
-    @MainActor @Test func everyOutsideWriterMarksInTheAccent() {
+    @MainActor @Test func namedWritersMarkInTheirOwnInk() {
         let store = ThemeStore.shared
-        for writer in Writer.allCases where writer != .you && writer != .collaborator {
-            #expect(store.writerColor(writer) == store.color(.accent), "\(writer)")
-        }
+        let inks = [Writer.claude, .codex, .git, .unknown].map { store.writerColor($0) }
+        #expect(Set(inks).count == inks.count)
         #expect(store.writerColor(.collaborator) == store.color(.ink2))
+        #expect(store.writerColor(.cursor) == store.writerColor(.unknown))
         #expect(Writer.unknown.name == "Another app")
     }
 

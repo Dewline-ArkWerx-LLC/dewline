@@ -1,15 +1,11 @@
 import AppKit
 
 /// The chrome's faces: SF Pro for every label Dewline draws (11 in the status bar, 13 in the sidebar, tabs and panels,
-/// 15 semibold for empty-state titles), and JetBrains Mono, which ships in the app's Fonts folder, for code only.
+/// 15 semibold for empty-state titles), and SF Mono for branch names, counts, badges and keycaps.
 @MainActor
 enum Chrome {
-    static let monoFamily = "JetBrains Mono"
-
     /// Section labels' tracking.
     static let sectionKern: CGFloat = 0
-
-    private static var cache: [String: NSFont] = [:]
 
     /// The system face at `size`, at the nearest of its weights to `weight` on the 100 to 900 scale. `opticalSize` is
     /// kept for callers that name one; SF Pro picks its own.
@@ -17,15 +13,9 @@ enum Chrome {
         .systemFont(ofSize: size, weight: weight >= 590 ? .semibold : weight >= 500 ? .medium : .regular)
     }
 
-    /// JetBrains Mono at `size`, with the system's monospaced face when it is missing.
+    /// SF Mono at `size`.
     static func mono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-        let key = "m \(size) \(weight.rawValue)"
-        if let font = cache[key] { return font }
-        let descriptor = NSFontDescriptor(fontAttributes: [.family: monoFamily, .traits: [NSFontDescriptor.TraitKey.weight: weight.rawValue]])
-        let font = NSFont(descriptor: descriptor, size: size).flatMap { $0.familyName == monoFamily ? $0 : nil }
-            ?? .monospacedSystemFont(ofSize: size, weight: weight)
-        cache[key] = font
-        return font
+        .monospacedSystemFont(ofSize: size, weight: weight)
     }
 
     /// Sidebar rows, tabs, panels and Settings rows: 13 regular.
@@ -58,10 +48,16 @@ enum Chrome {
         ThemeStore.shared.color(token)
     }
 
-    /// Ink at 8% in light and 10% in dark: the selected row's fill.
+    /// The accent at 15%: the selected row's fill.
     static var wash: NSColor {
+        let accent = color(.accent)
+        return NSColor(name: nil) { accent.resolved(for: $0).withAlphaComponent(0.15) }
+    }
+
+    /// Ink at 8% in light and 7% in dark: a hovered tab, row or button.
+    static var hover: NSColor {
         let ink = color(.ink)
-        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isDark ? 0.10 : 0.08) }
+        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isDark ? 0.07 : 0.08) }
     }
 
     /// Nothing glows any more; the horizon reads this until it goes.
@@ -333,15 +329,9 @@ final class ChromeButton: NSControl {
     }
 }
 
-/// The mark: the icon's monospace d in the theme's ink and its text cursor in the site's dawn, fitted to the view and
+/// The mark: the icon's monospace d in the theme's ink and its text cursor in the cursor orange, fitted to the view and
 /// resting on its bottom edge. Drawn on the icon's 1024 grid, where the mark spans x 265 to 760 and y 257 to 767.
 final class DewMark: NSView {
-    /// The brand's accent, the cursor's color in every theme.
-    private static let dawn = NSColor(name: nil) {
-        $0.isDark ? NSColor(srgbRed: 0xFF / 255, green: 0x8A / 255, blue: 0x5C / 255, alpha: 1)
-            : NSColor(srgbRed: 0xC9 / 255, green: 0x48 / 255, blue: 0x2A / 255, alpha: 1)
-    }
-
     init(size: NSSize = NSSize(width: 12, height: 12)) {
         super.init(frame: NSRect(origin: .zero, size: size))
         setAccessibilityElement(false)
@@ -391,7 +381,7 @@ final class DewMark: NSView {
         d.close()
         d.windingRule = .evenOdd
         d.fill()
-        Self.dawn.resolved(for: effectiveAppearance).setFill()
+        Chrome.color(.cursor).resolved(for: effectiveAppearance).setFill()
         NSBezierPath(roundedRect: NSRect(x: 655, y: 257, width: 105, height: 510), xRadius: 8, yRadius: 8).fill()
     }
 

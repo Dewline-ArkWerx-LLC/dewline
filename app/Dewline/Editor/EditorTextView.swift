@@ -661,7 +661,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
-        super.readablePasteboardTypes + [.png, .tiff, .fileURL].filter { !super.readablePasteboardTypes.contains($0) }
+        super.readablePasteboardTypes + (Self.kept.map { NSPasteboard.PasteboardType($0.identifier) } + [.tiff, .fileURL]).filter { !super.readablePasteboardTypes.contains($0) }
     }
 
     override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {

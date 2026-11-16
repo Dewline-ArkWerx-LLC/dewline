@@ -29,6 +29,10 @@ use crate::merge::{self, Conflict, Edit};
 use crate::store::{Snapshot, Store};
 use crate::text;
 
+mod baseline;
+
+use baseline::{ClosedWrite, Earlier, Waiting, restore};
+
 const YOU: &str = "You";
 const UNKNOWN: &str = "Unknown app";
 /// Larger files don't open, and a file that grows past it reads as unreadable.
@@ -130,9 +134,11 @@ impl Origin {
 
 pub struct Opened {
     pub doc: DocId,
-    /// An agent wrote the file while it was closed: `contents` is the text
-    /// it replaced, and the next landing brings the write in, marked.
+    /// The file changed since Dewline last saw it: `contents` is the text
+    /// it saw, and the next landing brings the change in, marked.
     pub closed: bool,
+    /// The changes left undecided when the file last closed, in `contents`.
+    pub marks: Vec<Mark>,
     /// The file as read. `Other` is not UTF-8 and opens read-only.
     pub contents: text::Opened,
     /// The realpath the engine keys the file by.
@@ -145,15 +151,26 @@ pub struct Opened {
     pub gitdir: Option<PathBuf>,
 }
 
-/// An agent's write to a file no document had open (B5): who, and the
-/// bytes it replaced, which the store keeps. Opening the file lands the
-/// write against those bytes as marked changes.
+/// A file no document has open that differs from the version Dewline last
+/// saw (B5): who wrote it, when that was noticed, and how many places
+/// changed. Opening the file lands the difference as marked changes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClosedChange {
     pub path: PathBuf,
     pub origin: Origin,
-    pub before: Hash,
+    pub count: u32,
     pub time: SystemTime,
+}
+
+/// A change left undecided when its file closed, by its UTF-16 range in the
+/// text the file opens with, and the text it replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub change: ChangeId,
+    pub origin: Origin,
+    pub start: u32,
+    pub end: u32,
+    pub removed: String,
 }
 
 /// A file's new version merged into the buffer at `version`. Offsets are
@@ -361,7 +378,8 @@ struct State {
     docs: HashMap<DocId, Doc>,
     serial: HashMap<DocId, Arc<Mutex<()>>>,
     claims: Claims,
-    closed: HashMap<PathBuf, ClosedChange>,
+    closed: HashMap<PathBuf, ClosedWrite>,
+    waiting: HashMap<PathBuf, Waiting>,
     next: u64,
 }
 
@@ -412,15 +430,23 @@ impl Engine {
         self.state().serial.get(&doc).cloned()
     }
 
+    /// Opens the file. When it differs from the version Dewline last saw,
+    /// or from the bytes a hooked write replaced, the document opens on that
+    /// version and its next landing brings the difference in, marked.
     pub fn open(&self, path: &Path) -> io::Result<Opened> {
         let real = fs::canonicalize(path)?;
         let bytes = read(&real)?;
         let (now, wall) = (self.clock)();
         let disk_hash = blake3::hash(&bytes);
         let disk: Arc<[u8]> = bytes.as_slice().into();
-        let closed = self.closed_base(&real, disk_hash, &bytes, wall)?;
-        let (base_hash, base, bytes) = match &closed {
-            Some((change, before)) => (change.before, before.as_slice().into(), before.clone()),
+        let private = private(path) || private(&real);
+        let Earlier {
+            bytes: earlier,
+            writer: closed,
+            seen,
+        } = self.earlier(path, &real, &bytes, wall)?;
+        let (base_hash, base, bytes) = match earlier {
+            Some(before) => (blake3::hash(&before), before.as_slice().into(), before),
             None => (disk_hash, disk.clone(), bytes),
         };
         let contents = text::Opened::new(bytes);
@@ -430,9 +456,16 @@ impl Engine {
         };
         let (gitdir, head) = self.find_repo(&real, now);
         let agent_file = self.agents.matches(path) || self.agents.matches(&real);
+        let mut state = self.state();
+        let (changes, marks) = match (&seen, &contents) {
+            (Some(seen), text::Opened::Utf8 { text, .. }) if seen.hash == base_hash => {
+                restore(&mut state, seen, text, now)
+            }
+            _ => (Vec::new(), Vec::new()),
+        };
         let doc = Doc {
             opened: path.to_owned(),
-            private: private(path) || private(&real),
+            private,
             path: real.clone(),
             gitdir: gitdir.clone(),
             head,
@@ -441,30 +474,28 @@ impl Engine {
             base,
             base_hash,
             base_origin: Origin::External,
-            base_kept: closed.is_some(),
+            base_kept: base_hash != disk_hash,
             disk: Disk::Seen {
                 hash: disk_hash,
                 bytes: disk,
                 seen: now,
             },
             landing: None,
-            changes: Vec::new(),
+            changes,
             floor: None,
             wait_from: None,
             drafted: false,
             collaborated: None,
-            closed: closed
-                .as_ref()
-                .map(|(change, _)| (change.before, change.origin.clone())),
+            closed,
             generation: 0,
         };
-        let mut state = self.state();
         let id = DocId(state.next());
         state.docs.insert(id, doc);
         state.serial.insert(id, Arc::default());
         Ok(Opened {
             doc: id,
-            closed: closed.is_some(),
+            closed: base_hash != disk_hash,
+            marks,
             contents,
             path: real,
             agent_file,
@@ -530,6 +561,7 @@ impl Engine {
             }
             self.store.put(&path, &bytes, UNKNOWN, wall)?;
         }
+        self.see(&path, private, &bytes, wall);
         let mut state = self.state();
         let d = state.docs.get_mut(&doc).ok_or(EngineError::Closed)?;
         if d.base_hash == base_hash && kept.is_some() && hash != base_hash {
@@ -936,6 +968,7 @@ impl Engine {
         if let Err(refused) = written {
             return Err(self.put_draft(doc, &path, private, &bytes, wall, refused));
         }
+        self.see(&path, private, &bytes, wall);
         let hash = blake3::hash(&bytes);
         let drafted = {
             let mut state = self.state();
@@ -1178,72 +1211,6 @@ impl Engine {
             }
         }
         Ok(updates)
-    }
-
-    /// Notes that `origin` is about to write the file at `path`, which holds
-    /// `before`. Unless a document has the file open, `before` goes into the
-    /// store and the file is in `closed_changes` until it opens; a second
-    /// write before then keeps the first one's `before`.
-    pub fn closed_write(&self, path: &Path, origin: Origin, before: &[u8]) -> io::Result<()> {
-        let real = fs::canonicalize(path)?;
-        if private(path) || private(&real) {
-            return Ok(());
-        }
-        {
-            let state = self.state();
-            if state.closed.contains_key(&real) || state.docs.values().any(|d| d.path == real) {
-                return Ok(());
-            }
-        }
-        let (_, wall) = (self.clock)();
-        self.store.put(&real, before, UNKNOWN, wall)?;
-        let change = ClosedChange {
-            path: real.clone(),
-            origin,
-            before: blake3::hash(before),
-            time: wall,
-        };
-        self.state().closed.entry(real).or_insert(change);
-        Ok(())
-    }
-
-    /// Files written while closed that still differ from what the write
-    /// replaced, oldest first.
-    pub fn closed_changes(&self) -> Vec<ClosedChange> {
-        let mut closed: Vec<ClosedChange> = self.state().closed.values().cloned().collect();
-        closed.retain(|change| {
-            read(&change.path).is_ok_and(|bytes| blake3::hash(&bytes) != change.before)
-        });
-        closed.sort_by_key(|change| change.time);
-        closed
-    }
-
-    /// Takes the closed write to `real`, if one changed it and its `before`
-    /// is in the store as UTF-8 text, and returns it with those bytes; the
-    /// disk's bytes go into the store, as `observe` would put them.
-    fn closed_base(
-        &self,
-        real: &Path,
-        disk: Hash,
-        bytes: &[u8],
-        wall: SystemTime,
-    ) -> io::Result<Option<(ClosedChange, Vec<u8>)>> {
-        let Some(change) = self.state().closed.remove(real) else {
-            return Ok(None);
-        };
-        if change.before == disk {
-            return Ok(None);
-        }
-        let Ok(before) = self.store.get(&change.before) else {
-            return Ok(None);
-        };
-        let text =
-            |bytes: &[u8]| matches!(text::Opened::new(bytes.to_vec()), text::Opened::Utf8 { .. });
-        if !text(&before) || !text(bytes) {
-            return Ok(None);
-        }
-        self.store.put(real, bytes, UNKNOWN, wall)?;
-        Ok(Some((change, before)))
     }
 
     /// Notes an event in a gitdir, and returns the documents in its
@@ -3168,15 +3135,16 @@ mod tests {
             vendor: Vendor::Claude,
             session: "s1".into(),
         };
+        let new = blake3::hash(b"# A\n\nNew a.\n");
         f.engine
-            .closed_write(&path, claude.clone(), b"# A\n\nOld a.\n")
+            .closed_write(&path, claude.clone(), b"# A\n\nOld a.\n", new)
             .unwrap();
         assert!(f.engine.closed_changes().is_empty(), "not written yet");
         f.tick(10);
         f.replace(&path, "# A\n\nNew a.\n");
         // A second write in the same turn keeps the first one's before.
         f.engine
-            .closed_write(&path, claude.clone(), b"# A\n\nNew a.\n")
+            .closed_write(&path, claude.clone(), b"# A\n\nNew a.\n", new)
             .unwrap();
         let closed = f.engine.closed_changes();
         assert_eq!(closed.len(), 1);
@@ -3217,7 +3185,9 @@ mod tests {
             vendor: Vendor::Codex,
             session: "s2".into(),
         };
-        f.engine.closed_write(&path, codex, b"# A\n").unwrap();
+        f.engine
+            .closed_write(&path, codex, b"# A\n", blake3::hash(b"# B\n"))
+            .unwrap();
         let (doc, text) = opened(&f.engine, &path);
         assert_eq!(text, "# A\n");
         assert!(!f.engine.observe(doc).unwrap());

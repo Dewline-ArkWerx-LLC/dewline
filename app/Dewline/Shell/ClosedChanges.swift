@@ -9,11 +9,12 @@ enum ClosedChanges {
     /// The engine the app's documents open through; tests pass their own.
     static var engine: ChangeEngine? = MarkdownDocument.sharedEngine
 
-    /// `writer` is about to write the file at `url`, which holds `before`: the agent panel calls this before its write
-    /// to a closed note; hooked agents' writes are kept from their PreToolUse claims.
-    static func record(path url: URL, writer: ChangeEngine.Origin, before: Data) {
+    /// `writer` is about to write the file at `url`, which holds `before`, making bytes whose BLAKE3 hex is
+    /// `declared`: the agent panel calls this before its write to a closed note; hooked agents' writes are kept from
+    /// their PreToolUse claims.
+    static func record(path url: URL, writer: ChangeEngine.Origin, before: Data, declared: String) {
         do throws(ChangeEngine.Failure) {
-            try engine?.closedWrite(url, origin: writer, before: before)
+            try engine?.closedWrite(url, origin: writer, before: before, declared: declared)
         } catch {
             Logger(subsystem: "dev.arkwerx.dewline", category: "engine")
                 .error("A closed file's write was not kept: \(String(describing: error), privacy: .public)")

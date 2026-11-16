@@ -3,7 +3,7 @@ import MdCore
 import Testing
 @testable import Dewline
 
-/// The main window as ux-v4 lays it out, built offscreen: the title, the tab row, the sidebar's folder row, the status
+/// The main window as ux-v4 lays it out, built offscreen: the title, the tab row, the sidebar's header, the status
 /// bar, the right pane's preview, Show Sidebar (B1) and restoring a place (B2).
 @MainActor @Suite(.serialized)
 struct ShellV4Tests {
@@ -91,8 +91,8 @@ struct ShellV4Tests {
         let outline = try #require(all(main.window!.contentView!).compactMap { $0 as? NSOutlineView }.first)
         for _ in 0..<200 where outline.numberOfRows < 3 { await settle(0.01) }
         let kinds = (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarNode)?.kind }
-        guard case .root(let url)? = kinds.first else { Issue.record("The first row is not the folder"); return }
-        #expect(url.lastPathComponent == "Field Notes")
+        #expect(!kinds.contains { if case .root = $0 { true } else { false } })
+        #expect(all(main.window!.contentView!).contains { ($0 as? FolderPicker)?.accessibilityLabel()?.hasPrefix("Folder Field Notes") == true })
         let names = kinds.compactMap { kind -> String? in
             if case .entry(let entry) = kind { return entry.url.lastPathComponent }
             if case .section(let title) = kind { return title }

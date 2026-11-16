@@ -1,23 +1,17 @@
-//! Each file's state under a folder, as `git status` reports it: the index
-//! against HEAD's tree, the working tree against the index, and the files no
-//! ignore file matches that the index doesn't list. Read from the
-//! repository's files, as the rest of this module reads them.
+//! Each file's state under a folder, as `git status --porcelain=v2` reports
+//! it: the index against HEAD's tree, the working tree against the index, and
+//! the files no ignore rule matches that the index doesn't list. Git reads its
+//! own config, so `core.excludesFile`, `core.autocrlf`, `core.fileMode`, filters
+//! and rename detection hold as they do in a terminal.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, Read};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
-use flate2::read::ZlibDecoder;
-use flate2::{Decompress, FlushDecompress};
-
-use super::{
-    INTENT_TO_ADD, Index, IndexEntry, MAX_INDEX, MAX_LINE_FILE, Oid, Repo, SKIP_WORKTREE, blob_id,
-    parse_index, read_file,
-};
+use super::Repo;
 
 /// A file's state against HEAD and the index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,7 +22,8 @@ pub enum Status {
     New,
     /// Gone from the working tree, or from the index.
     Deleted,
-    /// Staged with the blob of a file the index deletes from HEAD.
+    /// Staged as a rename: git found a file the index deletes from HEAD with
+    /// the same or similar content.
     Renamed,
     /// Unmerged.
     Conflicted,
@@ -42,169 +37,43 @@ pub struct Statuses {
     pub files: Vec<(PathBuf, Status)>,
 }
 
-/// Bounds the work of reading one object: deltas in its chain, and bytes
-/// inflated.
-const MAX_DEPTH: usize = 4095;
-const MAX_INFLATED: u64 = MAX_INDEX;
-/// Bounds HEAD's tree entries read, which a tree naming one subtree many
-/// times could otherwise multiply.
-const MAX_TREE_ENTRIES: usize = 1 << 22;
-
-const LINK: u32 = 0o120000;
-const GITLINK: u32 = 0o160000;
-const TREE: u32 = 0o040000;
-
 /// The state of the files under `folder`, a realpath. An untracked folder
-/// holding no tracked file is one path, as git status lists it. Renames are
-/// exact: the same blob at the new path. Ignore files are the repository's
-/// .gitignore files and info/exclude. A file over 256 MB whose stat data
-/// changed counts as modified. None when the folder is in no repository, or
-/// its index, HEAD or objects can't be read: split or sparse indexes,
-/// SHA-256 repositories, reftables, alternates and missing objects.
+/// holding no tracked file is one path, as git status lists it. A rename's old
+/// path is not listed. None when the folder is in no repository, git is not
+/// installed, or git status fails.
 pub fn status(folder: &Path) -> Option<Statuses> {
     // `find` looks for `.git` in each folder above the path, the folder first.
     let repo = Repo::find(&folder.join(".git"))?;
     let prefix = folder.strip_prefix(&repo.top).ok()?.as_os_str().as_bytes();
-    let common = match read_line(&repo.gitdir.join("commondir")) {
-        Some(common) => repo.gitdir.join(common),
-        None => repo.gitdir.clone(),
+    // The whole repository, so a rename from outside the folder is found.
+    let mut files = parse(&run(&repo.top, &["--untracked-files=normal".as_ref()])?)?;
+    // A folder inside an untracked one: git lists only the untracked one, so
+    // the files under the folder are listed and each kept as its first part.
+    let inside = |name: &[u8]| {
+        prefix
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
     };
-
-    // Files changed at or after the index was written may match its stat
-    // data with other bytes, so their bytes are compared.
-    let index_path = repo.gitdir.join("index");
-    let (index, racy) = match fs::metadata(&index_path) {
-        Ok(metadata) => {
-            let bytes = read_file(&index_path, MAX_INDEX).ok()?;
-            let index = parse_index(&bytes)?;
-            (index, (metadata.mtime(), metadata.mtime_nsec()))
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let index = Index {
-                entries: Vec::new(),
-                split: false,
-                sparse: false,
-                trees: HashMap::new(),
-            };
-            (index, (i64::MIN, 0))
-        }
-        Err(_) => return None,
-    };
-    if index.split || index.sparse {
-        return None;
+    if !prefix.is_empty()
+        && files
+            .iter()
+            .any(|(name, status)| *status == Status::New && inside(name))
+    {
+        let pathspec = OsStr::from_bytes(&[b":(literal)", prefix].concat()).to_owned();
+        let args = ["--untracked-files=all".as_ref(), "--".as_ref(), &*pathspec];
+        files = parse(&run(&repo.top, &args)?)?
+            .into_keys()
+            .filter_map(|name| {
+                let rest = name.strip_prefix(prefix)?.strip_prefix(b"/")?;
+                let first = rest.split(|&byte| byte == b'/').next()?;
+                Some(([prefix, b"/", first].concat(), Status::New))
+            })
+            .collect();
     }
-
-    // HEAD's files, but those in folders whose tree the index holds as is.
-    let mut head = HashMap::new();
-    let mut same = HashSet::new();
-    if let Some(commit) = head_commit(&repo.gitdir, &common)? {
-        let objects = Objects::open(&common.join("objects"));
-        let tree = objects.commit_tree(commit)?;
-        if index.trees.get(&b""[..]) == Some(&tree) {
-            same.insert(Vec::new());
-        } else {
-            objects.flatten(tree, prefix, &index.trees, &mut head, &mut same)?;
-        }
-    }
-
-    let mut files = BTreeMap::new();
-    let mut indexed = HashSet::new();
-    let mut tracked_folders = HashSet::new();
-    let mut added = Vec::new();
-    for entry in &index.entries {
-        let name = &entry.name[..];
-        indexed.insert(name);
-        for (at, _) in name.iter().enumerate().filter(|(_, byte)| **byte == b'/') {
-            tracked_folders.insert(&name[..at]);
-        }
-        if !within(name, prefix) {
-            continue;
-        }
-        if entry.stage != 0 {
-            files.insert(name.to_vec(), Status::Conflicted);
-            continue;
-        }
-        let unchanged = same.contains(&b""[..])
-            || name
-                .iter()
-                .enumerate()
-                .any(|(at, &byte)| byte == b'/' && same.contains(&name[..at]));
-        let staged = match head.get(name) {
-            _ if entry.extended & INTENT_TO_ADD != 0 => Some(Status::New),
-            _ if unchanged => None,
-            None => {
-                added.push(entry);
-                Some(Status::New)
-            }
-            Some(&(mode, id)) => (id != entry.id || canonical(mode) != canonical(entry.mode))
-                .then_some(Status::Modified),
-        };
-        let worktree = if entry.mode & 0o170000 == GITLINK || entry.extended & SKIP_WORKTREE != 0 {
-            None
-        } else {
-            worktree(&repo.top.join(OsStr::from_bytes(name)), entry, racy)
-        };
-        let status = match (staged, worktree) {
-            (_, Some(Status::Deleted)) => Status::Deleted,
-            (Some(status), _) | (None, Some(status)) => status,
-            (None, None) => continue,
-        };
-        files.entry(name.to_vec()).or_insert(status);
-    }
-
-    // Deleted files by blob, each list in reverse byte order of path, so a
-    // rename takes the first.
-    let mut deleted: HashMap<(u32, Oid), Vec<&Vec<u8>>> = HashMap::new();
-    let mut gone: Vec<_> = head
-        .iter()
-        .filter(|(name, _)| !indexed.contains(&name[..]))
-        .collect();
-    gone.sort_by(|a, b| b.0.cmp(a.0));
-    for (name, &(mode, id)) in gone {
-        deleted.entry((canonical(mode), id)).or_default().push(name);
-    }
-    let empty = blob_id(b"");
-    for entry in added {
-        if files.get(&entry.name) != Some(&Status::New) || entry.id == empty {
-            continue;
-        }
-        let from = deleted.get_mut(&(canonical(entry.mode), entry.id));
-        if from.and_then(|names| names.pop()).is_some() {
-            files.insert(entry.name.clone(), Status::Renamed);
-        }
-    }
-    for name in deleted.into_values().flatten() {
-        files.insert(name.clone(), Status::Deleted);
-    }
-
-    let mut walk = Walk {
-        top: &repo.top,
-        indexed: &indexed,
-        tracked_folders: &tracked_folders,
-        ignores: Vec::new(),
-        files: &mut files,
-    };
-    if let Ok(exclude) = read_file(&common.join("info/exclude"), MAX_INDEX) {
-        walk.ignores.push((Vec::new(), patterns(&exclude)));
-    }
-    // Nothing in an ignored folder is untracked.
-    let mut folder = Vec::new();
-    let mut ignored = false;
-    if !prefix.is_empty() {
-        for part in prefix.split(|&byte| byte == b'/') {
-            walk.push(&folder);
-            folder = join(&folder, part);
-            ignored |= walk.ignored(&folder, true);
-        }
-    }
-    if !ignored {
-        walk.walk(&folder);
-    }
-
-    // A file at the folder's own path is not under it.
     let files = files
         .into_iter()
         .filter_map(|(name, status)| {
+            // A file at the folder's own path is not under it.
             let relative = if prefix.is_empty() {
                 &name[..]
             } else {
@@ -219,758 +88,112 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     })
 }
 
-/// Whether `path` is `folder` or under it; every path is under "".
-fn within(path: &[u8], folder: &[u8]) -> bool {
-    folder.is_empty()
-        || path
-            .strip_prefix(folder)
-            .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
-}
-
-fn join(folder: &[u8], name: &[u8]) -> Vec<u8> {
-    if folder.is_empty() {
-        name.to_vec()
-    } else {
-        [folder, b"/", name].concat()
-    }
-}
-
-/// A mode as git compares it: a file is 644 or 755.
-fn canonical(mode: u32) -> u32 {
-    match mode & 0o170000 {
-        0o100000 if mode & 0o100 != 0 => 0o100755,
-        0o100000 => 0o100644,
-        kind => kind,
-    }
-}
-
-/// How the working tree's file differs from its index entry, if it does.
-/// Matching stat data means unchanged unless the file is racy.
-fn worktree(path: &Path, entry: &IndexEntry, racy: (i64, i64)) -> Option<Status> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error)
-            if matches!(
-                error.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-            ) =>
-        {
-            return Some(Status::Deleted);
-        }
-        Err(_) => return None,
-    };
-    let kind = metadata.file_type();
-    if kind.is_dir() {
-        return Some(Status::Deleted);
-    }
-    let link = entry.mode & 0o170000 == LINK;
-    if !(kind.is_file() || kind.is_symlink())
-        || link != kind.is_symlink()
-        || (!link && (entry.mode & 0o100 != 0) != (metadata.mode() & 0o100 != 0))
-    {
-        return Some(Status::Modified);
-    }
-    // The index keeps 32 bits of each.
-    let mtime = (metadata.mtime(), metadata.mtime_nsec());
-    let stat = (
-        (mtime.0 as u32, mtime.1 as u32),
-        metadata.ino() as u32,
-        metadata.len() as u32,
-    );
-    if stat == (entry.mtime, entry.ino, entry.size) && mtime < racy {
-        return None;
-    }
-    if stat.2 != entry.size {
-        return Some(Status::Modified);
-    }
-    let bytes = if link {
-        fs::read_link(path).ok()?.into_os_string().into_vec()
-    } else {
-        match read_file(path, MAX_INDEX) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => {
-                return Some(Status::Modified);
-            }
-            Err(_) => return None,
-        }
-    };
-    (blob_id(&bytes) != entry.id).then_some(Status::Modified)
-}
-
-fn read_line(path: &Path) -> Option<String> {
-    let bytes = read_file(path, MAX_LINE_FILE).ok()?;
-    let line = String::from_utf8(bytes).ok()?.lines().next()?.to_owned();
-    Some(line)
-}
-
-fn parse_oid(hex: &str) -> Option<Oid> {
-    if hex.len() != 40 {
-        return None;
-    }
-    let mut id = [0u8; 20];
-    for (at, byte) in id.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(at * 2..at * 2 + 2)?, 16).ok()?;
-    }
-    Some(Oid(id))
-}
-
-/// The commit HEAD names, or None on a branch with no commit yet. The outer
-/// None: HEAD can't be read.
-fn head_commit(gitdir: &Path, common: &Path) -> Option<Option<Oid>> {
-    if common.join("reftable").exists() {
-        return None;
-    }
-    let mut line = read_line(&gitdir.join("HEAD"))?;
-    // A symbolic ref may name another; git follows five.
-    for _ in 0..5 {
-        let Some(name) = line.strip_prefix("ref: ") else {
-            return Some(Some(parse_oid(&line)?));
-        };
-        let name = name.trim_end();
-        if !name.starts_with("refs/")
-            || name
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..")
-        {
-            return None;
-        }
-        match read_file(&common.join(name), MAX_LINE_FILE) {
-            Ok(bytes) => line = String::from_utf8(bytes).ok()?.lines().next()?.to_owned(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return packed_ref(common, name);
-            }
-            Err(_) => return None,
+/// `git status --porcelain=v2 -z` with `args`, in `top`. Git reads no
+/// variable of the app's and takes no optional lock, so it never writes the
+/// index and wakes the folder's watcher.
+fn run(top: &Path, args: &[&OsStr]) -> Option<Vec<u8>> {
+    let mut git = Command::new(git()?);
+    for (key, _) in std::env::vars_os() {
+        if key.as_bytes().starts_with(b"GIT_") {
+            git.env_remove(key);
         }
     }
-    None
-}
-
-/// The ref's commit in packed-refs, None inside when it isn't there.
-fn packed_ref(common: &Path, name: &str) -> Option<Option<Oid>> {
-    let packed = match read_file(&common.join("packed-refs"), MAX_INDEX) {
-        Ok(packed) => packed,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Some(None),
-        Err(_) => return None,
-    };
-    for line in String::from_utf8_lossy(&packed).lines() {
-        if let Some((id, named)) = line.split_once(' ')
-            && named == name
-        {
-            return Some(Some(parse_oid(id)?));
-        }
-    }
-    Some(None)
-}
-
-/// A repository's object store: loose objects, and packs with version 2
-/// indexes.
-struct Objects {
-    folder: PathBuf,
-    packs: Vec<Pack>,
-}
-
-struct Pack {
-    idx: File,
-    pack: File,
-}
-
-impl Objects {
-    fn open(folder: &Path) -> Objects {
-        let mut packs = Vec::new();
-        for entry in fs::read_dir(folder.join("pack"))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let path = entry.path();
-            if path.extension() != Some(OsStr::new("idx")) {
-                continue;
-            }
-            // A pack being written or removed has one file of the two.
-            let (Ok(idx), Ok(pack)) = (File::open(&path), File::open(path.with_extension("pack")))
-            else {
-                continue;
-            };
-            let mut header = [0u8; 8];
-            if idx.read_exact_at(&mut header, 0).is_ok() && &header == b"\xfftOc\0\0\0\x02" {
-                packs.push(Pack { idx, pack });
-            }
-        }
-        Objects {
-            folder: folder.to_path_buf(),
-            packs,
-        }
-    }
-
-    /// The object's type (1 commit, 2 tree, 3 blob, 4 tag) and bytes, its
-    /// deltas applied.
-    fn read(&self, id: Oid) -> Option<(u8, Vec<u8>)> {
-        let mut deltas = Vec::new();
-        let mut inflated = 0u64;
-        let mut next = id;
-        let (kind, mut bytes) = 'chain: loop {
-            let hex = next.to_string();
-            if let Ok(loose) = read_file(&self.folder.join(&hex[..2]).join(&hex[2..]), MAX_INDEX) {
-                break loose_object(&loose)?;
-            }
-            let (pack, mut offset) = self
-                .packs
-                .iter()
-                .find_map(|pack| Some((&pack.pack, pack.find(next)?)))?;
-            loop {
-                if deltas.len() > MAX_DEPTH {
-                    return None;
-                }
-                // Type and size, then a base's offset or id: at most 30 bytes.
-                let mut head = [0u8; 32];
-                let length = pack.read_at(&mut head, offset).ok()?;
-                let mut head = head[..length].iter().copied();
-                let mut byte = head.next()?;
-                let kind = (byte >> 4) & 7;
-                let mut size = u64::from(byte & 15);
-                let mut shift = 4;
-                while byte & 0x80 != 0 {
-                    byte = head.next()?;
-                    if shift > 57 {
-                        return None;
-                    }
-                    size |= u64::from(byte & 0x7f) << shift;
-                    shift += 7;
-                }
-                inflated += size;
-                if inflated > MAX_INFLATED {
-                    return None;
-                }
-                match kind {
-                    1..=4 => {
-                        let at = offset + (length - head.len()) as u64;
-                        break 'chain (kind, inflate_at(pack, at, size)?);
-                    }
-                    6 => {
-                        // Git's offset varint (varint.c).
-                        let mut byte = head.next()?;
-                        let mut back = u64::from(byte & 0x7f);
-                        while byte & 0x80 != 0 {
-                            byte = head.next()?;
-                            back = back.checked_add(1)?;
-                            if back >> 57 != 0 {
-                                return None;
-                            }
-                            back = (back << 7) | u64::from(byte & 0x7f);
-                        }
-                        let at = offset + (length - head.len()) as u64;
-                        deltas.push(inflate_at(pack, at, size)?);
-                        offset = offset.checked_sub(back).filter(|_| back > 0)?;
-                    }
-                    7 => {
-                        let base: Vec<u8> = head.by_ref().take(20).collect();
-                        next = Oid(base.try_into().ok()?);
-                        let at = offset + (length - head.len()) as u64;
-                        deltas.push(inflate_at(pack, at, size)?);
-                        continue 'chain;
-                    }
-                    _ => return None,
-                }
-            }
-        };
-        for delta in deltas.iter().rev() {
-            bytes = apply(&bytes, delta)?;
-        }
-        Some((kind, bytes))
-    }
-
-    fn commit_tree(&self, commit: Oid) -> Option<Oid> {
-        let (kind, bytes) = self.read(commit)?;
-        let line = bytes.strip_prefix(b"tree ")?.get(..40)?;
-        (kind == 1).then(|| parse_oid(std::str::from_utf8(line).ok()?))?
-    }
-
-    /// Adds the files of `tree` that are under `folder`, by path, and the
-    /// folders whose tree `trees` holds to `same` in place of theirs.
-    fn flatten(
-        &self,
-        tree: Oid,
-        folder: &[u8],
-        trees: &HashMap<Vec<u8>, Oid>,
-        files: &mut HashMap<Vec<u8>, (u32, Oid)>,
-        same: &mut HashSet<Vec<u8>>,
-    ) -> Option<()> {
-        let mut entries = 0;
-        let mut open = vec![(tree, Vec::new())];
-        while let Some((tree, base)) = open.pop() {
-            let (kind, bytes) = self.read(tree)?;
-            if kind != 2 {
-                return None;
-            }
-            let mut rest = &bytes[..];
-            while !rest.is_empty() {
-                entries += 1;
-                if entries > MAX_TREE_ENTRIES {
-                    return None;
-                }
-                let space = rest.iter().position(|&byte| byte == b' ')?;
-                let mode =
-                    u32::from_str_radix(std::str::from_utf8(&rest[..space]).ok()?, 8).ok()?;
-                let nul = space + rest[space..].iter().position(|&byte| byte == 0)?;
-                let path = join(&base, &rest[space + 1..nul]);
-                let id = Oid(rest.get(nul + 1..nul + 21)?.try_into().ok()?);
-                rest = &rest[nul + 21..];
-                if mode == TREE {
-                    if trees.get(&path) == Some(&id) {
-                        same.insert(path);
-                    } else if within(&path, folder) || within(folder, &path) {
-                        open.push((id, path));
-                    }
-                } else if within(&path, folder) {
-                    files.insert(path, (mode, id));
-                }
-            }
-        }
-        Some(())
-    }
-}
-
-/// A loose object's type and bytes.
-fn loose_object(compressed: &[u8]) -> Option<(u8, Vec<u8>)> {
-    let mut bytes = Vec::new();
-    ZlibDecoder::new(compressed)
-        .take(MAX_INFLATED + 64)
-        .read_to_end(&mut bytes)
+    let output = git
+        .current_dir(top)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // An fsmonitor hook is a program the repository names; status runs fine without it.
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "--no-optional-locks",
+            "status",
+        ])
+        .args([
+            "--porcelain=v2",
+            "-z",
+            "--find-renames",
+            "--ignore-submodules=dirty",
+        ])
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
         .ok()?;
-    let nul = bytes.iter().position(|&byte| byte == 0)?;
-    let header = std::str::from_utf8(&bytes[..nul]).ok()?;
-    let (kind, size) = header.split_once(' ')?;
-    let size = size.parse::<usize>().ok()?;
-    let kind = match kind {
-        "commit" => 1,
-        "tree" => 2,
-        "blob" => 3,
-        "tag" => 4,
-        _ => return None,
-    };
-    bytes.drain(..=nul);
-    (size == bytes.len()).then_some((kind, bytes))
+    output.status.success().then_some(output.stdout)
 }
 
-impl Pack {
-    /// The offset of `id`, from the index: a 256-entry fanout of counts, the
-    /// sorted ids, their CRCs, 31-bit offsets, then 64-bit ones.
-    fn find(&self, id: Oid) -> Option<u64> {
-        let read = |at: u64, bytes: &mut [u8]| self.idx.read_exact_at(bytes, at).ok();
-        let word = |at: u64| {
-            let mut bytes = [0u8; 4];
-            read(at, &mut bytes)?;
-            Some(u64::from(u32::from_be_bytes(bytes)))
-        };
-        let first = u64::from(id.0[0]);
-        let count = word(8 + 4 * 255)?;
-        let mut low = if first == 0 {
-            0
-        } else {
-            word(8 + 4 * (first - 1))?
-        };
-        let mut high = word(8 + 4 * first)?.min(count);
-        let ids = 8 + 4 * 256;
-        let mut candidate = [0u8; 20];
-        while low < high {
-            let middle = (low + high) / 2;
-            read(ids + 20 * middle, &mut candidate)?;
-            match candidate.cmp(&id.0) {
-                std::cmp::Ordering::Less => low = middle + 1,
-                std::cmp::Ordering::Greater => high = middle,
-                std::cmp::Ordering::Equal => {
-                    let offsets = ids + 24 * count;
-                    let offset = word(offsets + 4 * middle)?;
-                    if offset & 0x8000_0000 == 0 {
-                        return Some(offset);
-                    }
-                    let mut large = [0u8; 8];
-                    read(offsets + 4 * count + 8 * (offset & 0x7fff_ffff), &mut large)?;
-                    return Some(u64::from_be_bytes(large));
-                }
-            }
-        }
-        None
-    }
-}
-
-/// Inflates the zlib stream at `offset`, which must give `size` bytes.
-fn inflate_at(file: &File, mut offset: u64, size: u64) -> Option<Vec<u8>> {
-    if size > MAX_INDEX {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(size as usize);
-    let mut inflate = Decompress::new(true);
-    let mut chunk = vec![0u8; (size as usize + 64).min(64 << 10)];
-    loop {
-        let length = file.read_at(&mut chunk, offset).ok()?;
-        let (read, written) = (inflate.total_in(), bytes.len());
-        let status = inflate
-            .decompress_vec(&chunk[..length], &mut bytes, FlushDecompress::None)
-            .ok()?;
-        if status == flate2::Status::StreamEnd {
-            return (bytes.len() as u64 == size).then_some(bytes);
-        }
-        if inflate.total_in() == read && bytes.len() == written {
+/// The developer tools' git, found once. Without the tools /usr/bin/git only
+/// asks to install them, and with them it spends 8 ms finding this one.
+fn git() -> Option<&'static Path> {
+    static GIT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    GIT.get_or_init(|| {
+        let tools = Command::new("/usr/bin/xcode-select")
+            .arg("-p")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !tools {
             return None;
         }
-        offset += inflate.total_in() - read;
-    }
+        let found = Command::new("/usr/bin/xcrun")
+            .args(["--find", "git"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|found| found.status.success())?;
+        let path = PathBuf::from(OsStr::from_bytes(found.stdout.trim_ascii_end()));
+        path.is_absolute().then_some(path)
+    })
+    .as_deref()
 }
 
-/// Applies a git delta: the base's size, the result's, then copies from the
-/// base and inserts.
-fn apply(base: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
-    let mut delta = delta.iter().copied();
-    let mut size = || {
-        let mut value = 0u64;
-        for shift in (0..64).step_by(7) {
-            let byte = delta.next()?;
-            value |= u64::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return Some(value);
-            }
-        }
-        None
-    };
-    if size()? != base.len() as u64 {
-        return None;
-    }
-    let length = size()?;
-    if length > MAX_INDEX {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(length as usize);
-    while let Some(op) = delta.next() {
-        if op & 0x80 != 0 {
-            let mut field = |bits: std::ops::Range<u8>| {
-                let mut value = 0usize;
-                for bit in bits.clone() {
-                    if op & (1 << bit) != 0 {
-                        value |= usize::from(delta.next()?) << (8 * (bit - bits.start));
-                    }
-                }
-                Some(value)
-            };
-            let from = field(0..4)?;
-            let count = match field(4..7)? {
-                0 => 0x10000,
-                count => count,
-            };
-            bytes.extend_from_slice(base.get(from..from.checked_add(count)?)?);
-        } else if op != 0 {
-            for _ in 0..op {
-                bytes.push(delta.next()?);
-            }
-        } else {
-            return None;
-        }
-    }
-    (bytes.len() as u64 == length).then_some(bytes)
-}
-
-/// One line of an ignore file.
-struct Pattern {
-    glob: Vec<u8>,
-    negated: bool,
-    folders_only: bool,
-    /// A slash before the end ties the glob to the file's folder; otherwise
-    /// it matches names at any depth.
-    anchored: bool,
-}
-
-/// An ignore file's patterns, as gitignore(5) reads them.
-fn patterns(bytes: &[u8]) -> Vec<Pattern> {
-    bytes
-        .split(|&byte| byte == b'\n')
-        .filter_map(|line| {
-            let mut line = line.strip_suffix(b"\r").unwrap_or(line);
-            // Trailing spaces go unless a backslash quotes them.
-            while let [rest @ .., b' '] = line {
-                if rest.ends_with(b"\\") {
-                    break;
-                }
-                line = rest;
-            }
-            if line.first().is_none_or(|&byte| byte == b'#') {
-                return None;
-            }
-            let negated = line[0] == b'!';
-            if negated {
-                line = &line[1..];
-            }
-            let folders_only = line.ends_with(b"/");
-            if folders_only {
-                line = &line[..line.len() - 1];
-            }
-            let anchored = line.contains(&b'/');
-            let line = line.strip_prefix(b"/").unwrap_or(line);
-            (!line.is_empty()).then(|| Pattern {
-                glob: line.to_vec(),
-                negated,
-                folders_only,
-                anchored,
-            })
-        })
-        .collect()
-}
-
-#[derive(PartialEq)]
-enum Wild {
-    Match,
-    NoMatch,
-    AbortAll,
-    AbortToDoubleStar,
-}
-
-/// Git's wildmatch (wildmatch.c) with WM_PATHNAME: `*`, `?` and classes
-/// stop at `/`, and `**` between slashes spans folders. POSIX character
-/// classes are not read.
-fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
-    dowild(pattern, 0, text, 0) == Wild::Match
-}
-
-fn dowild(pattern: &[u8], mut p: usize, text: &[u8], mut t: usize) -> Wild {
-    let at = |bytes: &[u8], i: usize| bytes.get(i).copied().unwrap_or(0);
-    while p < pattern.len() {
-        let mut p_ch = pattern[p];
-        let t_ch = at(text, t);
-        if t_ch == 0 && p_ch != b'*' {
-            return Wild::AbortAll;
-        }
-        match p_ch {
-            b'?' => {
-                if t_ch == b'/' {
-                    return Wild::NoMatch;
-                }
-            }
-            b'*' => {
-                p += 1;
-                let mut spans = false;
-                if at(pattern, p) == b'*' {
-                    let before = p.checked_sub(2);
-                    while at(pattern, p) == b'*' {
-                        p += 1;
-                    }
-                    let next = at(pattern, p);
-                    if before.is_none_or(|before| pattern[before] == b'/')
-                        && (next == 0 || next == b'/')
-                    {
-                        if next == b'/' && dowild(pattern, p + 1, text, t) == Wild::Match {
-                            return Wild::Match;
-                        }
-                        spans = true;
-                    }
-                }
-                if p == pattern.len() {
-                    return if spans || !text[t..].contains(&b'/') {
-                        Wild::Match
-                    } else {
-                        Wild::NoMatch
-                    };
-                }
-                if !spans && pattern[p] == b'/' {
-                    // One star then a slash matches the rest of this folder.
-                    let Some(slash) = text[t..].iter().position(|&byte| byte == b'/') else {
-                        return Wild::NoMatch;
-                    };
-                    t += slash;
-                    // The slashes match below.
-                    continue;
-                }
-                while t < text.len() {
-                    match dowild(pattern, p, text, t) {
-                        Wild::NoMatch if !spans && text[t] == b'/' => {
-                            return Wild::AbortToDoubleStar;
-                        }
-                        Wild::NoMatch => {}
-                        Wild::AbortToDoubleStar if spans => {}
-                        matched => return matched,
-                    }
-                    t += 1;
-                }
-                return Wild::AbortAll;
-            }
-            b'[' => {
-                p += 1;
-                p_ch = at(pattern, p);
-                if p_ch == b'^' {
-                    p_ch = b'!';
-                }
-                let negated = p_ch == b'!';
-                if negated {
-                    p += 1;
-                    p_ch = at(pattern, p);
-                }
-                let mut previous = 0u8;
-                let mut matched = false;
-                loop {
-                    if p_ch == 0 {
-                        return Wild::AbortAll;
-                    }
-                    if p_ch == b'\\' {
-                        p += 1;
-                        p_ch = at(pattern, p);
-                        if p_ch == 0 {
-                            return Wild::AbortAll;
-                        }
-                        matched |= t_ch == p_ch;
-                    } else if p_ch == b'-'
-                        && previous != 0
-                        && at(pattern, p + 1) != 0
-                        && at(pattern, p + 1) != b']'
-                    {
-                        p += 1;
-                        p_ch = at(pattern, p);
-                        if p_ch == b'\\' {
-                            p += 1;
-                            p_ch = at(pattern, p);
-                            if p_ch == 0 {
-                                return Wild::AbortAll;
-                            }
-                        }
-                        matched |= previous <= t_ch && t_ch <= p_ch;
-                        p_ch = 0;
-                    } else {
-                        matched |= t_ch == p_ch;
-                    }
-                    previous = p_ch;
-                    p += 1;
-                    p_ch = at(pattern, p);
-                    if p_ch == b']' {
-                        break;
-                    }
-                }
-                if matched == negated || t_ch == b'/' {
-                    return Wild::NoMatch;
-                }
-            }
-            _ => {
-                if p_ch == b'\\' {
-                    p += 1;
-                    p_ch = at(pattern, p);
-                }
-                if t_ch != p_ch {
-                    return Wild::NoMatch;
-                }
-            }
-        }
-        p += 1;
-        t += 1;
-    }
-    if t < text.len() {
-        Wild::NoMatch
-    } else {
-        Wild::Match
-    }
-}
-
-/// The walk for untracked files.
-struct Walk<'a> {
-    top: &'a Path,
-    indexed: &'a HashSet<&'a [u8]>,
-    tracked_folders: &'a HashSet<&'a [u8]>,
-    /// The ignore files that apply, each with its folder, shallowest first.
-    ignores: Vec<(Vec<u8>, Vec<Pattern>)>,
-    files: &'a mut BTreeMap<Vec<u8>, Status>,
-}
-
-impl Walk<'_> {
-    /// Takes in `folder`'s .gitignore, if it has one.
-    fn push(&mut self, folder: &[u8]) -> bool {
-        let path = self.top.join(OsStr::from_bytes(folder)).join(".gitignore");
-        let Ok(bytes) = read_file(&path, MAX_INDEX) else {
-            return false;
+/// Each path in `git status --porcelain=v2 -z` output and its state, by path
+/// from the top of the repository. A path listed twice, staged as deleted and
+/// untracked, is untracked. None when a record is malformed.
+fn parse(output: &[u8]) -> Option<BTreeMap<Vec<u8>, Status>> {
+    let mut files = BTreeMap::new();
+    let mut records = output.split(|&byte| byte == 0).filter(|r| !r.is_empty());
+    while let Some(record) = records.next() {
+        // The fields before the path, the record's kind first.
+        let fields = match record.first()? {
+            b'1' => 8,
+            b'2' => 9,
+            b'u' => 10,
+            b'?' => 1,
+            _ => continue,
         };
-        self.ignores.push((folder.to_vec(), patterns(&bytes)));
-        true
-    }
-
-    /// The last pattern to match decides, deeper ignore files first.
-    fn ignored(&self, path: &[u8], folder: bool) -> bool {
-        let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
-        for (base, patterns) in self.ignores.iter().rev() {
-            let relative = if base.is_empty() {
-                path
-            } else {
-                match path
-                    .strip_prefix(&base[..])
-                    .and_then(|rest| rest.strip_prefix(b"/"))
-                {
-                    Some(relative) => relative,
-                    None => continue,
-                }
-            };
-            for pattern in patterns.iter().rev() {
-                if pattern.folders_only && !folder {
-                    continue;
-                }
-                let text = if pattern.anchored { relative } else { name };
-                if wildmatch(&pattern.glob, text) {
-                    return !pattern.negated;
-                }
-            }
+        let mut parts = record.splitn(fields + 1, |&byte| byte == b' ');
+        let kind = parts.next()?[0];
+        let xy = if kind == b'?' { b".." } else { parts.next()? };
+        let path = parts.last()?;
+        let &[staged, worktree] = xy else {
+            return None;
+        };
+        let status = match (kind, staged, worktree) {
+            (b'?', ..) => Status::New,
+            (b'u', ..) => Status::Conflicted,
+            (_, _, b'D') | (b'1', b'D', _) => Status::Deleted,
+            (b'2', b'R', _) => Status::Renamed,
+            (b'2', ..) | (b'1', b'A', _) | (b'1', _, b'A') => Status::New,
+            (b'1', b'M' | b'T', _) | (b'1', _, b'M' | b'T') => Status::Modified,
+            _ => continue,
+        };
+        if kind == b'2' {
+            // The path it was renamed or copied from.
+            records.next()?;
         }
-        false
+        let path = path.strip_suffix(b"/").unwrap_or(path);
+        files.insert(path.to_vec(), status);
     }
-
-    /// `folder`'s children but `.git`, and whether each is a folder.
-    fn list(&self, folder: &[u8]) -> Vec<(Vec<u8>, bool)> {
-        let entries = fs::read_dir(self.top.join(OsStr::from_bytes(folder)));
-        entries
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|entry| entry.file_name() != ".git")
-            .map(|entry| {
-                let path = join(folder, entry.file_name().as_bytes());
-                (path, entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            })
-            .collect()
-    }
-
-    fn walk(&mut self, folder: &[u8]) {
-        let pushed = self.push(folder);
-        for (path, is_folder) in self.list(folder) {
-            if self.indexed.contains(&path[..]) {
-                continue;
-            }
-            if is_folder && self.tracked_folders.contains(&path[..]) {
-                if !self.ignored(&path, true) {
-                    self.walk(&path);
-                }
-            } else if !self.ignored(&path, is_folder) && (!is_folder || self.holds_untracked(&path))
-            {
-                self.files.insert(path, Status::New);
-            }
-        }
-        if pushed {
-            self.ignores.pop();
-        }
-    }
-
-    /// Whether an untracked folder holds a file no ignore file matches. A
-    /// repository inside counts as one.
-    fn holds_untracked(&mut self, folder: &[u8]) -> bool {
-        let top = self.top.join(OsStr::from_bytes(folder));
-        if fs::symlink_metadata(top.join(".git")).is_ok() {
-            return true;
-        }
-        let pushed = self.push(folder);
-        let found = self.list(folder).into_iter().any(|(path, is_folder)| {
-            !self.ignored(&path, is_folder) && (!is_folder || self.holds_untracked(&path))
-        });
-        if pushed {
-            self.ignores.pop();
-        }
-        found
-    }
+    Some(files)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::tests::{git, repo, run, write};
     use super::*;
+    use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     fn statuses(folder: &Path) -> Vec<(String, Status)> {
@@ -980,29 +203,6 @@ mod tests {
             .into_iter()
             .map(|(path, status)| (path.to_str().unwrap().to_owned(), status))
             .collect()
-    }
-
-    /// The paths `git status` lists under `folder`, once each: a rename's new
-    /// path, an untracked folder without its slash.
-    fn git_paths(root: &Path, folder: &str) -> Vec<String> {
-        let output = git(
-            root,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
-        );
-        let mut paths = Vec::new();
-        let mut fields = output.split('\0').filter(|field| !field.is_empty());
-        while let Some(field) = fields.next() {
-            if field.starts_with('R') {
-                fields.next();
-            }
-            let path = field[3..].trim_end_matches('/');
-            if let Some(path) = path.strip_prefix(folder) {
-                paths.push(path.to_owned());
-            }
-        }
-        paths.sort();
-        paths.dedup();
-        paths
     }
 
     #[test]
@@ -1025,6 +225,10 @@ mod tests {
             ("docs/nested/.gitignore", b"*.tmp\n"),
             ("docs/nested/n.md", b"n\n"),
             ("old/name.md", b"# Name\n"),
+            (
+                "guide.md",
+                b"# Guide\n\nOne.\n\nTwo.\n\nThree.\n\nFour.\n\nFive.\n",
+            ),
         ]);
         symlink("a.md", root.join("link")).unwrap();
         git(&root, &["add", "link"]);
@@ -1047,6 +251,14 @@ mod tests {
         fs::create_dir(root.join("new")).unwrap();
         git(&root, &["mv", "old/name.md", "new/name.md"]);
         write(&root, "new/name.md", b"# Name, edited\n");
+        // Renamed with its content changed, and staged.
+        git(&root, &["mv", "guide.md", "new/guide.md"]);
+        write(
+            &root,
+            "new/guide.md",
+            b"# Guide\n\nOne.\n\nTwo.\n\nThree, edited.\n\nFour.\n\nFive.\n",
+        );
+        git(&root, &["add", "new/guide.md"]);
         fs::rename(root.join("moved.md"), root.join("moved2.md")).unwrap();
         fs::set_permissions(root.join("exec.sh"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::remove_file(root.join("link")).unwrap();
@@ -1057,6 +269,7 @@ mod tests {
         git(&root, &["add", "-N", "ita.md"]);
         for (name, bytes) in [
             ("notes.md", &b"untracked\n"[..]),
+            ("two words.md", b"untracked\n"),
             ("docs/new.md", b"new\n"),
             ("fresh/x.md", b"x\n"),
             ("fresh/y/z.md", b"z\n"),
@@ -1076,6 +289,15 @@ mod tests {
         fs::create_dir(root.join("inner")).unwrap();
         git(&root.join("inner"), &["init", "-q"]);
         write(&root, ".git/info/exclude", b"secret.md\n");
+        // A global ignore file, named here in the repository's config.
+        write(&root, ".git/ignore-everywhere", b".DS_Store\n*.local\n");
+        let excludes = root.join(".git/ignore-everywhere");
+        git(
+            &root,
+            &["config", "core.excludesFile", excludes.to_str().unwrap()],
+        );
+        write(&root, ".DS_Store", b"");
+        write(&root, "docs/env.local", b"");
 
         use Status::*;
         let expected = [
@@ -1094,19 +316,27 @@ mod tests {
             ("link", Modified),
             ("moved.md", Deleted),
             ("moved2.md", New),
+            ("new/guide.md", Renamed),
             ("new/name.md", Renamed),
             ("notes.md", New),
             ("staged.md", New),
+            ("two words.md", New),
         ];
         let expected: Vec<_> = expected
             .iter()
             .map(|&(path, status)| (path.to_owned(), status))
             .collect();
-        let found = statuses(&root);
-        assert_eq!(found, expected);
-        let paths: Vec<_> = found.into_iter().map(|(path, _)| path).collect();
-        assert_eq!(paths, git_paths(&root, ""));
+        assert_eq!(statuses(&root), expected);
         assert_eq!(status(&root).unwrap().gitdir, root.join(".git"));
+
+        // A rename into a folder from outside it is still a rename.
+        assert_eq!(
+            statuses(&root.join("new")),
+            [
+                ("guide.md".to_owned(), Renamed),
+                ("name.md".to_owned(), Renamed)
+            ]
+        );
 
         // A folder inside the repository: its files, by their paths from it.
         write(&root, "docs/plan.md", b"# Plan, edited\n");
@@ -1114,11 +344,14 @@ mod tests {
             statuses(&root.join("docs")),
             [("new.md".to_owned(), New), ("plan.md".to_owned(), Modified)]
         );
-        assert_eq!(
-            statuses(&root.join("docs")).len(),
-            git_paths(&root, "docs/").len()
-        );
         assert_eq!(statuses(&root.join("docs/drafts")), []);
+
+        // Folders inside an untracked one: each file or folder under them.
+        assert_eq!(
+            statuses(&root.join("fresh")),
+            [("x.md".to_owned(), New), ("y".to_owned(), New)]
+        );
+        assert_eq!(statuses(&root.join("fresh/y")), [("z.md".to_owned(), New)]);
 
         // HEAD's c.md is not under a folder now at its path.
         fs::create_dir(root.join("c.md")).unwrap();
@@ -1126,37 +359,9 @@ mod tests {
     }
 
     #[test]
-    fn packed_objects_refs_and_linked_worktrees() {
-        let (_dir, root) = repo(&[("CLAUDE.md", b"# Claude\n"), ("docs/plan.md", b"0\n")]);
-        // Enough similar trees that the pack stores some as deltas.
-        for round in 1..=40 {
-            write(&root, "docs/plan.md", format!("{round}\n").as_bytes());
-            write(&root, &format!("docs/more/{round}.md"), b"more\n");
-            git(&root, &["add", "-A"]);
-            git(&root, &["commit", "-q", "-m", &round.to_string()]);
-        }
-        git(&root, &["gc", "-q", "--aggressive"]);
-        assert!(!root.join(".git/refs/heads/main").exists(), "refs packed");
-        let verify: String = fs::read_dir(root.join(".git/objects/pack"))
-            .unwrap()
-            .flatten()
-            .filter(|entry| entry.path().extension() == Some(OsStr::new("idx")))
-            .map(|idx| git(&root, &["verify-pack", "-v", idx.path().to_str().unwrap()]))
-            .collect();
-        let tree_deltas = verify
-            .lines()
-            .filter(|line| line.split_whitespace().nth(1) == Some("tree"))
-            .filter(|line| line.split_whitespace().count() == 7)
-            .count();
-        assert!(tree_deltas > 0, "{verify}");
-
-        assert_eq!(statuses(&root), []);
-        write(&root, "docs/more/7.md", b"edited\n");
-        assert_eq!(
-            statuses(&root),
-            [("docs/more/7.md".to_owned(), Status::Modified)]
-        );
-
+    fn linked_worktrees() {
+        let (_dir, root) = repo(&[("CLAUDE.md", b"# Claude\n")]);
+        git(&root, &["commit", "-q", "-m", "base"]);
         git(&root, &["worktree", "add", "-q", "-b", "side", "wt"]);
         let worktree = root.join("wt");
         assert_eq!(statuses(&worktree), []);
@@ -1181,42 +386,5 @@ mod tests {
         );
         let outside = tempfile::tempdir().unwrap();
         assert_eq!(status(&outside.path().canonicalize().unwrap()), None);
-    }
-
-    #[test]
-    fn wildmatch_as_git() {
-        let table = [
-            ("foo", "foo", true),
-            ("*", "foo", true),
-            ("*", "a/b", false),
-            ("**", "a/b", true),
-            ("**/foo", "foo", true),
-            ("**/foo", "a/b/foo", true),
-            ("a/**/b", "a/b", true),
-            ("a/**/b", "a/x/y/b", true),
-            ("a/**", "a/x/y", true),
-            ("a/*", "a/x/y", false),
-            ("a/*/c", "a/b/c", true),
-            ("**foo", "a/foo", false),
-            ("*.md", "x.md", true),
-            ("foo*bar", "foo/bar", false),
-            ("a?c", "abc", true),
-            ("a?c", "a/c", false),
-            ("[a-c]x", "bx", true),
-            ("[!a-c]x", "bx", false),
-            ("[^a-c]x", "dx", true),
-            ("[]]", "]", true),
-            ("[a-]", "-", true),
-            ("\\*", "*", true),
-            ("\\*", "x", false),
-            ("[ab", "a", false),
-        ];
-        for (pattern, text, matches) in table {
-            assert_eq!(
-                wildmatch(pattern.as_bytes(), text.as_bytes()),
-                matches,
-                "{pattern} {text}"
-            );
-        }
     }
 }

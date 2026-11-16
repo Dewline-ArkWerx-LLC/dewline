@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -326,17 +325,13 @@ fn lookup(index: &[u8], name: &[u8]) -> Entry {
     }
 }
 
-/// One index entry, with the stat data git compares the working tree by.
+/// One index entry.
 struct IndexEntry {
     name: Vec<u8>,
     id: Oid,
-    mode: u32,
     /// 1 to 3 for an unmerged file.
     stage: u16,
     extended: u16,
-    mtime: (u32, u32),
-    ino: u32,
-    size: u32,
 }
 
 /// An index file's entries, in its order. A split index keeps entries in
@@ -345,9 +340,6 @@ struct Index {
     entries: Vec<IndexEntry>,
     split: bool,
     sparse: bool,
-    /// The cache-tree extension: the tree id the index holds for each
-    /// folder it hasn't changed since the id was written, by path.
-    trees: HashMap<Vec<u8>, Oid>,
 }
 
 fn parse_index(index: &[u8]) -> Option<Index> {
@@ -373,8 +365,7 @@ fn read_index(index: &mut Reader) -> Option<Index> {
     for _ in 0..count {
         let start = index.at;
         let stat = index.take(40)?;
-        let word = |at: usize| Some(u32::from_be_bytes(stat.get(at..at + 4)?.try_into().ok()?));
-        let mode = word(24)?;
+        let mode = u32::from_be_bytes(stat.get(24..28)?.try_into().ok()?);
         let id = Oid(index.take(20)?.try_into().ok()?);
         let flags = index.u16()?;
         let extended = if flags & EXTENDED == 0 {
@@ -428,23 +419,16 @@ fn read_index(index: &mut Reader) -> Option<Index> {
         entries.push(IndexEntry {
             name,
             id,
-            mode,
             stage: (flags >> 12) & 3,
             extended,
-            mtime: (word(8)?, word(12)?),
-            ino: word(20)?,
-            size: word(36)?,
         });
     }
     let mut split = false;
-    let mut trees = HashMap::new();
     while index.left() > 20 {
         let signature = index.take(4)?;
         let size = usize::try_from(index.u32()?).ok()?;
-        let extension = index.take(size)?;
+        index.take(size)?;
         match signature {
-            // Only a cache: a damaged one goes unread.
-            b"TREE" => trees = read_trees(extension).unwrap_or_default(),
             b"link" => split = true,
             b"sdir" => sparse = true,
             // Optional extensions start with a capital letter.
@@ -460,44 +444,7 @@ fn read_index(index: &mut Reader) -> Option<Index> {
         entries,
         split,
         sparse,
-        trees,
     })
-}
-
-/// Reads the cache-tree extension: folders in pre-order, each its name, its
-/// entry count (-1 when changed), its subfolder count, and its tree id.
-fn read_trees(bytes: &[u8]) -> Option<HashMap<Vec<u8>, Oid>> {
-    let mut reader = Reader { bytes, at: 0 };
-    let mut trees = HashMap::new();
-    // The open folders' paths and the subfolders each has left.
-    let mut open: Vec<(Vec<u8>, usize)> = Vec::new();
-    loop {
-        let name = reader.until_nul()?;
-        let path = match open.last_mut() {
-            None => name.to_vec(),
-            Some((parent, left)) => {
-                *left -= 1;
-                if parent.is_empty() {
-                    name.to_vec()
-                } else {
-                    [parent, &b"/"[..], name].concat()
-                }
-            }
-        };
-        let rest = reader.bytes.get(reader.at..)?;
-        let line = reader.take(rest.iter().position(|&byte| byte == b'\n')? + 1)?;
-        let (entries, subtrees) = std::str::from_utf8(line).ok()?.trim_end().split_once(' ')?;
-        if entries.parse::<i64>().ok()? >= 0 {
-            trees.insert(path.clone(), Oid(reader.take(20)?.try_into().ok()?));
-        }
-        open.push((path, subtrees.parse().ok()?));
-        while open.last().is_some_and(|(_, left)| *left == 0) {
-            open.pop();
-        }
-        if open.is_empty() {
-            return (reader.left() == 0).then_some(trees);
-        }
-    }
 }
 
 struct Reader<'a> {

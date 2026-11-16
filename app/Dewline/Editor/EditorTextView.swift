@@ -558,7 +558,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override func insertTab(_ sender: Any?) {
-        guard hasMarkedText() || !indentItems(outdent: false) else { return }
+        guard hasMarkedText() || !(editTable(.nextCell) || indentItems(outdent: false)) else { return }
         let width = ThemeStore.shared.tabWidth
         if width > 0, !hasMarkedText() {
             insertText(String(repeating: " ", count: width), replacementRange: selectedRange())
@@ -568,7 +568,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override func insertBacktab(_ sender: Any?) {
-        guard hasMarkedText() || !indentItems(outdent: true) else { return }
+        guard hasMarkedText() || !(editTable(.previousCell) || indentItems(outdent: true)) else { return }
         super.insertBacktab(sender)
     }
 
@@ -702,8 +702,37 @@ final class EditorTextView: CaretTextView {
         }
     }
 
+    /// Runs `command` in the table holding the caret, moving to a cell or editing as one undoable edit named for it.
+    /// False outside a table.
+    func editTable(_ command: TableEditing) -> Bool {
+        let selection = selectedRange()
+        guard let table = styler.tables.range(at: selection.location),
+            let edit = command.edit(in: textStorage!.mutableString, table: table, selection: selection)
+        else { return false }
+        if edit.range.length == 0, edit.replacement.isEmpty {
+            setSelectedRange(edit.selection)
+            scrollRangeToVisible(edit.selection)
+            return true
+        }
+        history.perform(command.name) {
+            guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+            textStorage!.replaceCharacters(in: edit.range, with: edit.replacement)
+            setSelectedRange(edit.selection)
+            didChangeText()
+        }
+        return true
+    }
+
+    /// Format > Insert Row Above, Row Below, Column Left and Column Right, by the `TableEditing` in the sender's tag.
+    @objc func editTableItem(_ sender: Any?) {
+        guard !hasMarkedText(), let command = (sender as? NSMenuItem).flatMap({ TableEditing(rawValue: $0.tag) }), editTable(command) else {
+            return NSSound.beep()
+        }
+    }
+
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(format(_:)) { return isEditable }
+        if menuItem.action == #selector(editTableItem(_:)) { return isEditable && styler.tables.range(at: selectedRange().location) != nil }
         if menuItem.action == #selector(keepChange(_:)) || menuItem.action == #selector(revertChange(_:)) {
             return changeToDecide != nil
         }

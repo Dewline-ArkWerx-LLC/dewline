@@ -176,6 +176,7 @@ final class LiveFile {
         else { return }
         do throws(ChangeEngine.Failure) {
             try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: before)
+            Task { @MainActor in NotificationCenter.default.post(name: changesDidChange, object: nil) }
         } catch {
             log.error("A closed file's write was not kept: \(String(describing: error), privacy: .public)")
         }

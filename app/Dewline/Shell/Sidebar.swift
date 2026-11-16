@@ -502,10 +502,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// A folder's chevron turns as it opens and closes.
+    /// The chevron, and the roll-up a closed folder shows in place of its notes' badges.
     private func reloadChevron(_ node: SidebarNode) {
         let row = outlineView.row(forItem: node)
         guard row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarFileCell else { return }
-        cell.setExpanded(outlineView.isItemExpanded(node))
+        show(node, in: cell)
     }
 
     // MARK: The header
@@ -578,21 +579,29 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     // MARK: Waiting changes and git
 
-    /// Counts each note's undecided changes by writer, from the window's tabs, as the Keep bar does.
+    /// Counts each note's undecided changes by writer, from the window's tabs, as Activity does; a note changed while
+    /// closed gets its writer without a count.
     @objc private func changesChanged() {
         guard filled else { return }
         var waiting: [String: [WaitingCount]] = [:]
+        for note in Review.closedNotes() {
+            let path = note.url.standardizedFileURL.path
+            let writer = MarkWriter(note.origin)
+            if !(waiting[path] ?? []).contains(where: { $0.writer.name == writer.name }) {
+                waiting[path, default: []].append(WaitingCount(writer: writer, count: nil))
+            }
+        }
         for live in Review.files(in: view.window) {
             var counts: [WaitingCount] = []
             for change in live.changes.values where change.marked {
                 let writer = MarkWriter(change.origin)
                 if let index = counts.firstIndex(where: { $0.writer.name == writer.name }) {
-                    counts[index] = WaitingCount(writer: writer, count: counts[index].count + 1)
+                    counts[index] = WaitingCount(writer: writer, count: (counts[index].count ?? 0) + 1)
                 } else {
                     counts.append(WaitingCount(writer: writer, count: 1))
                 }
             }
-            if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count > $1.count } }
+            if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count ?? 0 > $1.count ?? 0 } }
         }
         waitingChanges = waiting
         refreshRows()
@@ -610,8 +619,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         switch node.kind {
         case .entry(let entry):
             let path = entry.url.standardizedFileURL.path
-            cell.show(entry, gone: false, expanded: entry.isFolder && outlineView.isItemExpanded(node),
-                waiting: node === fileNode ? [] : waitingChanges[path] ?? [], git: gitStates?.state(of: entry.url))
+            let expanded = entry.isFolder && outlineView.isItemExpanded(node)
+            let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : node === fileNode ? [] : waitingChanges[path] ?? []
+            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: gitStates?.state(of: entry.url))
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
@@ -619,6 +629,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         default:
             break
         }
+    }
+
+    /// A closed folder's roll-up: each writer with changes waiting in a note under it, without counts.
+    private func rollUp(under folder: String) -> [WaitingCount] {
+        let open = fileNode?.url?.standardizedFileURL.path
+        var writers: [WaitingCount] = []
+        for (path, counts) in waitingChanges.sorted(by: { $0.key < $1.key }) where path.hasPrefix(folder + "/") && path != open {
+            for count in counts where !writers.contains(where: { $0.writer.name == count.writer.name }) {
+                writers.append(WaitingCount(writer: count.writer, count: nil))
+            }
+        }
+        return writers
     }
 
     /// The row's indent guides: one per enclosing folder, under its chevron.

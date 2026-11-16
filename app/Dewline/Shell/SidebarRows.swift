@@ -33,19 +33,22 @@ extension GitFileState {
     }
 }
 
-/// One writer's undecided changes in a note.
+/// One writer's undecided changes in a note. The count is nil for a note changed while closed, whose changes are
+/// counted when it opens, and for a closed folder's roll-up.
 struct WaitingCount {
     let writer: MarkWriter
-    let count: Int
+    let count: Int?
 
-    /// "Codex: 2 changes waiting".
+    /// "Codex: 2 changes waiting", "Codex: changes waiting".
     var tip: String {
-        "\(writer.name): \(count) \(count == 1 ? "change" : "changes") waiting"
+        guard let count else { return "\(writer.name): changes waiting" }
+        return "\(writer.name): \(count) \(count == 1 ? "change" : "changes") waiting"
     }
 
     /// "2 Codex changes waiting".
     var spoken: String {
-        "\(count) \(writer.name) \(count == 1 ? "change" : "changes") waiting"
+        guard let count else { return "\(writer.name) changes waiting" }
+        return "\(count) \(writer.name) \(count == 1 ? "change" : "changes") waiting"
     }
 }
 
@@ -367,13 +370,16 @@ final class SidebarFileCell: NSTableCellView {
 
 /// The writer badge: a 16 pt capsule, radius 4, in the writer's ink at 14%, holding a 3 x 10 rule in that ink and the
 /// count in SF Mono 11 medium `ink`. The count is every undecided change in the note; the ink is the writer with most.
+/// Without a count (a note changed while closed, a closed folder holding changes) it is the rule alone, one per
+/// writer.
 final class WaitingBadge: NSView {
     static let height: CGFloat = 16
     private static let font = Chrome.mono(11, weight: .medium)
     private var waiting: [WaitingCount] = []
 
     var isEmpty: Bool { waiting.isEmpty }
-    private var count: String { "\(waiting.reduce(0) { $0 + $1.count })" }
+    private var counted: Bool { waiting.allSatisfy { $0.count != nil } }
+    private var count: String { "\(waiting.reduce(0) { $0 + ($1.count ?? 0) })" }
 
     func show(_ waiting: [WaitingCount]) {
         self.waiting = waiting
@@ -385,12 +391,20 @@ final class WaitingBadge: NSView {
     override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 4 + 3 + 4 + ceil((count as NSString).size(withAttributes: [.font: Self.font]).width) + 5, height: Self.height)
+        guard counted else { return NSSize(width: CGFloat(waiting.count) * 6 - 3, height: Self.height) }
+        return NSSize(width: 4 + 3 + 4 + ceil((count as NSString).size(withAttributes: [.font: Self.font]).width) + 5, height: Self.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let first = waiting.first else { return }
         let appearance = effectiveAppearance
+        guard counted else {
+            for (index, writer) in waiting.enumerated() {
+                writer.writer.color.resolved(for: appearance).setFill()
+                NSBezierPath(roundedRect: NSRect(x: CGFloat(index) * 6, y: (bounds.height - 10) / 2, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+            }
+            return
+        }
         let ink = first.writer.color.resolved(for: appearance)
         ink.withAlphaComponent(0.14).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()

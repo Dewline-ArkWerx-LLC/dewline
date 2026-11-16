@@ -105,7 +105,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             window.center()
         }
         super.init(window: window)
-        toolbar.window = window
         tabRowHeight = tabRow.heightAnchor.constraint(equalToConstant: 0)
         tabRowHeight.isActive = true
         if let neighbor {
@@ -116,6 +115,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             tabs = TabSet(self)
         }
         tabRow.tabs = tabs
+        // Activity counts the window's tabs' notes, so it gets the window once it has tabs.
+        toolbar.window = window
         window.delegate = self
         sidebar.open = { [weak self] url, newTab in self?.open(url, newTab: newTab) }
         sidebar.jump = { [weak self] heading in self?.jump(to: heading) }

@@ -12,6 +12,7 @@ use blake3::Hash;
 const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const KEEP_NEWEST: usize = 50;
 const HEADER: &[u8] = b"dewline snapshots 1";
+const SEEN: &[u8] = b"dewline seen 1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
@@ -24,6 +25,40 @@ pub struct Snapshot {
     pub origin: String,
     /// Set only by `pin`. A draft is never pinned.
     pub pinned: bool,
+}
+
+/// The version of a file Dewline last saw, and the changes it left
+/// undecided there when its document closed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seen {
+    pub hash: Hash,
+    /// To the millisecond. `see` and `refresh` set it; `prune` reads it.
+    pub time: SystemTime,
+    pub marks: Vec<Mark>,
+    compressed: Vec<u8>,
+}
+
+impl Seen {
+    pub fn bytes(&self) -> io::Result<Vec<u8>> {
+        let bytes = zstd::decode_all(self.compressed.as_slice())?;
+        if blake3::hash(&bytes) != self.hash {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the seen version is damaged",
+            ));
+        }
+        Ok(bytes)
+    }
+}
+
+/// An undecided change: its writer's origin, its UTF-16 range in the seen
+/// version, and the text it replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub origin: String,
+    pub start: u32,
+    pub end: u32,
+    pub original: String,
 }
 
 /// One file's history, oldest first, and its draft.
@@ -44,6 +79,10 @@ struct Index {
 /// Each write is synced in `tmp/`, renamed into place and its folder synced,
 /// so a kill leaves the old file or the new one whole. A blob is in place
 /// before any index names it and is deleted only after no index does.
+///
+/// `seen/` holds one file per path: the version Dewline last saw, whole and
+/// compressed, with the marks left in it. These are written without a sync,
+/// since each is replaced often and a damaged one only reads as missing.
 pub struct Store {
     root: PathBuf,
     /// False skips every sync, for tests of the rules rather than of durability.
@@ -54,7 +93,7 @@ pub struct Store {
 impl Store {
     /// Opens the store at `root`, creating its folders, and sets them to 0700.
     pub fn open(root: &Path) -> io::Result<Store> {
-        for folder in ["", "blobs", "files", "tmp"] {
+        for folder in ["", "blobs", "files", "seen", "tmp"] {
             let folder = root.join(folder);
             DirBuilder::new()
                 .recursive(true)
@@ -142,6 +181,73 @@ impl Store {
         self.write(&index)
     }
 
+    /// Notes `bytes` as the version of the file at `path` Dewline last saw,
+    /// with `marks` left undecided in it.
+    pub fn see(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        marks: &[Mark],
+        now: SystemTime,
+    ) -> io::Result<()> {
+        let seen = Seen {
+            hash: blake3::hash(bytes),
+            time: now,
+            marks: marks.to_vec(),
+            compressed: zstd::encode_all(bytes, 0)?,
+        };
+        let _lock = self.lock()?;
+        self.place("seen", &key(path), &serialize_seen(path, &seen)?, false)
+    }
+
+    /// The version of the file at `path` Dewline last saw, if the store
+    /// holds it whole.
+    pub fn seen(&self, path: &Path) -> io::Result<Option<Seen>> {
+        match fs::read(self.root.join("seen").join(key(path))) {
+            Ok(bytes) => Ok(parse_seen(&bytes).and_then(|(at, seen)| (at == path).then_some(seen))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Notes `bytes` as the seen version of the file at `path` when it has
+    /// none, and dates one that holds them to `now` once it is older than
+    /// `stale`, so `prune` keeps it. One that holds other bytes stays.
+    pub fn note(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        now: SystemTime,
+        stale: Duration,
+    ) -> io::Result<()> {
+        let _lock = self.lock()?;
+        let seen = match self.seen(path)? {
+            None => Seen {
+                hash: blake3::hash(bytes),
+                time: now,
+                marks: Vec::new(),
+                compressed: zstd::encode_all(bytes, 0)?,
+            },
+            Some(seen)
+                if seen.hash == blake3::hash(bytes)
+                    && now.duration_since(seen.time).unwrap_or_default() >= stale =>
+            {
+                Seen { time: now, ..seen }
+            }
+            Some(_) => return Ok(()),
+        };
+        self.place("seen", &key(path), &serialize_seen(path, &seen)?, false)
+    }
+
+    /// Drops the seen version of the file at `path`.
+    pub fn forget(&self, path: &Path) -> io::Result<()> {
+        let _lock = self.lock()?;
+        match fs::remove_file(self.root.join("seen").join(key(path))) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     /// Gives the newest history entry of the file at `path` that holds the
     /// bytes `hash` names, from `from`, the origin `to`: a writer named after
     /// its bytes were kept. False when no entry matches.
@@ -214,7 +320,8 @@ impl Store {
 
     /// Drops each history entry that is older than 30 days, unpinned and not
     /// among its file's newest 50, and each draft older than 30 days whose
-    /// file is not in `open`, the files with a document. Then deletes the
+    /// file is not in `open`, the files with a document, and each seen
+    /// version older than 30 days or whose file is gone. Then deletes the
     /// blobs no snapshot names and whatever killed writes left in `tmp/`. A
     /// file in `files/` that is not a sound index, hidden files aside, stops
     /// it before any blob is deleted.
@@ -253,6 +360,16 @@ impl Store {
                 self.write(&index)?;
             }
             named.extend(index.history.iter().chain(&index.draft).map(|s| s.hash));
+        }
+        for file in fs::read_dir(self.root.join("seen"))? {
+            let file = file?.path();
+            let keep = parse_seen(&fs::read(&file)?).is_some_and(|(path, seen)| {
+                (seen.time >= cutoff || open.contains(&path.as_path()))
+                    && fs::symlink_metadata(&path).is_ok()
+            });
+            if !keep {
+                fs::remove_file(&file)?;
+            }
         }
         step("prune");
         for blob in fs::read_dir(self.root.join("blobs"))? {
@@ -351,6 +468,12 @@ impl Store {
 
     /// Puts `bytes` at `folder/name` through a synced file in `tmp/`.
     fn replace(&self, folder: &str, name: &str, bytes: &[u8]) -> io::Result<()> {
+        self.place(folder, name, bytes, true)
+    }
+
+    /// Puts `bytes` at `folder/name` through a file in `tmp/`, synced when
+    /// `synced`.
+    fn place(&self, folder: &str, name: &str, bytes: &[u8], synced: bool) -> io::Result<()> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -367,7 +490,7 @@ impl Store {
         let target = self.root.join(folder).join(name);
         let written = file
             .write_all(bytes)
-            .and_then(|()| self.sync(&file))
+            .and_then(|()| if synced { self.sync(&file) } else { Ok(()) })
             .and_then(|()| {
                 step(folder);
                 fs::rename(&temp, &target)
@@ -377,6 +500,9 @@ impl Store {
             let _ = fs::remove_file(&temp);
         }
         written?;
+        if !synced {
+            return Ok(());
+        }
         self.sync(&File::open(self.root.join(folder))?)
     }
 
@@ -507,6 +633,81 @@ fn parse(bytes: &[u8]) -> Option<Index> {
         }
     }
     Some(index)
+}
+
+/// Escapes a mark's field: `escape`, and spaces, which part its fields.
+fn field(bytes: &[u8]) -> Vec<u8> {
+    let mut escaped = Vec::with_capacity(bytes.len());
+    for byte in escape(bytes) {
+        match byte {
+            b' ' => escaped.extend_from_slice(b"%20"),
+            _ => escaped.push(byte),
+        }
+    }
+    escaped
+}
+
+/// A seen version as `parse_seen` reads it.
+fn serialize_seen(path: &Path, seen: &Seen) -> io::Result<Vec<u8>> {
+    let mut bytes = SEEN.to_vec();
+    bytes.push(b'\n');
+    bytes.extend(escape(path.as_os_str().as_bytes()));
+    writeln!(
+        bytes,
+        "\n{} {} {}",
+        seen.hash.to_hex(),
+        millis(seen.time),
+        seen.marks.len()
+    )?;
+    for mark in &seen.marks {
+        write!(bytes, "{} {} ", mark.start, mark.end)?;
+        bytes.extend(field(mark.origin.as_bytes()));
+        bytes.push(b' ');
+        bytes.extend(field(mark.original.as_bytes()));
+        bytes.push(b'\n');
+    }
+    bytes.extend_from_slice(&seen.compressed);
+    Ok(bytes)
+}
+
+/// Reads a seen version: a header line, the escaped path, a line with the
+/// hash, milliseconds and number of marks, a line per mark with its start,
+/// end, origin and original text, then the version zstd-compressed.
+fn parse_seen(bytes: &[u8]) -> Option<(PathBuf, Seen)> {
+    let mut rest = bytes;
+    let mut line = || {
+        let end = rest.iter().position(|&byte| byte == b'\n')?;
+        let line = &rest[..end];
+        rest = &rest[end + 1..];
+        Some(line)
+    };
+    if line()? != SEEN {
+        return None;
+    }
+    let path = PathBuf::from(OsString::from_vec(unescape(line()?)?));
+    let number = |field: &[u8]| std::str::from_utf8(field).ok()?.parse::<u64>().ok();
+    let text = |field: &[u8]| String::from_utf8(unescape(field)?).ok();
+    let mut fields = line()?.split(|&byte| byte == b' ');
+    let hash = Hash::from_hex(fields.next()?).ok()?;
+    let time = UNIX_EPOCH + Duration::from_millis(number(fields.next()?)?);
+    let count = number(fields.next()?)?;
+    let mut marks = Vec::new();
+    for _ in 0..count {
+        let mut fields = line()?.split(|&byte| byte == b' ');
+        marks.push(Mark {
+            start: u32::try_from(number(fields.next()?)?).ok()?,
+            end: u32::try_from(number(fields.next()?)?).ok()?,
+            origin: text(fields.next()?)?,
+            original: text(fields.next()?)?,
+        });
+    }
+    let seen = Seen {
+        hash,
+        time,
+        marks,
+        compressed: rest.to_vec(),
+    };
+    Some((path, seen))
 }
 
 /// Test builds die at the step DEWLINE_STORE_KILL names, as a kill would.

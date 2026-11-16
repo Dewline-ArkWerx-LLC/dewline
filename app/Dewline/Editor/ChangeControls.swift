@@ -217,16 +217,15 @@ final class ConflictCard: NSView, Hanging {
 /// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 change" sits on the change's first text baseline
 /// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column. Where the margin is
 /// narrower than the stamp plus that 26 pt and a 24 pt gutter, it folds into a 30 pt bar under the block holding the
-/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. The cursor
-/// bar stands on the page just before Keep's leading edge: no dark orange reaches 3:1 on both the dark paper and
-/// Keep's cream fill.
+/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. No cursor
+/// bar: no dark orange reaches 3:1 on Keep's cream fill, and in the gap it read as a separator.
 @MainActor
 final class ChangeStamp: NSView {
     static let barHeight: CGFloat = 30
     /// From the stamp's right edge to the text column, and the least margin left of the stamp.
     static let inset: CGFloat = 26
     static let gutter: CGFloat = 24
-    /// Between Revert and Keep, where the cursor bar stands.
+    /// Between Revert and Keep.
     private static let gap: CGFloat = 10
 
     private let revert: StampButton
@@ -391,10 +390,6 @@ final class ChangeStamp: NSView {
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         line.draw(at: NSPoint(x: textX, y: baseline - ascent))
-        // The 2 x 12 pt cursor bar, centered on Keep in the gap before it.
-        ThemeStore.shared.color(.cursor).setFill()
-        let bar = NSRect(x: keep.frame.minX - Self.gap / 2 - 1, y: keep.frame.midY - 6, width: 2, height: 12)
-        NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
     }
 }
 

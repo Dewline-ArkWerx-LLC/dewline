@@ -161,8 +161,9 @@
       <ol class="steps">
         <li><b>Click Set Up</b> on the status bar line “Agent edits aren't marked yet”, or in Settings &gt; Agents.</li>
         <li><b>Confirm the files it changes.</b> Each keeps a backup beside it.</li>
-        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex, select each Dewline hook and press <kbd>t</kbd>.</li>
+        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex and trust each Dewline hook. Dewline can't see that trust, so Settings shows Codex's hooks as Added either way.</li>
       </ol>
+      <p>If you move or rename Dewline.app, the hooks show as Not set up; Set Up points them at the app's new place, and Codex asks for trust again.</p>
       <p>In Terminal, <a href="/docs/cli/#doctor"><code>dewline doctor --install-hooks</code></a> does the same.</p>
 
       <h2 id="decisions">Let agents see what you reverted</h2>
@@ -199,17 +200,17 @@ and don't redo a change the user reverted.</code></pre>
           <tbody>
             <tr><th scope="row">Claude Code</th><td>Edit, MultiEdit, Write. Read holds the file and changes nothing.</td><td>PreToolUse and PostToolUse for <code>Read|Edit|MultiEdit|Write</code>; Stop, StopFailure, UserPromptSubmit, SessionEnd, InstructionsLoaded</td></tr>
             <tr><th scope="row">Codex</th><td><code>apply_patch</code>, one claim per file the patch adds, updates, deletes or moves</td><td>PreToolUse and PostToolUse for <code>^apply_patch$</code></td></tr>
-            <tr><th scope="row">Cursor</th><td>None. Its hooks report the end of each turn only.</td><td>preToolUse, postToolUse, stop</td></tr>
+            <tr><th scope="row">Cursor</th><td>None. Its edits show as from another app.</td><td>None</td></tr>
             <tr><th scope="row">Gemini CLI</th><td>None from Terminal. Its hooks carry no call id.</td><td>None</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Cursor's hooks carry call ids. As of 30 October 2026, Cursor documents no <code>tool_input</code> for its <code>Write</code> tool, so nothing can declare what an edit wrote.</p>
+      <p>Cursor's tool hooks carry call ids, but as of 16 November 2026 Cursor documents no <code>tool_input</code> for its <code>Write</code> tool, and its <code>afterFileEdit</code> hook has no call id. Nothing can declare what an edit wrote, so Dewline installs no Cursor hooks.</p>
       </details>
       <details id="unknown">
         <summary>What shows as another app</summary>
       <ul>
-        <li>Edits through a shell: Claude Code's Bash tool, Codex's shell, Cursor's terminal, <code>codex exec</code>, and any edit that skips the hooks.</li>
+        <li>Edits through a shell: Claude Code's Bash tool, Codex's shell, Cursor's terminal and agent, <code>codex exec</code>, and any edit that skips the hooks.</li>
         <li>A call whose result Dewline can't compute exactly. That includes an Edit of a file with CR or CRLF line endings, or of a file that isn't plain UTF-8. It also includes a Codex patch that would stop partway. A file over 64 MB gets no declared hash.</li>
         <li>Sync apps, scripts and every other app.</li>
       </ul>
@@ -257,16 +258,6 @@ and don't redo a change the user reverted.</code></pre>
   "hooks": {
     "PreToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook codex"}]}],
     "PostToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook codex"}]}]
-  }
-}</code></pre>
-        </div>
-        <div class="code" data-lang="~/.cursor/hooks.json">
-<pre tabindex="0"><code>{
-  "version": 1,
-  "hooks": {
-    "preToolUse": [{"command": "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook cursor"}],
-    "postToolUse": [{"command": "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook cursor"}],
-    "stop": [{"command": "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook cursor"}]
   }
 }</code></pre>
         </div>

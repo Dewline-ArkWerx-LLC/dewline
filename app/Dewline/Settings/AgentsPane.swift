@@ -2,11 +2,10 @@ import AppKit
 import SwiftUI
 
 /// What `dewline doctor` reports: whether the command runs, from the PATH or else inside the app, and whether each
-/// agent's settings carry every hook that names its writes.
+/// agent's settings carry every hook that names its writes, each running a command that exists.
 struct HookStatus: Equatable, Sendable {
     var claude: Bool
     var codex: Bool
-    var cursor = false
     /// The `dewline` on the PATH, if any.
     var onPath: String?
     /// The doctor's version line, or nil when the command didn't run.
@@ -39,7 +38,7 @@ struct HookStatus: Equatable, Sendable {
             lines.contains { $0.hasPrefix("  \(agent): installed in ") }
         }
         return HookStatus(
-            claude: installed("Claude Code"), codex: installed("Codex"), cursor: installed("Cursor"), onPath: onPath,
+            claude: installed("Claude Code"), codex: installed("Codex"), onPath: onPath,
             version: lines.first { $0.hasPrefix("Version: ") }.map { String($0.dropFirst("Version: ".count)) }
         )
     }
@@ -58,9 +57,13 @@ struct AgentsPane: View {
     var body: some View {
         SettingsPage {
             SettingsSection(title: "Hooks", note: "Hooks tell Dewline which agent wrote a change.") {
-                SettingsRow(label: "Claude Code") { installed(hooks.claude) }
-                SettingsRow(label: "Codex", detail: "In Codex, type /hooks and trust Dewline\u{2019}s.") { installed(hooks.codex) }
-                SettingsRow(label: "Cursor") { installed(hooks.cursor) }
+                SettingsRow(label: "Claude Code") { status(hooks.claude ? "Installed" : nil) }
+                SettingsRow(label: "Codex", detail: "Codex runs them once you trust them: type /hooks in Codex.") {
+                    status(hooks.codex ? "Added" : nil)
+                }
+                SettingsRow(label: "Cursor", detail: "Cursor\u{2019}s hooks don\u{2019}t say what an edit wrote.") {
+                    status("Edits show as Another app", muted: true)
+                }
                 SettingsRow(label: "") {
                     Button("Set Up All Hooks\u{2026}") { NSApp.sendAction(Self.setUpHooks, to: nil, from: nil) }
                         .fixedSize()
@@ -74,10 +77,10 @@ struct AgentsPane: View {
     /// Answered by HookSetup, which lists the files the hooks change before it installs them.
     static let setUpHooks = #selector(AppDelegate.setUpHooks(_:))
 
-    /// "Installed", or "Not set up".
-    private func installed(_ on: Bool) -> some View {
-        Text(on ? "Installed" : "Not set up")
+    /// `text`, or "Not set up" in the muted ink when it is nil.
+    private func status(_ text: String?, muted: Bool = false) -> some View {
+        Text(text ?? "Not set up")
             .font(Station.label)
-            .foregroundStyle(Station.color(on ? .ink : .ink2))
+            .foregroundStyle(Station.color(text == nil || muted ? .ink2 : .ink))
     }
 }

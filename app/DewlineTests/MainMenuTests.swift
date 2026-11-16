@@ -22,14 +22,14 @@ struct MainMenuTests {
     ]
 
     /// The items with a shortcut in the menu bar MainMenu builds, in menu order. AppKit's own additions, such as
-    /// Emoji & Symbols, are not in it.
+    /// Emoji & Symbols, and hidden alternates such as Zoom In's ⌘= are not in it.
     private func shortcuts() -> [(path: String, title: String, key: KeyEquivalent)] {
         var found: [(path: String, title: String, key: KeyEquivalent)] = []
         func walk(_ menu: NSMenu, _ menus: [String]) {
             for item in menu.items {
                 if let submenu = item.submenu {
                     walk(submenu, menus + [submenu.title])
-                } else if !item.keyEquivalent.isEmpty {
+                } else if !item.keyEquivalent.isEmpty, !item.isHidden {
                     let key = KeyEquivalent(item.keyEquivalent, item.keyEquivalentModifierMask)
                     found.append((menus.joined(separator: " › "), item.title, key))
                 }
@@ -53,6 +53,38 @@ struct MainMenuTests {
             // VoiceOver's VO key is ⌃⌥, so every ⌃⌥ shortcut is a VoiceOver command.
             #expect(!shortcut.key.modifiers.isSuperset(of: [.control, .option]), "\(item) takes \(shortcut.key.glyphs) from VoiceOver")
         }
+    }
+
+    /// ⌘= and ⌘+ zoom in, ⌘- zooms out and ⌘0 is Actual Size, which Body Text gave up; the size is the one setting.
+    @Test func zoomKeysStepTheTextSizeAndActualSizeRestoresIt() throws {
+        let windows = NSApp.windowsMenu
+        let menu = MainMenu.build()
+        NSApp.windowsMenu = windows
+        #expect(shortcuts().first { $0.key.glyphs == "⌘0" }?.title == "Actual Size")
+        #expect(shortcuts().first { $0.title == "Body Text" } == nil)
+        let store = ThemeStore.shared
+        let saved = store.bodySize
+        defer { store.bodySize = saved }
+        store.bodySize = ThemeStore.factory.bodySize
+        func press(_ characters: String, _ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags = .command) throws -> Bool {
+            let event = try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode
+            ))
+            return menu.performKeyEquivalent(with: event)
+        }
+        #expect(try press("=", 24))
+        #expect(store.bodySize == ThemeStore.factory.bodySize + 1)
+        #expect(try press("+", 24, [.command, .shift]))
+        #expect(store.bodySize == ThemeStore.factory.bodySize + 2)
+        #expect(try press("-", 27))
+        #expect(store.bodySize == ThemeStore.factory.bodySize + 1)
+        #expect(try press("0", 29))
+        #expect(store.bodySize == ThemeStore.factory.bodySize)
+        #expect(UserDefaults.standard.double(forKey: "DewlineBodySize") == ThemeStore.factory.bodySize)
+        store.bodySize = ThemeStore.bodySizes.upperBound
+        store.zoom(by: 1)
+        #expect(store.bodySize == ThemeStore.bodySizes.upperBound)
     }
 
     /// DEWLINE_KEYBOARD_DOC (TEST_RUNNER_DEWLINE_KEYBOARD_DOC through xcodebuild) writes both files before comparing.

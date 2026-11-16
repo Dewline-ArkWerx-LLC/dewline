@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+import UniformTypeIdentifiers
 @testable import Dewline
 
 /// An editor in a window that is never ordered front.
@@ -258,6 +259,43 @@ struct ImagePasteTests {
         #expect(try Data(contentsOf: taken) == Data("keep".utf8))
         editor.undo()
         #expect(editor.text == "Hi ")
+    }
+
+    @Test func pastedJPEGAndGIFKeepTheirBytesAndTIFFBecomesPNG() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "dewline-paste-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let date = Date().formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        let jpeg = try #require(bitmap.representation(using: .jpeg, properties: [:]))
+        let tiff = try #require(bitmap.tiffRepresentation)
+        let gif = folder.appending(path: "dropped.gif")
+        try #require(bitmap.representation(using: .gif, properties: [:])).write(to: gif)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("dev.arkwerx.dewline.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let editor = Editor("")
+        editor.view.documentFolder = folder
+
+        pasteboard.clearContents()
+        pasteboard.setData(jpeg, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+        #expect(editor.view.readablePasteboardTypes.contains(NSPasteboard.PasteboardType(UTType.jpeg.identifier)))
+        #expect(editor.view.insertImages(from: pasteboard))
+        #expect(try Data(contentsOf: folder.appending(path: "image-\(date)-1.jpeg")) == jpeg)
+
+        pasteboard.clearContents()
+        pasteboard.writeObjects([gif as NSURL])
+        #expect(editor.view.insertImages(from: pasteboard))
+        #expect(try Data(contentsOf: folder.appending(path: "image-\(date)-1.gif")) == Data(contentsOf: gif))
+
+        pasteboard.clearContents()
+        pasteboard.setData(tiff, forType: .tiff)
+        #expect(editor.view.insertImages(from: pasteboard))
+        let png = try Data(contentsOf: folder.appending(path: "image-\(date)-1.png"))
+        #expect(png.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(editor.text == "![](image-\(date)-1.jpeg)![](image-\(date)-1.gif)![](image-\(date)-1.png)")
     }
 
     @Test func textOnThePasteboardPastesAsText() {

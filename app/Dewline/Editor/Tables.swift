@@ -239,6 +239,11 @@ final class Tables {
         return rows
     }
 
+    /// The lines of the table holding `location`, from its head to its last row.
+    func range(at location: Int) -> NSRange? {
+        table(at: location)?.range
+    }
+
     /// The table holding the line at `location`.
     private func table(at location: Int) -> Table? {
         guard var head = block(at: location), head.kind == .tableHead || head.kind == .tableRow else { return nil }

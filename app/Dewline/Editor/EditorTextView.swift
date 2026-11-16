@@ -190,7 +190,8 @@ final class EditorTextView: CaretTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         fitColumn(to: newSize.width)
-        super.setFrameSize(newSize)
+        // A folded stamp under the note's last block hangs below the text.
+        super.setFrameSize(NSSize(width: newSize.width, height: max(newSize.height, marks.reach)))
     }
 
     /// Centers the column at the measure, with margins of at least 32 pt; a narrower view fills. Typewriter lets the

@@ -78,6 +78,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     private var stamp: ChangeStamp?
     /// Where the folded stamp hangs.
     private var fold: Fold?
+    /// The height the text view keeps to hold a folded stamp below the note's last line, else 0.
+    private(set) var reach: CGFloat = 0
     private var dirty = false
     private var observing: NSView?
 
@@ -87,12 +89,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     private static let ruleInset: CGFloat = 17
 
     /// The folded stamp's place: in space reserved after `target`'s paragraph, or before it (`before`) when the block
-    /// holding `change`, which ends at `last`, is drawn and takes no space after it.
+    /// holding `change`, which ends at `last`, is drawn and takes no space after it, or below the text (`end`) when
+    /// the note ends there: the layout drops space after the last paragraph.
     private struct Fold: Equatable {
         let change: UInt64
         let last: Int
         let target: Int
         let before: Bool
+        var end = false
     }
 
     override var isFlipped: Bool { true }
@@ -213,7 +217,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     func space(in range: NSRange) -> [(anchor: Int, height: CGFloat, before: Bool)] {
         var space = hangers.values.filter { NSLocationInRange($0.anchor, range) && !Self.isInline($0.view) }
             .map { ($0.anchor, $0.view.frame.height + 2 * Self.gap, false) }
-        if let fold, NSLocationInRange(fold.target, range) { space.append((fold.target, ChangeStamp.barHeight + 2 * Self.gap, fold.before)) }
+        if let fold, !fold.end, NSLocationInRange(fold.target, range) { space.append((fold.target, ChangeStamp.barHeight + 2 * Self.gap, fold.before)) }
         return space
     }
 
@@ -479,6 +483,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             stamp?.removeFromSuperview()
             stamp = nil
             setFold(nil)
+            setReach(0)
             return
         }
         let stamp = self.stamp ?? {
@@ -497,6 +502,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: change.origin == .external)
         if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
+            setReach(0)
             let storage = textView.textStorage!
             let probe = change.range.length > 0 ? change.range
                 : NSRange(location: min(change.range.location, max(storage.length - 1, 0)), length: storage.length > 0 ? 1 : 0)
@@ -522,7 +528,23 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             guard let y else { return stamp.isHidden = true }
             stamp.isHidden = false
             stamp.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
+            setReach(fold.end ? stamp.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
         }
+    }
+
+    /// The text view sizes itself to its text on the run loop's next pass, outside the layout that asked, and keeps
+    /// at least `reach`.
+    private func setReach(_ reach: CGFloat) {
+        guard reach != self.reach else { return }
+        self.reach = reach
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let textView = self.textView else { return }
+                // sizeToFit leaves a view that already fits its text alone, so a taller reach sets the size itself.
+                if self.reach > textView.frame.height { textView.setFrameSize(textView.frame.size) } else { textView.sizeToFit() }
+            }
+        }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
     }
 
     /// Under the block holding the change: after its last paragraph, or before the next paragraph not drawn as a block
@@ -536,12 +558,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         func drawn(_ paragraph: NSRange) -> Bool {
             paragraph.length > 0 && storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) != nil
         }
-        guard drawn(paragraph) else { return Fold(change: id, last: last, target: last, before: false) }
+        guard drawn(paragraph) else { return Fold(change: id, last: last, target: last, before: false, end: NSMaxRange(paragraph) >= text.length) }
         var next = NSMaxRange(paragraph)
         while next < text.length, drawn(text.paragraphRange(for: NSRange(location: next, length: 0))) {
             next = NSMaxRange(text.paragraphRange(for: NSRange(location: next, length: 0)))
         }
-        return Fold(change: id, last: last, target: min(next, max(text.length - 1, 0)), before: next < text.length)
+        return Fold(change: id, last: last, target: min(next, max(text.length - 1, 0)), before: next < text.length, end: next >= text.length)
     }
 
     private func setFold(_ fold: Fold?) {

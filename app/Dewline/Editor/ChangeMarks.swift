@@ -67,7 +67,11 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     private var tips: [(rect: NSRect, change: UInt64)] = []
     /// The change whose mark the pointer is on in the rail: its rules get a halo and its wash deepens.
     var lit: UInt64? {
-        didSet { if lit != oldValue, !changes.isEmpty { relayout() } }
+        didSet {
+            guard lit != oldValue, !changes.isEmpty else { return }
+            dirty = true
+            textView?.needsLayout = true
+        }
     }
     /// The last change the caret was in.
     private var focus: UInt64?
@@ -82,8 +86,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     /// From the margin rule's left edge to the text column.
     private static let ruleInset: CGFloat = 17
 
-    /// The folded stamp's place: under `last`, the last character of the block holding `change`, in space reserved
-    /// after `target`'s paragraph, or before it (`before`) when the block is drawn and takes no space after it.
+    /// The folded stamp's place: in space reserved after `target`'s paragraph, or before it (`before`) when the block
+    /// holding `change`, which ends at `last`, is drawn and takes no space after it.
     private struct Fold: Equatable {
         let change: UInt64
         let last: Int
@@ -447,19 +451,22 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return holding.first { $0.value.conflict }?.key ?? holding.keys.min()
     }
 
-    /// The change the stamp shows, which Keep and Revert decide when the caret is in no change: the last one the
-    /// caret was in while it waits, else the first in the note.
+    /// The change the stamp shows, which Keep and Revert decide when the caret is in no change: the one holding the
+    /// caret, else the last one the caret was in while it waits, else the first in the note.
     var stamped: UInt64? {
+        if let id = changeHoldingCaret { return id }
         if let focus, changes[focus]?.conflict == false { return focus }
         return changes.filter { !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
     }
 
+    private var changeHoldingCaret: UInt64? {
+        guard let caret = textView?.selectedRanges.first?.rangeValue.location else { return nil }
+        return changes.filter { !$0.value.conflict && (NSLocationInRange(caret, $0.value.range) || caret == NSMaxRange($0.value.range)) }.keys.min()
+    }
+
     /// The caret moved: a change it lands in takes the stamp.
     func caretMoved() {
-        guard let caret = textView?.selectedRanges.first?.rangeValue.location,
-            let id = changes.filter({ !$0.value.conflict && (NSLocationInRange(caret, $0.value.range) || caret == NSMaxRange($0.value.range)) }).keys.min(),
-            id != focus
-        else { return }
+        guard let id = changeHoldingCaret, id != focus else { return }
         focus = id
         dirty = true
         textView?.needsLayout = true
@@ -504,7 +511,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             let fold = fold(for: id, change)
             setFold(fold)
             let y: CGFloat? = if fold.before {
-                self.fragment(at: fold.last).map { textView.textContainerOrigin.y + $0.layoutFragmentFrame.maxY }
+                self.fragment(at: fold.target).map { textView.textContainerOrigin.y + $0.layoutFragmentFrame.minY }
             } else {
                 textBottom(at: fold.last).map { bottom in
                     let paragraph = textView.textStorage!.mutableString.paragraphRange(for: NSRange(location: fold.last, length: 0))
@@ -518,19 +525,23 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         }
     }
 
-    /// Under the block holding the change: after its last paragraph, or before the next one when that paragraph is
-    /// drawn as a block (a table row, a rendered fence) and takes no space after it.
+    /// Under the block holding the change: after its last paragraph, or before the next paragraph not drawn as a block
+    /// when the last one is drawn (a table row, a rendered fence) and takes no space after it.
     private func fold(for id: UInt64, _ change: LiveFile.Change) -> Fold {
         let storage = textView!.textStorage!
         let text = storage.mutableString
         let end = textView!.styler.map.blocks(in: change.range).last.map { NSMaxRange($0.range) } ?? NSMaxRange(text.paragraphRange(for: change.range))
         let last = min(max(end - 1, 0), max(text.length - 1, 0))
         let paragraph = text.paragraphRange(for: NSRange(location: last, length: 0))
-        let drawn = paragraph.length > 0 && storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) != nil
-        if drawn, NSMaxRange(paragraph) < text.length {
-            return Fold(change: id, last: last, target: NSMaxRange(paragraph), before: true)
+        func drawn(_ paragraph: NSRange) -> Bool {
+            paragraph.length > 0 && storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) != nil
         }
-        return Fold(change: id, last: last, target: last, before: false)
+        guard drawn(paragraph) else { return Fold(change: id, last: last, target: last, before: false) }
+        var next = NSMaxRange(paragraph)
+        while next < text.length, drawn(text.paragraphRange(for: NSRange(location: next, length: 0))) {
+            next = NSMaxRange(text.paragraphRange(for: NSRange(location: next, length: 0)))
+        }
+        return Fold(change: id, last: last, target: min(next, max(text.length - 1, 0)), before: next < text.length)
     }
 
     private func setFold(_ fold: Fold?) {

@@ -309,7 +309,16 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             guard !rows.isEmpty else { continue }
             if !change.conflict {
                 painted[id] = change.range
-                for line in lines where line.frame.width >= 0.5 {
+                // A table row that draws its cells hides its source, so the wash goes on the drawn cells instead.
+                let drawn = drawnCells(change.range)
+                for cell in drawn.cells {
+                    let fill = CALayer()
+                    fill.frame = cell
+                    fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
+                    group.addSublayer(fill)
+                    tips.append((cell, id))
+                }
+                for line in lines where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
                     let fill = CALayer()
                     fill.frame = line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
@@ -402,6 +411,46 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             }
         }
         return rows.map(\.rect)
+    }
+
+    /// The drawn cells `range` changes in table rows that draw their cells, in this view's coordinates, and those rows'
+    /// paragraphs.
+    private func drawnCells(_ range: NSRange) -> (cells: [NSRect], rows: [NSRange]) {
+        guard let textView, range.length > 0 else { return ([], []) }
+        let storage = textView.textStorage!
+        let text = storage.mutableString
+        var cells: [NSRect] = []
+        var rows: [NSRange] = []
+        var at = range.location
+        while at < min(NSMaxRange(range), storage.length) {
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+            defer { at = NSMaxRange(paragraph) }
+            guard let line = storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) as? BlockLine,
+                case .table(let rule) = line.role, !rule.cells.isEmpty,
+                let fragment = fragment(at: paragraph.location) as? BlockFragment
+            else { continue }
+            rows.append(paragraph)
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+            for cell in rule.cells where NSIntersectionRange(NSRange(location: paragraph.location + cell.source.location, length: cell.source.length), range).length > 0 {
+                cells.append(NSRect(x: frame.minX + fragment.textStart + cell.x, y: frame.minY, width: cell.width, height: frame.height))
+            }
+        }
+        return (cells, rows)
+    }
+
+    /// The first baseline of a table row that draws its cells, and its line height: its hidden source sits on the
+    /// row's last line.
+    private func drawnBaseline(at index: Int) -> (first: CGFloat, line: CGFloat)? {
+        guard let textView, index < textView.textStorage!.length,
+            let block = textView.textStorage!.attribute(.dewlineBlock, at: index, effectiveRange: nil) as? BlockLine,
+            case .table(let rule) = block.role, let cell = rule.cells.first, cell.text.length > 0,
+            let fragment = fragment(at: index) as? BlockFragment
+        else { return nil }
+        let font = cell.text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont ?? ThemeStore.shared.bodyFont
+        let style = cell.text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let line = max(style?.minimumLineHeight ?? 0, ceil(font.ascender - font.descender + font.leading))
+        // A line taller than its font puts the extra space above the glyphs.
+        return (textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + line + font.descender, line)
     }
 
     /// The range's line segments in this view's coordinates.
@@ -546,9 +595,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             let lines = segments(probe).sorted { $0.frame.minY < $1.frame.minY }
             guard let first = lines.first else { return stamp.isHidden = true }
             stamp.isHidden = false
+            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
+            if let row = drawnBaseline(at: first.location) {
+                return stamp.placeInMargin(right: left - ChangeStamp.inset, first: row.first, second: row.first + row.line)
+            }
             let top = first.frame.minY + first.baseline
             let next = lines.first { $0.frame.minY >= first.frame.maxY - 0.5 }
-            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
             stamp.placeInMargin(right: left - ChangeStamp.inset, first: top, second: next.map { $0.frame.minY + $0.baseline } ?? top + line)
         } else {
             let fold = fold(for: id, change)

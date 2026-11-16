@@ -139,7 +139,8 @@ final class Tables {
             if wraps {
                 let cells = line.cells.prefix(count).enumerated().map { column, cell in
                     let drawn = Self.cell(styled.attributedSubstring(from: cell.content), alignments.count > column ? alignments[column] : .left)
-                    return TableCell(x: starts[column], width: widths[column], text: drawn)
+                    return TableCell(x: starts[column], width: widths[column], text: drawn,
+                        source: NSRange(location: cell.content.location - paragraph.location, length: cell.content.length))
                 }
                 let height = cells.map { $0.text.boundingRect(with: NSSize(width: $0.width, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin).height }
                 styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: line.range)

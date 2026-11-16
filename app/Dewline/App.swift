@@ -11,6 +11,8 @@ enum DewlineApp {
         setenv("XDG_CACHE_HOME", caches.appending(path: "dev.arkwerx.dewline").path, 1)
         FontLibrary.registerAtLaunch()
         let app = NSApplication.shared
+        // The first document controller made is the shared one.
+        _ = DocumentController()
         let delegate = AppDelegate()
         app.delegate = delegate
         app.mainMenu = MainMenu.build()

@@ -34,6 +34,20 @@ final class LiveFile {
     private(set) static var lastEdit = ContinuousClock.now
     /// The file's snapshots, newest first, as last read off the main thread for the Snapshots menu.
     private(set) var snapshots: [ChangeEngine.Snapshot] = []
+    /// Why the last autosave wrote nothing, until one writes.
+    private(set) var refusal: ChangeEngine.Refusal? {
+        didSet {
+            guard oldValue != refusal else { return }
+            NotificationCenter.default.post(name: Self.changesDidChange, object: self)
+        }
+    }
+    /// Text a refused save kept before the file opened, other than the file's, until you restore or discard it.
+    private(set) var draft: ChangeEngine.Snapshot? {
+        didSet {
+            guard oldValue != draft else { return }
+            NotificationCenter.default.post(name: Self.changesDidChange, object: self)
+        }
+    }
     private var gitdir: URL?
     private weak var document: MarkdownDocument?
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.engine", qos: .utility)
@@ -41,6 +55,10 @@ final class LiveFile {
     private var debounce: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var autosaving: Task<Void, Never>?
+    /// The first edit since the last autosave ran.
+    private var unsavedSince: ContinuousClock.Instant?
+    /// Refused autosaves in a row, which space their retries.
+    private var retries = 0
     private var refreshing: Task<Void, Never>?
     private var refreshAgain = false
     /// A landing waits for a composition or Writing Tools session to end.
@@ -63,6 +81,11 @@ final class LiveFile {
         watchGit(gitdir)
         arm()
         reloadSnapshots()
+        // Before any save, which runs on the same queue.
+        queue.async { [weak self] in
+            let draft = try? engine.draft(doc)
+            Task { @MainActor in self?.draft = draft }
+        }
     }
 
     /// Follows the editor's edits and input sessions.
@@ -549,21 +572,49 @@ final class LiveFile {
         }
     }
 
+    /// Puts the draft's text in the buffer as one undoable edit, then empties the draft.
+    func restoreDraft() async {
+        guard let draft else { return }
+        self.draft = nil
+        if await restore(draft) { discardDraft() }
+    }
+
+    func discardDraft() {
+        draft = nil
+        let (engine, doc) = (engine, doc)
+        queue.async {
+            do throws(ChangeEngine.Failure) {
+                try engine.discardDraft(doc)
+            } catch {
+                Self.log.error("A draft was not discarded: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    /// The draft a refused save kept, while it holds other bytes than the file.
+    func keptDraft() async -> ChangeEngine.Snapshot? {
+        let (engine, doc) = (engine, doc)
+        return await offMain { try? engine.draft(doc) }
+    }
+
     /// Replaces the buffer with the snapshot's text as one undoable edit; the buffer is snapshotted first.
-    func restore(_ snapshot: ChangeEngine.Snapshot) async {
-        guard let textView = document?.textView else { return }
+    @discardableResult
+    func restore(_ snapshot: ChangeEngine.Snapshot) async -> Bool {
+        guard let textView = document?.textView else { return false }
         let (engine, doc, buffer) = (engine, doc, textView.string)
         let result = await offMain { () -> Result<String, ChangeEngine.Failure> in
             Result { () throws(ChangeEngine.Failure) in try engine.restore(doc, snapshot: snapshot, buffer: buffer) }
         }
+        defer { reloadSnapshots() }
         switch result {
         case .success(let text):
-            guard !closed, document?.textView === textView else { return }
+            guard !closed, document?.textView === textView else { return false }
             textView.replaceAsOneEdit(NSRange(location: 0, length: (textView.string as NSString).length), with: text, named: "Restore Snapshot")
+            return true
         case .failure(let error):
             Self.log.error("A snapshot did not restore: \(String(describing: error), privacy: .public)")
+            return false
         }
-        reloadSnapshots()
     }
 
     func pin(_ snapshot: ChangeEngine.Snapshot, _ pinned: Bool) {
@@ -583,33 +634,63 @@ final class LiveFile {
         if autosaveRefused { Task { await autosave() } }
     }
 
-    /// Autosaves 2 s after the last edit.
+    /// Autosaves 2 s after the last edit, and 10 s after the first unsaved one while typing goes on.
     private func scheduleAutosave() {
+        let now = ContinuousClock.now
+        let since = unsavedSince ?? now
+        unsavedSince = since
         autosaving?.cancel()
         autosaving = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(until: min(now + .seconds(2), since + .seconds(10)))
             guard !Task.isCancelled else { return }
             await self?.autosave()
         }
     }
 
-    /// Saves the buffer unless the engine refuses, which puts it in the file's draft instead.
+    /// Waits before each retry of a refused autosave; the last repeats.
+    private static let retryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15), .seconds(30), .seconds(60)]
+
+    /// Saves the buffer unless the engine refuses, which puts it in the file's draft instead. A refusal whose end
+    /// sends no event is tried again with backoff.
     @discardableResult
     func autosave() async -> ChangeEngine.Refusal? {
         autosaving?.cancel()
         guard let textView = document?.textView else { return nil }
+        unsavedSince = nil
         let refusal = await save(.auto(composing: textView.hasMarkedText(), writingTools: textView.isWritingToolsActive))
         autosaveRefused = refusal != nil
+        self.refusal = refusal
         // A refused autosave writes the draft snapshot instead.
         if refusal != nil { reloadSnapshots() }
+        switch refusal {
+        case nil:
+            retries = 0
+        case .closed?, .readOnly?, .conflict?, .composing?, .writingTools?:
+            break
+        case .stale?, .changed?, .held?, .deleted?, .unreadable?, .io?:
+            // An edit during the save scheduled the next one already.
+            guard unsavedSince == nil else { break }
+            let delay = Self.retryDelays[min(retries, Self.retryDelays.count - 1)]
+            retries += 1
+            autosaving = Task { [weak self] in
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+                await self?.autosave()
+            }
+        }
         return refusal
     }
 
     /// Cmd-S: lands what the file holds, then saves.
     func saveExplicitly() async -> ChangeEngine.Refusal? {
         await refresh()
+        unsavedSince = nil
         let refusal = await save(.explicit)
-        if refusal == nil { autosaveRefused = false }
+        if refusal == nil {
+            autosaveRefused = false
+            self.refusal = nil
+            retries = 0
+        }
         return refusal
     }
 

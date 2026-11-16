@@ -493,6 +493,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// The caret and the top of the page, or nil without a file on the page.
     var place: Place? {
         guard let textView, let scrollView = textView.enclosingScrollView else { return nil }
+        // A scroll that has not drawn yet leaves the viewport laid out at estimates, and laying it out moves the page;
+        // the probe below would land in that stale geometry.
+        textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
         let visible = textView.visibleRect
         // TextKit 2 answers a point in the top inset with an index near the end of the text, so the probe stays below it.
         let top = textView.characterIndexForInsertion(

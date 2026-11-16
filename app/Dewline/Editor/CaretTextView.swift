@@ -1,6 +1,6 @@
 import AppKit
 
-/// The system caret in the accent and solid after five seconds without input, with the streak or landing mark a
+/// The system caret in the cursor orange and solid after five seconds without input, with the streak or landing mark a
 /// jump, a click or a long move shows. Edits, arrows and key repeat always snap.
 class CaretTextView: NSTextView {
     let effects = CaretEffectsView()
@@ -9,12 +9,12 @@ class CaretTextView: NSTextView {
     private var lastInput = DispatchTime.now()
     private var solid = false
 
-    /// The theme's accent, light and dark.
-    static var accent: NSColor {
-        ThemeStore.shared.color(.accent)
+    /// The theme's cursor orange, light and dark.
+    static var cursor: NSColor {
+        ThemeStore.shared.color(.cursor)
     }
 
-    /// Vim's normal mode: a block over the character the caret sits on, in the accent, instead of the bar.
+    /// Vim's normal mode: a block over the character the caret sits on, in the cursor orange, instead of the bar.
     var blockCaret = false {
         didSet {
             guard blockCaret != oldValue else { return }
@@ -40,7 +40,7 @@ class CaretTextView: NSTextView {
         idleTimer = nil
         solid = false
         guard let window else { return }
-        insertionPointColor = Self.accent
+        insertionPointColor = Self.cursor
         if effects.superview == nil {
             effects.frame = bounds
             effects.autoresizingMask = [.width, .height]
@@ -49,7 +49,7 @@ class CaretTextView: NSTextView {
         center.addObserver(self, selector: #selector(keyStateDidChange(_:)), name: NSWindow.didBecomeKeyNotification, object: window)
         center.addObserver(self, selector: #selector(keyStateDidChange(_:)), name: NSWindow.didResignKeyNotification, object: window)
         center.addObserver(self, selector: #selector(storageDidEdit(_:)), name: NSTextStorage.didProcessEditingNotification, object: textStorage)
-        center.addObserver(self, selector: #selector(accentDidChange(_:)), name: ThemeStore.didChange, object: ThemeStore.shared)
+        center.addObserver(self, selector: #selector(cursorDidChange(_:)), name: ThemeStore.didChange, object: ThemeStore.shared)
         let input: NSEvent.EventTypeMask = [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .rotate, .swipe, .smartMagnify]
         monitor = NSEvent.addLocalMonitorForEvents(matching: input) { [weak self] event in
             if let self, event.window === self.window {
@@ -66,8 +66,8 @@ class CaretTextView: NSTextView {
         idleTimer?.cancel()
     }
 
-    @objc private func accentDidChange(_ notification: Notification) {
-        insertionPointColor = Self.accent
+    @objc private func cursorDidChange(_ notification: Notification) {
+        insertionPointColor = Self.cursor
     }
 
     @objc private func keyStateDidChange(_ notification: Notification) {
@@ -224,12 +224,12 @@ class CaretTextView: NSTextView {
         let streaks = level != .off && new != old && visibleRect.origin == visible.origin && visible.contains(old) && visibleRect.contains(new)
         if jumps {
             if streaks {
-                effects.streak(from: old, to: new, color: accentColor)
+                effects.streak(from: old, to: new, color: cursorColor)
             } else if cause == .jump {
-                effects.mark(line(around: new), color: accentColor, fades: level != .off)
+                effects.mark(line(around: new), color: cursorColor, fades: level != .off)
             }
         } else if streaks, selection.length == 0, abs(new.midY - old.midY) >= 1.5 * old.height || abs(selection.location - from) >= 12 {
-            effects.streak(from: old, to: new, color: accentColor)
+            effects.streak(from: old, to: new, color: cursorColor)
         }
     }
 
@@ -260,16 +260,16 @@ class CaretTextView: NSTextView {
             let glyph = convert(window.convertFromScreen(firstRect(forCharacterRange: range, actualRange: nil)), from: nil)
             if glyph.width > 0 { block = NSRect(x: glyph.minX, y: caret.minY, width: glyph.width, height: caret.height) }
         }
-        effects.showBlock(block, color: accentColor.copy(alpha: 0.4))
+        effects.showBlock(block, color: cursorColor.copy(alpha: 0.4))
     }
 
     private func line(around caret: NSRect) -> NSRect {
         NSRect(x: textContainerOrigin.x, y: caret.minY, width: textContainer!.size.width, height: caret.height)
     }
 
-    private var accentColor: CGColor {
+    private var cursorColor: CGColor {
         var color: CGColor?
-        effectiveAppearance.performAsCurrentDrawingAppearance { color = Self.accent.cgColor }
+        effectiveAppearance.performAsCurrentDrawingAppearance { color = Self.cursor.cgColor }
         return color!
     }
 }

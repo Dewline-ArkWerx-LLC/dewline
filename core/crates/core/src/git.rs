@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -6,6 +7,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+pub mod status;
 
 /// A change seen this soon after git releases the index lock counts as seen
 /// under it.
@@ -292,19 +295,71 @@ const DIRECTORY: u32 = 0o040000;
 /// Finds `name` in an index file's bytes, which are untrusted: anything
 /// malformed is Unknown.
 fn lookup(index: &[u8], name: &[u8]) -> Entry {
-    read_index(
-        &mut Reader {
-            bytes: index,
-            at: 0,
-        },
-        name,
-    )
-    .unwrap_or(Entry::Unknown)
+    let Some(index) = parse_index(index) else {
+        return Entry::Unknown;
+    };
+    if index.split {
+        return Entry::Unknown;
+    }
+    let mut found = None;
+    for entry in index.entries.iter().filter(|entry| entry.name == name) {
+        let entry = if entry.stage != 0 {
+            Entry::Unmerged
+        } else if entry.extended & SKIP_WORKTREE != 0 {
+            Entry::Unknown
+        } else if entry.extended & INTENT_TO_ADD != 0 {
+            Entry::Untracked
+        } else {
+            Entry::Staged(entry.id)
+        };
+        found = match (found, entry) {
+            (None, entry) => Some(entry),
+            (Some(Entry::Unmerged), Entry::Unmerged) => Some(Entry::Unmerged),
+            // Staged twice, or both staged and unmerged.
+            _ => return Entry::Unknown,
+        };
+    }
+    match found {
+        Some(entry) => entry,
+        None if index.sparse => Entry::Unknown,
+        None => Entry::Untracked,
+    }
+}
+
+/// One index entry, with the stat data git compares the working tree by.
+struct IndexEntry {
+    name: Vec<u8>,
+    id: Oid,
+    mode: u32,
+    /// 1 to 3 for an unmerged file.
+    stage: u16,
+    extended: u16,
+    mtime: (u32, u32),
+    ino: u32,
+    size: u32,
+}
+
+/// An index file's entries, in its order. A split index keeps entries in
+/// another file; a sparse one stands folders in for the files under them.
+struct Index {
+    entries: Vec<IndexEntry>,
+    split: bool,
+    sparse: bool,
+    /// The cache-tree extension: the tree id the index holds for each
+    /// folder it hasn't changed since the id was written, by path.
+    trees: HashMap<Vec<u8>, Oid>,
+}
+
+fn parse_index(index: &[u8]) -> Option<Index> {
+    read_index(&mut Reader {
+        bytes: index,
+        at: 0,
+    })
 }
 
 /// Reads index versions 2, 3 and 4, as gitformat-index(5) lays them out,
 /// with SHA-1 ids.
-fn read_index(index: &mut Reader, name: &[u8]) -> Option<Entry> {
+fn read_index(index: &mut Reader) -> Option<Index> {
     if index.take(4)? != b"DIRC" {
         return None;
     }
@@ -313,13 +368,13 @@ fn read_index(index: &mut Reader, name: &[u8]) -> Option<Entry> {
         return None;
     }
     let count = index.u32()?;
-    let mut found = None;
+    let mut entries: Vec<IndexEntry> = Vec::new();
     let mut sparse = false;
-    let mut entry_name = Vec::new();
     for _ in 0..count {
         let start = index.at;
         let stat = index.take(40)?;
-        let mode = u32::from_be_bytes(stat.get(24..28)?.try_into().ok()?);
+        let word = |at: usize| Some(u32::from_be_bytes(stat.get(at..at + 4)?.try_into().ok()?));
+        let mode = word(24)?;
         let id = Oid(index.take(20)?.try_into().ok()?);
         let flags = index.u16()?;
         let extended = if flags & EXTENDED == 0 {
@@ -335,14 +390,16 @@ fn read_index(index: &mut Reader, name: &[u8]) -> Option<Entry> {
         // Names of 0xfff bytes or more say 0xfff and end at a NUL.
         let length = usize::from(flags & NAME_MASK);
         let exact = length < usize::from(NAME_MASK);
-        if version == 4 {
+        let name = if version == 4 {
             // The name is the previous one, cut by a varint, plus a suffix.
+            let mut name = entries.last().map_or(Vec::new(), |last| last.name.clone());
             let strip = index.varint()?;
-            entry_name.truncate(entry_name.len().checked_sub(strip)?);
-            entry_name.extend_from_slice(index.until_nul()?);
-            if (exact && entry_name.len() != length) || entry_name.len() < length {
+            name.truncate(name.len().checked_sub(strip)?);
+            name.extend_from_slice(index.until_nul()?);
+            if (exact && name.len() != length) || name.len() < length {
                 return None;
             }
+            name
         } else {
             let named = if exact {
                 index.take(length)?
@@ -363,37 +420,31 @@ fn read_index(index: &mut Reader, name: &[u8]) -> Option<Entry> {
             {
                 return None;
             }
-            entry_name.clear();
-            entry_name.extend_from_slice(named);
-        }
+            named.to_vec()
+        };
         if mode & 0o170000 == DIRECTORY {
             sparse = true;
         }
-        if entry_name != name {
-            continue;
-        }
-        let entry = if flags & 0x3000 != 0 {
-            Entry::Unmerged
-        } else if extended & SKIP_WORKTREE != 0 {
-            Entry::Unknown
-        } else if extended & INTENT_TO_ADD != 0 {
-            Entry::Untracked
-        } else {
-            Entry::Staged(id)
-        };
-        found = match (found, entry) {
-            (None, entry) => Some(entry),
-            (Some(Entry::Unmerged), Entry::Unmerged) => Some(Entry::Unmerged),
-            // Staged twice, or both staged and unmerged.
-            _ => return None,
-        };
+        entries.push(IndexEntry {
+            name,
+            id,
+            mode,
+            stage: (flags >> 12) & 3,
+            extended,
+            mtime: (word(8)?, word(12)?),
+            ino: word(20)?,
+            size: word(36)?,
+        });
     }
     let mut split = false;
+    let mut trees = HashMap::new();
     while index.left() > 20 {
         let signature = index.take(4)?;
         let size = usize::try_from(index.u32()?).ok()?;
-        index.take(size)?;
+        let extension = index.take(size)?;
         match signature {
+            // Only a cache: a damaged one goes unread.
+            b"TREE" => trees = read_trees(extension).unwrap_or_default(),
             b"link" => split = true,
             b"sdir" => sparse = true,
             // Optional extensions start with a capital letter.
@@ -405,12 +456,48 @@ fn read_index(index: &mut Reader, name: &[u8]) -> Option<Entry> {
     if index.left() != 20 {
         return None;
     }
-    Some(match found {
-        _ if split => Entry::Unknown,
-        Some(entry) => entry,
-        None if sparse => Entry::Unknown,
-        None => Entry::Untracked,
+    Some(Index {
+        entries,
+        split,
+        sparse,
+        trees,
     })
+}
+
+/// Reads the cache-tree extension: folders in pre-order, each its name, its
+/// entry count (-1 when changed), its subfolder count, and its tree id.
+fn read_trees(bytes: &[u8]) -> Option<HashMap<Vec<u8>, Oid>> {
+    let mut reader = Reader { bytes, at: 0 };
+    let mut trees = HashMap::new();
+    // The open folders' paths and the subfolders each has left.
+    let mut open: Vec<(Vec<u8>, usize)> = Vec::new();
+    loop {
+        let name = reader.until_nul()?;
+        let path = match open.last_mut() {
+            None => name.to_vec(),
+            Some((parent, left)) => {
+                *left -= 1;
+                if parent.is_empty() {
+                    name.to_vec()
+                } else {
+                    [parent, &b"/"[..], name].concat()
+                }
+            }
+        };
+        let rest = reader.bytes.get(reader.at..)?;
+        let line = reader.take(rest.iter().position(|&byte| byte == b'\n')? + 1)?;
+        let (entries, subtrees) = std::str::from_utf8(line).ok()?.trim_end().split_once(' ')?;
+        if entries.parse::<i64>().ok()? >= 0 {
+            trees.insert(path.clone(), Oid(reader.take(20)?.try_into().ok()?));
+        }
+        open.push((path, subtrees.parse().ok()?));
+        while open.last().is_some_and(|(_, left)| *left == 0) {
+            open.pop();
+        }
+        if open.is_empty() {
+            return (reader.left() == 0).then_some(trees);
+        }
+    }
 }
 
 struct Reader<'a> {
@@ -477,7 +564,7 @@ mod tests {
 
     /// Runs git with no user or system config, so no identity or setting of
     /// the machine's reaches a fixture.
-    fn run(dir: &Path, args: &[&str]) -> Output {
+    pub(super) fn run(dir: &Path, args: &[&str]) -> Output {
         Command::new("git")
             .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -502,7 +589,7 @@ mod tests {
             .unwrap()
     }
 
-    fn git(dir: &Path, args: &[&str]) -> String {
+    pub(super) fn git(dir: &Path, args: &[&str]) -> String {
         let output = run(dir, args);
         assert!(
             output.status.success(),
@@ -513,7 +600,7 @@ mod tests {
     }
 
     /// A repository with `files` added, at its realpath.
-    fn repo(files: &[(&str, &[u8])]) -> (TempDir, PathBuf) {
+    pub(super) fn repo(files: &[(&str, &[u8])]) -> (TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         git(&root, &["init", "-q"]);
@@ -524,7 +611,7 @@ mod tests {
         (dir, root)
     }
 
-    fn write(root: &Path, name: &str, bytes: &[u8]) {
+    pub(super) fn write(root: &Path, name: &str, bytes: &[u8]) {
         let path = root.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();

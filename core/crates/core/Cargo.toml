@@ -13,6 +13,7 @@ name = "dewline_core"
 
 [dependencies]
 blake3 = "=1.8.7"
+flate2 = "=1.1.10"
 imara-diff = { version = "=0.2.0", default-features = false }
 libc = "=0.2.191"
 pulldown-cmark = { version = "=0.13.6", default-features = false }

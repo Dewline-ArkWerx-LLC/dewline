@@ -68,8 +68,8 @@ struct CaretTests {
     @Test func caretTakesTheAccent() throws {
         let caret = try Caret()
         defer { caret.close() }
-        #expect(caret.view.insertionPointColor == CaretTextView.accent)
-        #expect(caret.view.indicator?.color == CaretTextView.accent)
+        #expect(caret.view.insertionPointColor == CaretTextView.cursor)
+        #expect(caret.view.indicator?.color == CaretTextView.cursor)
     }
 
     /// Acceptance test 3 in the test host: solid five seconds after the last input, through NSTextView's own

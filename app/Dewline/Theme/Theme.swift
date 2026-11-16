@@ -97,10 +97,22 @@ extension OKLCH {
     }
 }
 
-/// The one accent, OKLCH, for a light page and a dark one. Every accent in the app reads it through `Token.accent`, so
-/// changing these two values changes the accent everywhere.
+/// The brand's colors, OKLCH, for a light page and a dark one. Every accent in the app reads `accent` through
+/// `Token.accent`; the marks below fill their tokens in every theme that doesn't author them.
 enum Brand {
-    static let accent = (light: OKLCH(l: 0.508, c: 0.072, h: 178), dark: OKLCH(l: 0.769, c: 0.075, h: 176))
+    /// Green, #107460 and #7BC5B2: structure and the system accent.
+    static let accent = (light: OKLCH(l: 0.5009, c: 0.0907, h: 174.5), dark: OKLCH(l: 0.7694, c: 0.0793, h: 176.0))
+    /// Orange from the icon's cursor, #C9482A and #FF8A5C: the caret and the 2 x 12 pt bar beside it. Writers' inks,
+    /// #A8509F / #EBBCE8 for Claude, #3D4AB0 / #95A0F6 for Codex, #296B8D / #81B9DA for any other app. Git's words,
+    /// #7D550B / #BFA067 for modified (also git's ink as a writer), #22603B / #79C796 for new.
+    static let marks: [Token: (light: OKLCH, dark: OKLCH)] = [
+        .cursor: (OKLCH(l: 0.5753, c: 0.1700, h: 34.4), OKLCH(l: 0.7533, c: 0.1546, h: 41.6)),
+        .writerClaude: (OKLCH(l: 0.5686, c: 0.1521, h: 331.4), OKLCH(l: 0.8502, c: 0.0788, h: 328.3)),
+        .writerCodex: (OKLCH(l: 0.4595, c: 0.1615, h: 272.8), OKLCH(l: 0.7318, c: 0.1250, h: 277.3)),
+        .writerApp: (OKLCH(l: 0.5013, c: 0.0852, h: 234.7), OKLCH(l: 0.7590, c: 0.0752, h: 235.0)),
+        .gitModified: (OKLCH(l: 0.4813, c: 0.0969, h: 75.7), OKLCH(l: 0.7207, c: 0.0833, h: 82.0)),
+        .gitAdded: (OKLCH(l: 0.4384, c: 0.0884, h: 154.1), OKLCH(l: 0.7658, c: 0.1052, h: 155.4)),
+    ]
 }
 
 /// A theme's named colors (synthesis 2.1).
@@ -115,10 +127,13 @@ enum Token: String, CaseIterable, Sendable {
     /// are chrome; islandEditor and raised are paper; hairline is rule; signal and glow are the accent; ink3 sits 30%
     /// of the way from ink2 to the paper.
     case frame, islandEditor, islandSide, raised, sunken, keycap, hairline, ink3, signal, glow
+    /// The cursor bar, writers' inks and git's words, from `Brand.marks` unless the theme authors them.
+    case cursor, writerClaude, writerCodex, writerApp, gitModified, gitAdded
 
     static let code: [Token] = [.codeKeyword, .codeString, .codeNumber, .codeType, .codeFunction, .codeComment, .codeTag, .codeInserted, .codeDeleted]
     static let station: [Token] = [.chrome, .rule, .frame, .islandEditor, .islandSide, .raised, .sunken, .keycap, .hairline, .ink3, .signal, .glow]
-    static let required = allCases.filter { !code.contains($0) && !station.contains($0) }
+    static let marks: [Token] = [.cursor, .writerClaude, .writerCodex, .writerApp, .gitModified, .gitAdded]
+    static let required = allCases.filter { !code.contains($0) && !station.contains($0) && !marks.contains($0) }
 
     /// The name in words: "code keyword", "ink 2".
     var label: String {
@@ -176,7 +191,8 @@ struct Theme: Identifiable, Hashable, Sendable {
 
     /// `tokens` with the chrome's roles, stepped off the paper in its own hue so every theme has them: chrome a step
     /// darker than the paper in light and lighter in dark, the rule further, ink3 30% of the way from ink2 to the paper.
-    /// The older roles alias these. Under Increase Contrast the rule takes ink3. A role the theme authors stays.
+    /// The older roles alias these, and the brand's marks fill in. Under Increase Contrast the rule takes ink3. A role
+    /// the theme authors stays.
     static func stationed(_ authored: [Token: OKLCH], increased: Bool) -> [Token: OKLCH] {
         let paper = authored[.paper]!
         let dark = paper.l < 0.5
@@ -189,12 +205,15 @@ struct Theme: Identifiable, Hashable, Sendable {
         let ink3 = authored[.ink3] ?? authored[.ink2]!.mixed(with: paper, by: 0.3)
         let rule = authored[.rule] ?? step(dark ? 0.13 : 0.085)
         let accent = authored[.accent]!
-        let derived: [Token: OKLCH] = [
+        var derived: [Token: OKLCH] = [
             .chrome: chrome, .rule: rule, .ink3: ink3,
             .frame: chrome, .islandSide: chrome, .sunken: chrome, .keycap: chrome,
             .islandEditor: paper, .raised: paper, .hairline: rule,
             .signal: accent, .glow: accent,
         ]
+        for (token, mark) in Brand.marks {
+            derived[token] = dark ? mark.dark : mark.light
+        }
         var tokens = authored.merging(derived) { authored, _ in authored }
         if increased { (tokens[.rule], tokens[.hairline]) = (ink3, ink3) }
         return tokens
@@ -262,25 +281,27 @@ struct Theme: Identifiable, Hashable, Sendable {
 
     var isDarkOnly: Bool { light[.paper]!.l < 0.5 }
 
-    /// The defaults' neutral palette, the same in both: near-white paper and near-black ink by day, the reverse at
-    /// night, all at chroma 0.006 or less, with the brand's accent as the only color.
-    private static let neutral = """
-        paper           0.985 0.002 180   0.175 0.004 180
-        chrome          0.965 0.002 180   0.205 0.004 180
-        ink             0.22  0.005 180   0.93  0.004 180
-        ink2            0.50  0.005 180   0.70  0.005 180
-        rule            0.90  0.003 180   0.30  0.004 180
-        codeBackground  0.955 0.002 180   0.215 0.004 180
-        heading         0.22  0.005 180   0.93  0.004 180
-        link            0.22  0.005 180   0.93  0.004 180
-        selection       0.878 0.002 180   0.281 0.004 180
-        syntax          0.62  0.004 180   0.52  0.004 180
-        sidebarTint     0.965 0.002 180   0.205 0.004 180
-        quoteRule       0.80  0.003 180   0.40  0.004 180
+    /// The defaults' palette: warm paper and green-black ink by day, green-black paper and cream ink at night, a cool
+    /// green-gray chrome, and the brand's green as the accent. Selection is the green at 15% over the paper, the rule
+    /// ink at 12% (cream at 10%) over the chrome.
+    private static let brand = """
+        paper           0.9763 0.007  88.6    0.1918 0.0122 167.1
+        chrome          0.9392 0.0058 153.8   0.2442 0.0108 176.2
+        ink             0.2396 0.0117 167.6   0.9079 0.0186 86.2
+        ink2            0.5071 0.0145 164.4   0.7249 0.014  130.8
+        ink3            0.5583 0.0113 154.9   0.6023 0.0122 149.7
+        rule            0.8646 0.0063 156.2   0.3224 0.0095 162.2
+        codeBackground  0.9495 0.0099 87.5    0.2182 0.0119 167.4
+        heading         0.2396 0.0117 167.6   0.9079 0.0186 86.2
+        link            0.2396 0.0117 167.6   0.9079 0.0186 86.2
+        selection       0.9048 0.0172 162.4   0.2932 0.0246 172.9
+        syntax          0.62   0.01   160     0.52   0.012  165
+        sidebarTint     0.9392 0.0058 153.8   0.2442 0.0108 176.2
+        quoteRule       0.80   0.008  160     0.40   0.01   165
         accent          \(Brand.accent.light.l) \(Brand.accent.light.c) \(Brand.accent.light.h)   \(Brand.accent.dark.l) \(Brand.accent.dark.c) \(Brand.accent.dark.h)
         """
 
-    static let tidewater = Theme("Tidewater", "Near-white paper, near-black ink, one accent color.", neutral)
+    static let tidewater = Theme("Tidewater", "Warm paper, green-black ink, a green accent.", brand)
 
     static let aurora = Theme("Aurora", "Sage paper by day; polar-night navy with green links after dark.", """
         paper           0.988 0.008 160   0.19  0.02  250
@@ -330,7 +351,7 @@ struct Theme: Identifiable, Hashable, Sendable {
         islandSide      -                 0.236 0.043 288
         """)
 
-    static let nightwatch = Theme("Nightwatch", "Near-black paper, light gray ink, one accent color.", neutral)
+    static let nightwatch = Theme("Nightwatch", "Green-black paper, cream ink, a green accent.", brand)
 
     static let carbon = Theme("Carbon", "Onionskin and carbon ink, the manuscript.", """
         paper           0.97  0.003 250   0.185 0.003 260

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Everyone whose changes Dewline marks (D21). Every outside change marks in the accent and shows its writer by name;
-/// collaborators draw in ink2.
+/// Everyone whose changes Dewline marks (D21). Each change marks in its writer's ink (`ThemeStore.writerColor`) and
+/// shows its writer by name.
 enum Writer: String, CaseIterable, Identifiable, Sendable {
     case you, claude, codex, cursor, copilot, gemini, git, unknown, otherMac, collaborator
     /// An agent chatting in the agent panel, over the Agent Client Protocol; the change carries its own name.

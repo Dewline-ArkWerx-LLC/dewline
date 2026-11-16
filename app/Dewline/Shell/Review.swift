@@ -100,12 +100,8 @@ enum Review {
         times[key(origin)]
     }
 
-    /// The notes changed while closed, newest first, which the Keep bar counts and the Changes tab lists.
+    /// The notes changed while closed, newest first, which the Changes tab lists.
     static var closedNotes: () -> [ClosedNote] = { [] }
-
-    static var closedCount: Int {
-        closedNotes().count
-    }
 
     /// "Claude Code · 2:36 PM", or the name alone with no time known.
     static func byline(_ origin: ChangeEngine.Origin, at time: Date?) -> String {

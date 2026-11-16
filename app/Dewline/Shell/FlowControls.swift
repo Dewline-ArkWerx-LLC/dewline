@@ -1,6 +1,6 @@
 import AppKit
 
-/// The neutral colors the Keep bar, the Changes tab and the conflict card draw with, from the theme's paper and ink.
+/// The neutral colors the Changes tab and the conflict card draw with, from the theme's paper and ink.
 @MainActor
 enum FlowColors {
     /// Panels and bars: paper with 2% ink.

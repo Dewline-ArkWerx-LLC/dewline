@@ -134,8 +134,8 @@ struct JourneyTests {
         #expect(vault.text("Dewline/Welcome.md") == "# Mine\n")
     }
 
-    /// Show me a change: Demo's claimed write lands one marked change inside the paragraph that holds the link, and
-    /// the Keep bar names it; Keep ends the demo.
+    /// Show me a change: Demo's claimed write lands one marked change inside the paragraph that holds the link, the
+    /// stamp names it, and the stamp's Keep ends the demo.
     @Test func j1ShowMeAChangeLandsInTheParagraphWithTheLink() async throws {
         let vault = try Vault([:])
         defer { vault.remove() }
@@ -149,12 +149,11 @@ struct JourneyTests {
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
         #expect((tab.textView.string as NSString).substring(with: paragraph).contains("dewline://demo"))
         #expect(tab.textView.string.contains(Welcome.paragraph + Welcome.addition))
-        let bar = KeepBar()
-        bar.attach(to: tab.textView)
-        #expect(bar.accessibilityLabel() == "Demo changed 1 place, change 1 of 1")
-        tab.textView.keepChange(nil)
+        let stamp = try #require(Self.stamp(in: tab))
+        #expect(stamp.accessibilityLabel()?.hasPrefix("Demo, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 1 change") == true)
+        try Self.press("Keep Demo's change", on: stamp)
         #expect(tab.marked.isEmpty)
-        #expect(!bar.shown)
+        #expect(Self.stamp(in: tab) == nil)
     }
 
     /// File > New Note makes "Untitled.md" in the folder at once, then "Untitled 2.md"; once it saves with a first
@@ -349,8 +348,8 @@ struct JourneyTests {
         .replacingOccurrences(of: "Delta line.", with: "Delta line, revised.")
 
     /// Claude Code rewrites the open file and two closed ones. The open file's four changes land marked with Claude's
-    /// name, the Keep bar counts them and the Changes tab lists each line with its changed words in bold, and Keep,
-    /// Revert and Keep All decide them: Keep and Revert act on the Keep bar's change when the caret is elsewhere, the
+    /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and Keep,
+    /// Revert and Keep All decide them: Keep and Revert act on the stamp's change when the caret is elsewhere, the
     /// file's bytes follow each decision, the decisions log holds one line per decision without the text, and nothing
     /// is left to review. The closed files are listed as changed while closed, and one opens with Claude's write
     /// marked.
@@ -374,11 +373,7 @@ struct JourneyTests {
         #expect(Review.hasMarked(in: tab.window))
         #expect(tab.marked.map { tab.live.line($0.id) } == [3, 7, 11, 15])
 
-        // The Keep bar says it once; the Changes tab lists the whole lines, each with its changed words in bold.
-        let bar = KeepBar()
-        bar.attach(to: tab.textView)
-        #expect(bar.shown)
-        #expect(bar.accessibilityLabel() == "Claude changed 4 places, change 1 of 4")
+        // The Changes tab lists the whole lines, each with its changed words in bold.
         Self.claim(.turnEnd, vault.engine)
         let review = ReviewViewController(for: tab.window)
         _ = review.view
@@ -395,21 +390,24 @@ struct JourneyTests {
         }
         #expect(weight(at: (line.string as NSString).range(of: ", revised").location) > weight(at: 0))
 
-        // Keep with the caret outside every change keeps the Keep bar's change; then Revert the next from the caret.
+        // The stamp names the writer and counts its changes. Keep with the caret outside every change keeps the
+        // stamp's change; then the stamp's Revert takes out the change holding the caret.
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
-        #expect(bar.focusedChange == changes[0].id)
+        let stamp = try #require(Self.stamp(in: tab))
+        #expect(stamp.accessibilityLabel()?.hasPrefix("Claude, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 4 changes") == true)
+        #expect(tab.textView.changeToDecide == changes[0].id)
         tab.textView.keepChange(nil)
         #expect(tab.marked.map(\.id) == [changes[1].id, changes[2].id, changes[3].id])
-        #expect(bar.accessibilityLabel() == "Claude changed 3 places, change 1 of 3")
+        #expect(Self.stamp(in: tab)?.accessibilityLabel()?.hasSuffix(", 3 changes") == true)
         tab.textView.setSelectedRange(NSRange(location: changes[1].change.range.location + 1, length: 0))
-        tab.textView.revertChange(nil)
+        try Self.press("Revert Claude's change", on: try #require(Self.stamp(in: tab)))
         #expect(tab.marked.map(\.id) == [changes[2].id, changes[3].id])
         tab.textView.keepAllChanges(nil)
         #expect(tab.marked.isEmpty)
+        #expect(Self.stamp(in: tab) == nil)
         let expected = Self.agentPlan.replacingOccurrences(of: "Bravo line, revised.", with: "Bravo line.")
         #expect(tab.textView.string == expected)
-        #expect(!bar.shown)
         review.reload()
         #expect(review.rows.count == 3)
         #expect(Review.count(claude, in: files) == (places: 0, files: 0))
@@ -841,7 +839,7 @@ struct JourneyTests {
         for action in changeCommands {
             #expect(Self.enabled(action, in: chain) == true, "\(action) is disabled with a change under the caret")
         }
-        // With the caret elsewhere the keys act on the Keep bar's change, as its buttons do.
+        // With the caret elsewhere the keys act on the stamp's change, as its buttons do.
         tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
         #expect(Self.enabled(#selector(EditorTextView.keepChange(_:)), in: chain) == true)
         #expect(Self.enabled(#selector(EditorTextView.keepAllChanges(_:)), in: chain) == true)
@@ -851,8 +849,8 @@ struct JourneyTests {
         #expect(Self.enabled(#selector(EditorTextView.keepChange(_:)), in: chain) == false)
     }
 
-    /// The keys follow the Keep bar's focus when the caret is in no change: the bar's change is the one decided.
-    @Test func theChangeKeysFollowTheKeepBar() async throws {
+    /// The keys follow the stamp when the caret is in no change: the last change the caret was in is the one decided.
+    @Test func theChangeKeysFollowTheStamp() async throws {
         let vault = try Vault(["plan.md": Self.plan])
         defer { vault.remove() }
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
@@ -864,12 +862,25 @@ struct JourneyTests {
         tab.textView.revertChange(nil)
         #expect(tab.marked.map(\.id) == changes.dropFirst().map(\.id))
         #expect(tab.textView.string.contains("Alpha line.\n"))
-        tab.textView.keepBarFocus = { changes[2].id }
+        tab.textView.setSelectedRange(NSRange(location: changes[2].change.range.location, length: 0))
+        tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
         tab.textView.keepChange(nil)
         #expect(tab.marked.map(\.id) == [changes[1].id, changes[3].id])
     }
 
     /// The responders a menu command looks through, in AppKit's order, for a window that is never key.
+    /// The stamp on the change Keep and Revert decide, once the marks lay out; nil when nothing waits.
+    private static func stamp(in tab: Tab) -> ChangeStamp? {
+        tab.textView.marks.relayout()
+        return tab.textView.subviews.lazy.compactMap { $0 as? ChangeStamp }.first { !$0.isHidden }
+    }
+
+    /// Clicks the stamp's button that VoiceOver reads as `label`.
+    private static func press(_ label: String, on stamp: ChangeStamp) throws {
+        let button = try #require(stamp.subviews.compactMap { $0 as? StampButton }.first { $0.accessibilityLabel() == label })
+        button.performClick(nil)
+    }
+
     private static func chain(from first: NSResponder) -> [AnyObject] {
         var chain: [AnyObject] = []
         var responder: NSResponder? = first

@@ -32,15 +32,9 @@ struct MarkWriter: Equatable {
         dashed ? "the other" : "\(name)'s"
     }
 
-    /// The name as a small-caps stamp in the writer's color: CLAUDE, GIT.
+    /// The name as the margin stamp sets it, SF Mono capitals in the writer's ink: CLAUDE, GIT.
     @MainActor var stamp: NSAttributedString {
-        let base = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        let features: [[NSFontDescriptor.FeatureKey: Int]] = [
-            [.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
-            [.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
-        ]
-        let font = NSFont(descriptor: base.fontDescriptor.addingAttributes([.featureSettings: features]), size: 11) ?? base
-        return NSAttributedString(string: name, attributes: [.font: font, .foregroundColor: color, .kern: 0.4])
+        NSAttributedString(string: name.uppercased(), attributes: [.font: Chrome.mono(10.5, weight: .semibold), .foregroundColor: color, .kern: 0.84])
     }
 
     /// "Claude changed 2 places".
@@ -50,8 +44,9 @@ struct MarkWriter: Equatable {
 }
 
 /// Paints marked changes over the text at render time, never as text edits: a wash in the writer's hue under
-/// inserted text with an underline in the writer's style, a 3 pt tick in the left gutter, and the writer's name and
-/// time on hover. Short
+/// inserted text with an underline in the writer's style, a 3 pt rule in the writer's ink beside each changed row in
+/// the left margin, joined by a 1 pt line across the rows between, and the writer's name and time on hover. The
+/// focused change carries a `ChangeStamp` with Revert and Keep, in the margin or folded under its block. Short
 /// removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
 /// change; longer removed text and a conflict's other version hang under the paragraph, in space the styler reserves
 /// below it. The marks sit under the text; ghosts and cards sit over it.
@@ -70,11 +65,39 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     /// Ghosts and cards by change, with the offset of the character whose paragraph they hang under.
     private(set) var hangers: [UInt64: (anchor: Int, view: NSView)] = [:]
     private var tips: [(rect: NSRect, change: UInt64)] = []
+    /// The change whose mark the pointer is on in the rail: its rules get a halo and its wash deepens.
+    var lit: UInt64? {
+        didSet {
+            guard lit != oldValue, !changes.isEmpty else { return }
+            dirty = true
+            textView?.needsLayout = true
+        }
+    }
+    /// The last change the caret was in.
+    private var focus: UInt64?
+    private var stamp: ChangeStamp?
+    /// Where the folded stamp hangs.
+    private var fold: Fold?
+    /// The height the text view keeps to hold a folded stamp below the note's last line, else 0.
+    private(set) var reach: CGFloat = 0
     private var dirty = false
     private var observing: NSView?
 
     static let fade: CFTimeInterval = 0.2
     private static let gap: CGFloat = 6
+    /// From the margin rule's left edge to the text column.
+    private static let ruleInset: CGFloat = 17
+
+    /// The folded stamp's place: in space reserved after `target`'s paragraph, or before it (`before`) when the block
+    /// holding `change`, which ends at `last`, is drawn and takes no space after it, or below the text (`end`) when
+    /// the note ends there: the layout drops space after the last paragraph.
+    private struct Fold: Equatable {
+        let change: UInt64
+        let last: Int
+        let target: Int
+        let before: Bool
+        var end = false
+    }
 
     override var isFlipped: Bool { true }
 
@@ -190,9 +213,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         }
     }
 
-    /// Space to reserve under the paragraphs holding these offsets, for the styler.
-    func space(in range: NSRange) -> [(anchor: Int, height: CGFloat)] {
-        hangers.values.filter { NSLocationInRange($0.anchor, range) && !Self.isInline($0.view) }.map { ($0.anchor, $0.view.frame.height + 2 * Self.gap) }
+    /// Space to reserve under the paragraphs holding these offsets, or above them (`before`), for the styler.
+    func space(in range: NSRange) -> [(anchor: Int, height: CGFloat, before: Bool)] {
+        var space = hangers.values.filter { NSLocationInRange($0.anchor, range) && !Self.isInline($0.view) }
+            .map { ($0.anchor, $0.view.frame.height + 2 * Self.gap, false) }
+        if let fold, !fold.end, NSLocationInRange(fold.target, range) { space.append((fold.target, ChangeStamp.barHeight + 2 * Self.gap, fold.before)) }
+        return space
     }
 
     /// Gaps to open after these offsets for inline ghosts, for the styler.
@@ -228,7 +254,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let dark = effectiveAppearance.isDark
         let wash = contrast ? (dark ? 0.30 : 0.22) : (dark ? 0.24 : 0.15)
         let rule: CGFloat = contrast ? 3 : 2
-        let tickWidth: CGFloat = contrast ? 4 : 3
+        let ruleWidth: CGFloat = contrast ? 4 : 3
         let left = textView.textContainerOrigin.x + (textView.textContainer?.lineFragmentPadding ?? 0)
         let now = CACurrentMediaTime()
         let motion = Motion.current != .off
@@ -262,16 +288,16 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             let color = writer.color.resolved(for: effectiveAppearance)
             let group = CALayer()
             let lines = segments(change.range)
-            var span = lines.reduce(NSRect.null) { $0.union($1.frame) }
-            if lines.isEmpty, let line = lineRect(at: change.range.location) { span = line }
-            if let bottom = hung[id], !span.isNull { span.size.height = bottom - span.minY }
-            guard !span.isNull else { continue }
+            var rows = Self.rows(lines, in: storage.mutableString)
+            if rows.isEmpty, let line = lineRect(at: change.range.location) { rows = [line] }
+            if let bottom = hung[id], let last = rows.last { rows[rows.count - 1].size.height = bottom - last.minY }
+            guard !rows.isEmpty else { continue }
             if !change.conflict {
                 painted[id] = change.range
                 for line in lines where line.frame.width >= 0.5 {
                     let fill = CALayer()
                     fill.frame = line.frame
-                    fill.backgroundColor = color.withAlphaComponent(wash).cgColor
+                    fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
                     group.addSublayer(fill)
                     let underline = CAShapeLayer()
                     let y = line.frame.minY + line.baseline + rule + 1
@@ -286,12 +312,30 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     tips.append((line.frame, id))
                 }
             }
-            let tick = CALayer()
-            tick.frame = NSRect(x: max(left - 36, 4), y: span.minY + 2, width: tickWidth, height: max(span.height - 4, 4))
-            tick.cornerRadius = tickWidth / 2
-            tick.backgroundColor = color.cgColor
-            group.addSublayer(tick)
-            tips.append((tick.frame.insetBy(dx: -6, dy: 0), id))
+            // A rule per row; a 1 pt line at 35% joins the rows across what lies between them.
+            let x = max(left - Self.ruleInset, 4)
+            let rules = rows.map { NSRect(x: x, y: $0.minY + 2, width: ruleWidth, height: max($0.height - 4, 4)) }
+            for (above, below) in zip(rules, rules.dropFirst()) where below.minY > above.maxY {
+                let join = CALayer()
+                join.frame = NSRect(x: x + (ruleWidth - 1) / 2, y: above.maxY, width: 1, height: below.minY - above.maxY)
+                join.backgroundColor = color.withAlphaComponent(0.35).cgColor
+                group.addSublayer(join)
+            }
+            for frame in rules {
+                if id == lit {
+                    let halo = CALayer()
+                    halo.frame = frame.insetBy(dx: -2.5, dy: -2.5)
+                    halo.cornerRadius = halo.frame.width / 2
+                    halo.backgroundColor = color.withAlphaComponent(0.28).cgColor
+                    group.addSublayer(halo)
+                }
+                let mark = CALayer()
+                mark.frame = frame
+                mark.cornerRadius = ruleWidth / 2
+                mark.backgroundColor = color.cgColor
+                group.addSublayer(mark)
+                tips.append((frame.insetBy(dx: -6, dy: 0), id))
+            }
             if motion, let start = shown[id], now - start < Self.fade {
                 let fade = CABasicAnimation(keyPath: "opacity")
                 fade.fromValue = 0
@@ -306,11 +350,28 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         }
         CATransaction.commit()
         for tip in tips { addToolTip(tip.rect, owner: self, userData: nil) }
+        placeStamp(left: left, hung: hung)
     }
 
     private struct Segment {
         let frame: NSRect
         let baseline: CGFloat
+        /// The segment's first character.
+        let location: Int
+    }
+
+    /// The rows a change's segments fill, one per paragraph, from its first line to its last.
+    private static func rows(_ segments: [Segment], in text: NSString) -> [NSRect] {
+        var rows: [(paragraph: Int, rect: NSRect)] = []
+        for segment in segments.sorted(by: { $0.frame.minY < $1.frame.minY }) where segment.frame.width >= 0.5 {
+            let paragraph = text.paragraphRange(for: NSRange(location: min(segment.location, text.length), length: 0)).location
+            if let last = rows.last, last.paragraph == paragraph {
+                rows[rows.count - 1].rect = last.rect.union(segment.frame)
+            } else {
+                rows.append((paragraph, segment.frame))
+            }
+        }
+        return rows.map(\.rect)
     }
 
     /// The range's line segments in this view's coordinates.
@@ -322,8 +383,9 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         layout.ensureLayout(for: textRange)
         let origin = textView.textContainerOrigin
         var segments: [Segment] = []
-        layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, baseline, _ in
-            segments.append(Segment(frame: frame.offsetBy(dx: origin.x, dy: origin.y), baseline: baseline))
+        layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { segment, frame, baseline, _ in
+            let location = segment.map { content.offset(from: content.documentRange.location, to: $0.location) } ?? range.location
+            segments.append(Segment(frame: frame.offsetBy(dx: origin.x, dy: origin.y), baseline: baseline, location: location))
             return true
         }
         return segments
@@ -393,21 +455,127 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return holding.first { $0.value.conflict }?.key ?? holding.keys.min()
     }
 
-    /// The change ⌘↩ and ⌥⌘⌫ decide: the one under the caret, else the one the Keep bar shows.
-    var focusedChange: UInt64? {
-        changeAtCaret ?? KeepBar.focusedChange(for: live)
+    /// The change the stamp shows, which Keep and Revert decide when the caret is in no change: the one holding the
+    /// caret, else the last one the caret was in while it waits, else the first in the note.
+    var stamped: UInt64? {
+        if let id = changeHoldingCaret { return id }
+        if let focus, changes[focus]?.conflict == false { return focus }
+        return changes.filter { !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
     }
 
-    /// Cmd-Return: keeps the focused change, or both versions of a conflict.
-    func keepAtCaret() {
-        guard let id = focusedChange else { return }
-        live?.keep(id)
+    private var changeHoldingCaret: UInt64? {
+        guard let caret = textView?.selectedRanges.first?.rangeValue.location else { return nil }
+        return changes.filter { !$0.value.conflict && (NSLocationInRange(caret, $0.value.range) || caret == NSMaxRange($0.value.range)) }.keys.min()
     }
 
-    /// Option-Cmd-Delete: reverts the focused change, or keeps your version of a conflict.
-    func revertAtCaret() {
-        guard let id = focusedChange else { return }
-        live?.revert(id)
+    /// The caret moved: a change it lands in takes the stamp.
+    func caretMoved() {
+        guard let id = changeHoldingCaret, id != focus else { return }
+        focus = id
+        dirty = true
+        textView?.needsLayout = true
+    }
+
+    // MARK: The stamp
+
+    private func placeStamp(left: CGFloat, hung: [UInt64: CGFloat]) {
+        guard let textView, let id = stamped, let change = changes[id], NSMaxRange(change.range) <= textView.textStorage!.length else {
+            stamp?.removeFromSuperview()
+            stamp = nil
+            setFold(nil)
+            setReach(0)
+            return
+        }
+        let stamp = self.stamp ?? {
+            let stamp = ChangeStamp(revert: { [weak self] in self.map { $0.decideStamped(keep: false) } }, keep: { [weak self] in self.map { $0.decideStamped(keep: true) } })
+            stamp.resized = { [weak self] in
+                guard let self else { return }
+                self.dirty = true
+                self.textView?.needsLayout = true
+            }
+            textView.addSubview(stamp)
+            self.stamp = stamp
+            return stamp
+        }()
+        let key = Review.key(change.origin)
+        let count = changes.values.count { !$0.conflict && Review.key($0.origin) == key }
+        stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: change.origin == .external)
+        if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
+            setFold(nil)
+            setReach(0)
+            let storage = textView.textStorage!
+            let probe = change.range.length > 0 ? change.range
+                : NSRange(location: min(change.range.location, max(storage.length - 1, 0)), length: storage.length > 0 ? 1 : 0)
+            let lines = segments(probe).sorted { $0.frame.minY < $1.frame.minY }
+            guard let first = lines.first else { return stamp.isHidden = true }
+            stamp.isHidden = false
+            let top = first.frame.minY + first.baseline
+            let next = lines.first { $0.frame.minY >= first.frame.maxY - 0.5 }
+            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
+            stamp.placeInMargin(right: left - ChangeStamp.inset, first: top, second: next.map { $0.frame.minY + $0.baseline } ?? top + line)
+        } else {
+            let fold = fold(for: id, change)
+            setFold(fold)
+            let y: CGFloat? = if fold.before {
+                self.fragment(at: fold.target).map { textView.textContainerOrigin.y + $0.layoutFragmentFrame.minY }
+            } else {
+                textBottom(at: fold.last).map { bottom in
+                    let paragraph = textView.textStorage!.mutableString.paragraphRange(for: NSRange(location: fold.last, length: 0))
+                    let under = hangers.filter { !Self.isInline($0.value.view) && NSLocationInRange($0.value.anchor, paragraph) }.compactMap { hung[$0.key] }
+                    return under.max() ?? bottom
+                }
+            }
+            guard let y else { return stamp.isHidden = true }
+            stamp.isHidden = false
+            stamp.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
+            setReach(fold.end ? stamp.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
+        }
+    }
+
+    /// The text view sizes itself to its text on the run loop's next pass, outside the layout that asked, and keeps
+    /// at least `reach`.
+    private func setReach(_ reach: CGFloat) {
+        guard reach != self.reach else { return }
+        self.reach = reach
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let textView = self.textView else { return }
+                // sizeToFit leaves a view that already fits its text alone, so a taller reach sets the size itself.
+                if self.reach > textView.frame.height { textView.setFrameSize(textView.frame.size) } else { textView.sizeToFit() }
+            }
+        }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    /// Under the block holding the change: after its last paragraph, or before the next paragraph not drawn as a block
+    /// when the last one is drawn (a table row, a rendered fence) and takes no space after it.
+    private func fold(for id: UInt64, _ change: LiveFile.Change) -> Fold {
+        let storage = textView!.textStorage!
+        let text = storage.mutableString
+        let end = textView!.styler.map.blocks(in: change.range).last.map { NSMaxRange($0.range) } ?? NSMaxRange(text.paragraphRange(for: change.range))
+        let last = min(max(end - 1, 0), max(text.length - 1, 0))
+        let paragraph = text.paragraphRange(for: NSRange(location: last, length: 0))
+        func drawn(_ paragraph: NSRange) -> Bool {
+            paragraph.length > 0 && storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) != nil
+        }
+        guard drawn(paragraph) else { return Fold(change: id, last: last, target: last, before: false, end: NSMaxRange(paragraph) >= text.length) }
+        var next = NSMaxRange(paragraph)
+        while next < text.length, drawn(text.paragraphRange(for: NSRange(location: next, length: 0))) {
+            next = NSMaxRange(text.paragraphRange(for: NSRange(location: next, length: 0)))
+        }
+        return Fold(change: id, last: last, target: min(next, max(text.length - 1, 0)), before: next < text.length, end: next >= text.length)
+    }
+
+    private func setFold(_ fold: Fold?) {
+        guard fold != self.fold else { return }
+        let old = self.fold
+        self.fold = fold
+        reserve([old?.target, fold?.target].compactMap { $0 })
+    }
+
+    private func decideStamped(keep: Bool) {
+        guard let id = stamped else { return }
+        if keep { live?.keep(id) } else { live?.revert(id) }
     }
 
     /// One announcement per marked landing.

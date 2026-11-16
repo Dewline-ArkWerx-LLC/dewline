@@ -213,3 +213,280 @@ final class ConflictCard: NSView, Hanging {
         return ceil(stack.fittingSize.height)
     }
 }
+
+/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 change" sits on the change's first text baseline
+/// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column. Where the margin is
+/// narrower than the stamp plus that 26 pt and a 24 pt gutter, it folds into a 30 pt bar under the block holding the
+/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. The cursor
+/// bar stands on the page just before Keep's leading edge: no dark orange reaches 3:1 on both the dark paper and
+/// Keep's cream fill.
+@MainActor
+final class ChangeStamp: NSView {
+    static let barHeight: CGFloat = 30
+    /// From the stamp's right edge to the text column, and the least margin left of the stamp.
+    static let inset: CGFloat = 26
+    static let gutter: CGFloat = 24
+    /// Between Revert and Keep, where the cursor bar stands.
+    private static let gap: CGFloat = 10
+
+    private let revert: StampButton
+    private let keep: StampButton
+    private let setUp: StampButton
+    private var writer: MarkWriter?
+    private var time = ""
+    private var count = 0
+    private var external = false
+    private(set) var folded = false
+    /// Line 1's baseline and left edge, in this view.
+    private var baseline: CGFloat = 0
+    private var textX: CGFloat = 0
+    /// The size changed: the marks lay out again.
+    var resized: () -> Void = {}
+    /// The first stamp in a session to show another app's change, while no agent has hooks, offers hook setup.
+    private var offering = false
+    private static var offeredHooks = false
+    private static var checkingHooks = false
+
+    init(revert: @escaping () -> Void, keep: @escaping () -> Void) {
+        self.revert = StampButton("Revert", keys: "\u{2325}\u{2318}\u{232B}", style: .outlined, revert)
+        self.keep = StampButton("Keep", keys: "\u{2318}", returnKey: true, style: .filled, keep)
+        setUp = StampButton("Set up agent hooks\u{2026}", keys: "", style: .link) {
+            NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
+        }
+        super.init(frame: .zero)
+        self.revert.toolTip = "Revert (\u{2325}\u{2318}\u{232B})"
+        self.keep.toolTip = "Keep (\u{2318}\u{21A9})"
+        setUp.toolTip = "Name this writer: set up agent hooks"
+        setUp.isHidden = true
+        for button in [self.revert, self.keep, setUp] { addSubview(button) }
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("ChangeStamp is built in code")
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
+    @objc private func themeDidChange() {
+        for view in [self, revert, keep, setUp] { view.needsDisplay = true }
+        resized()
+    }
+
+    /// Shows `writer`'s change, which landed at `time`, one of `count` from its session in the note.
+    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool) {
+        let time = time.formatted(date: .omitted, time: .shortened)
+        let changed = writer != self.writer || time != self.time || count != self.count
+        self.writer = writer
+        self.time = time
+        self.count = count
+        self.external = external
+        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")")
+        revert.setAccessibilityLabel("Revert \(writer.possessive) change")
+        keep.setAccessibilityLabel("Keep \(writer.possessive) change")
+        setUp.isHidden = !(offering && external)
+        if changed { needsDisplay = true }
+        if external { offerHooks() }
+    }
+
+    private func offerHooks() {
+        guard !Self.offeredHooks, !Self.checkingHooks, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        Self.checkingHooks = true
+        Task { [weak self] in
+            let hooks = await Task.detached { HookStatus.read() }.value
+            Self.checkingHooks = false
+            guard !hooks.claude, !hooks.codex, !hooks.cursor else { return Self.offeredHooks = true }
+            guard let self, self.external, self.superview != nil else { return }
+            Self.offeredHooks = true
+            self.offering = true
+            self.setUp.isHidden = false
+            self.resized()
+        }
+    }
+
+    /// "CLAUDE 3:25 PM · 1 change": the writer in SF Mono capitals in its ink, the time in SF Mono, the count in SF Pro.
+    private var line: NSAttributedString {
+        guard let writer else { return NSAttributedString() }
+        let ink2 = ThemeStore.shared.color(.ink2)
+        let line = NSMutableAttributedString(attributedString: writer.stamp)
+        // The bar's 8% wash takes Claude's light ink to 4.1:1; a quarter of the way to ink keeps every writer over 4.5:1.
+        if folded, let name = OKLCH(writer.color.resolved(for: effectiveAppearance)),
+            let ink = OKLCH(ThemeStore.shared.color(.ink).resolved(for: effectiveAppearance)) {
+            line.addAttribute(.foregroundColor, value: name.mixed(with: ink, by: 0.25).color, range: NSRange(location: 0, length: line.length))
+        }
+        line.append(NSAttributedString(string: "  " + time, attributes: [.font: Chrome.mono(10.5), .foregroundColor: ink2]))
+        line.append(NSAttributedString(string: " \u{00B7} \(count) \(count == 1 ? "change" : "changes")", attributes: [
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
+        ]))
+        return line
+    }
+
+    private var ascent: CGFloat {
+        ceil(max(Chrome.mono(10.5, weight: .semibold).ascender, NSFont.systemFont(ofSize: 11).ascender))
+    }
+
+    private var buttonsWidth: CGFloat {
+        revert.intrinsicContentSize.width + Self.gap + keep.intrinsicContentSize.width
+    }
+
+    /// The width the stamp takes in the margin.
+    var marginWidth: CGFloat {
+        ceil(max(line.size().width, buttonsWidth, setUp.isHidden ? 0 : setUp.intrinsicContentSize.width))
+    }
+
+    /// In the margin, its right edge at `right`: line 1 on `first`, the buttons' labels on `second`, both baselines
+    /// in the superview.
+    func placeInMargin(right: CGFloat, first: CGFloat, second: CGFloat) {
+        folded = false
+        let width = marginWidth
+        let top = first - ascent
+        baseline = ascent
+        textX = width - ceil(line.size().width)
+        // The buttons clear line 1's descent even when the second baseline sits close under the first.
+        let buttons = max(second - StampButton.labelBaseline, first + 4) - top
+        let keepWidth = keep.intrinsicContentSize.width
+        keep.frame = NSRect(x: width - keepWidth, y: buttons, width: keepWidth, height: StampButton.height)
+        let revertWidth = revert.intrinsicContentSize.width
+        revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: buttons, width: revertWidth, height: StampButton.height)
+        var bottom = keep.frame.maxY
+        if !setUp.isHidden {
+            let size = setUp.intrinsicContentSize
+            setUp.frame = NSRect(x: width - size.width, y: bottom + 4, width: size.width, height: size.height)
+            bottom = setUp.frame.maxY
+        }
+        frame = NSRect(x: right - width, y: top, width: width, height: bottom)
+        needsDisplay = true
+    }
+
+    /// Folded into a bar filling `rect`.
+    func placeAsBar(_ rect: NSRect) {
+        folded = true
+        frame = rect
+        baseline = ((Self.barHeight + NSFont.systemFont(ofSize: 11).capHeight) / 2).rounded()
+        textX = 10
+        let y = (Self.barHeight - StampButton.height) / 2
+        let keepWidth = keep.intrinsicContentSize.width
+        keep.frame = NSRect(x: rect.width - y - keepWidth, y: y, width: keepWidth, height: StampButton.height)
+        let revertWidth = revert.intrinsicContentSize.width
+        revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: y, width: revertWidth, height: StampButton.height)
+        if !setUp.isHidden {
+            let size = setUp.intrinsicContentSize
+            setUp.frame = NSRect(x: textX + ceil(line.size().width) + 8, y: (Self.barHeight - size.height) / 2, width: size.width, height: size.height)
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let writer else { return }
+        if folded {
+            writer.color.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        }
+        line.draw(at: NSPoint(x: textX, y: baseline - ascent))
+        // The 2 x 12 pt cursor bar, centered on Keep in the gap before it.
+        ThemeStore.shared.color(.cursor).setFill()
+        let bar = NSRect(x: keep.frame.minX - Self.gap / 2 - 1, y: keep.frame.midY - 6, width: 2, height: 12)
+        NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
+    }
+}
+
+/// Revert (outlined), Keep (filled with ink, set in paper) and a quiet link, each with its keys drawn as keycaps in
+/// SF Pro: ⌥⌘⌫ for Revert, ⌘ and the SF Symbol `return` for Keep.
+@MainActor
+final class StampButton: NSButton {
+    enum Style { case outlined, filled, link }
+
+    static let height: CGFloat = 22
+    private static let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    /// From the button's top to its label's baseline.
+    static let labelBaseline = ((height + font.capHeight) / 2).rounded()
+
+    private let style: Style
+    private let keys: String
+    private let returnKey: Bool
+    private let handler: () -> Void
+
+    init(_ title: String, keys: String, returnKey: Bool = false, style: Style, _ action: @escaping () -> Void) {
+        self.style = style
+        self.keys = keys
+        self.returnKey = returnKey
+        handler = action
+        super.init(frame: .zero)
+        self.title = title
+        isBordered = false
+        target = self
+        self.action = #selector(clicked)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("StampButton is built in code")
+    }
+
+    override var isFlipped: Bool { true }
+
+    @objc private func clicked() {
+        handler()
+    }
+
+    private var label: NSAttributedString {
+        let store = ThemeStore.shared
+        if style == .link {
+            return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
+        }
+        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
+    }
+
+    private var keycaps: NSAttributedString {
+        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink2)
+        return NSAttributedString(string: keys, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color])
+    }
+
+    private var returnImage: NSImage? {
+        guard returnKey else { return nil }
+        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink2)
+        let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        return NSImage(systemSymbolName: "return", accessibilityDescription: nil)?.withSymbolConfiguration(config)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        if style == .link { return NSSize(width: ceil(label.size().width), height: 18) }
+        let keys = keycaps.size().width + (returnImage.map { $0.size.width + 1 } ?? 0)
+        return NSSize(width: ceil(8 + label.size().width + 5 + keys + 7), height: Self.height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let store = ThemeStore.shared
+        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5.5, yRadius: 5.5)
+        switch style {
+        case .filled:
+            store.color(.ink).withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        case .outlined:
+            if isHighlighted {
+                store.color(.ink).withAlphaComponent(0.08).setFill()
+                box.fill()
+            }
+            store.color(.rule).setStroke()
+            box.lineWidth = 1
+            box.stroke()
+        case .link:
+            label.draw(at: .zero)
+            return
+        }
+        let baseline = Self.labelBaseline
+        label.draw(at: NSPoint(x: 8, y: baseline - Self.font.ascender))
+        var x = 8 + label.size().width + 5
+        keycaps.draw(at: NSPoint(x: x, y: baseline - NSFont.systemFont(ofSize: 12).ascender))
+        x += keycaps.size().width
+        if let image = returnImage {
+            let rect = NSRect(x: x + 1, y: baseline - image.size.height + 1, width: image.size.width, height: image.size.height)
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+}

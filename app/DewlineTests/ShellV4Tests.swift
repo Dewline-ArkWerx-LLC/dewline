@@ -109,7 +109,7 @@ struct ShellV4Tests {
         main.display(try document(root.appending(path: "a.md")))
         main.showWindow(nil)
         defer { close([main]) }
-        let split = try #require(main.window?.contentViewController as? StationSplitController)
+        let split = try #require(main.window?.contentViewController?.children.first as? StationSplitController)
         let textView = try #require(main.textView)
         let item = NSMenuItem(title: "Show Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "")
         #expect(NSApp.target(forAction: item.action!, to: nil, from: item) == nil || split.responds(to: item.action))

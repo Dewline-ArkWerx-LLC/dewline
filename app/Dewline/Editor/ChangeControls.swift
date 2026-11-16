@@ -302,7 +302,7 @@ final class ChangeStamp: NSView {
         Task { [weak self] in
             let hooks = await Task.detached { HookStatus.read() }.value
             Self.checkingHooks = false
-            guard !hooks.claude, !hooks.codex, !hooks.cursor else { return Self.offeredHooks = true }
+            guard !hooks.claude, !hooks.codex else { return Self.offeredHooks = true }
             guard let self, self.external, self.superview != nil else { return }
             Self.offeredHooks = true
             self.offering = true

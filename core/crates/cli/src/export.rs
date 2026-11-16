@@ -1,18 +1,23 @@
 //! `dewline export`: HTML and DOCX here, through core's exporters; PDF through the app, which owns the paged layout.
 
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{self, Path};
-use std::process::Command;
 
 use clap::ValueEnum;
 use dewline_core::export::{self, ExportOptions};
+
+use crate::control::Socket;
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum Format {
     Html,
     Pdf,
     Docx,
+}
+
+fn utf8(path: &Path) -> Result<&str, String> {
+    path.to_str()
+        .ok_or_else(|| format!("{}: the path is not UTF-8", path.display()))
 }
 
 /// The page's look without the app's theme: system faces, a readable measure, light and dark.
@@ -69,35 +74,18 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
             fs::write(&out, bytes).map_err(|error| format!("{}: {error}", out.display()))
         }
         Format::Pdf => {
-            let url = format!(
-                "dewline://export?to=pdf&path={}&out={}",
-                percent(&source),
-                percent(&out)
-            );
-            let status = Command::new("/usr/bin/open")
-                .arg(&url)
-                .status()
-                .map_err(|error| format!("couldn't run /usr/bin/open: {error}"))?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err("Dewline didn't take the export; PDF export needs the app".into())
+            if out
+                .extension()
+                .is_none_or(|extension| !extension.eq_ignore_ascii_case("pdf"))
+            {
+                return Err(format!(
+                    "{}: a PDF export has to end in .pdf",
+                    out.display()
+                ));
             }
+            Socket::find()?.export_pdf(utf8(&source)?, utf8(&out)?)
         }
     }
-}
-
-/// `path` for a URL query: every byte but letters, digits, `/` and `-._~` percent-encoded.
-fn percent(path: &Path) -> String {
-    let mut out = String::new();
-    for &byte in path.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -121,14 +109,5 @@ mod tests {
         run(&file, Format::Html, Some(&out)).unwrap();
         assert!(out.exists());
         assert!(run(&file, Format::Html, Some(&file)).is_err());
-    }
-
-    #[test]
-    fn a_url_carries_any_path() {
-        assert_eq!(
-            percent(Path::new("/Users/me/a b&c=d?.md")),
-            "/Users/me/a%20b%26c%3Dd%3F.md"
-        );
-        assert_eq!(percent(Path::new("/tmp/café")), "/tmp/caf%C3%A9");
     }
 }

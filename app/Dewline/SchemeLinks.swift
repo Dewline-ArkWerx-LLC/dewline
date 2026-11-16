@@ -1,9 +1,9 @@
 import AppKit
 import MdCore
 
-/// `dewline://open?path=…&line=…`, `dewline://export?path=…&to=pdf&out=…` and `dewline://demo`, Welcome.md's link. Every path goes through the core's
-/// jail: inside the home folder, never inside ~/Library or a `.ssh` folder. An export writes only a file named for
-/// its format, so a link can't overwrite anything else.
+/// `dewline://open?path=…&line=…` and `dewline://demo`, Welcome.md's link. `open` shows only a Markdown file inside the
+/// home folder, never inside ~/Library or a `.ssh` folder. `demo` adds its one sentence to Welcome.md in the notes
+/// folder. Nothing else a link names is read or written; `dewline export` reaches the app through the control socket.
 @MainActor
 enum SchemeLinks {
     static func handle(_ url: URL) {
@@ -14,44 +14,23 @@ enum SchemeLinks {
         }
     }
 
-    private static func run(_ url: URL) throws {
+    static func run(_ url: URL) throws {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func value(_ name: String) -> String? {
             items.first { $0.name == name }?.value
         }
-        func path(_ name: String) throws(Refused) -> URL {
-            guard let path = value(name), !path.isEmpty else { throw Refused(name == "out" ? "This link doesn\u{2019}t say where to export." : "This link doesn\u{2019}t say which note to open.") }
-            return URL(fileURLWithPath: try jailedPath((path as NSString).expandingTildeInPath))
-        }
         switch url.host() {
         case "open":
+            guard let path = value("path"), !path.isEmpty else { throw Refused("This link doesn\u{2019}t say which note to open.") }
+            let file = URL(fileURLWithPath: try jailedPath((path as NSString).expandingTildeInPath))
+            guard FolderEntry.markdownExtensions.contains(file.pathExtension.lowercased()) else {
+                throw Refused("\(file.path): a link opens only Markdown notes")
+            }
             let line = value("line").flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
             guard let delegate = NSApp.delegate as? AppDelegate else { return }
-            try delegate.show(try path("path"), line: line, column: nil)
+            try delegate.show(file, line: line, column: nil)
         case "demo":
             (NSApp.delegate as? AppDelegate)?.playDemo(at: Welcome.url())
-        case "export":
-            let to = value("to")?.lowercased() ?? "pdf"
-            // A link exports what the CLI hands the app; DOCX the CLI writes itself.
-            guard let format = [Export.Format.html, .pdf].first(where: { $0.name.lowercased() == to }) else {
-                throw Refused("Dewline exports HTML or PDF, not \(to).")
-            }
-            let file = try path("path")
-            let out = try path("out")
-            guard out.pathExtension.lowercased() == format.type.preferredFilenameExtension else {
-                throw Refused("The export has to be named .\(format.type.preferredFilenameExtension ?? to).")
-            }
-            let text = try String(contentsOf: file, encoding: .utf8)
-            Task {
-                do {
-                    try await Export.write(
-                        text, title: file.deletingPathExtension().lastPathComponent, as: format, to: out,
-                        folder: file.deletingLastPathComponent()
-                    )
-                } catch {
-                    NSApp.presentError(error)
-                }
-            }
         default:
             throw Refused("Dewline can\u{2019}t open this kind of link.")
         }

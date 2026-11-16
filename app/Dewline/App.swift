@@ -159,6 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let control = ControlSocket(path: ControlSocket.standardPath, notify: { claim in
             Updates.shared.checkBundleOnDisk()
             if let engine { LiveFile.claim(claim, engine: engine) }
+        }, export: { [weak self] request, connection in
+            self?.export(request, for: connection)
         }) { [weak self] request, connection in
             Updates.shared.checkBundleOnDisk()
             self?.open(request, for: connection)
@@ -241,6 +243,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.noteNewRecentDocumentURL(url)
             document.makeWindowControllers()
             show(document, for: request, connection)
+        }
+    }
+
+    /// Writes the PDF `dewline export --to pdf` asks for, from the Markdown file on disk, through a descriptor that
+    /// must be a regular file whose path, as opened, has a Markdown extension.
+    func export(_ request: ControlSocket.PDFExport, for connection: ControlSocket.Connection) {
+        resume(after: nil)
+        let file = URL(fileURLWithPath: request.path)
+        Task {
+            do {
+                let data = try await Task.detached {
+                    let fd = Darwin.open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+                    guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+                    var info = stat()
+                    var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+                    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, fcntl(fd, F_GETPATH, &opened) == 0,
+                        FolderEntry.markdownExtensions.contains(URL(fileURLWithFileSystemRepresentation: opened, isDirectory: false, relativeTo: nil).pathExtension.lowercased())
+                    else { throw POSIXError(.EFTYPE) }
+                    return try handle.readToEnd() ?? Data()
+                }.value
+                guard let text = String(data: data, encoding: .utf8) else {
+                    throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
+                }
+                try await Export.write(
+                    text, title: file.deletingPathExtension().lastPathComponent, as: .pdf, to: URL(fileURLWithPath: request.out),
+                    folder: file.deletingLastPathComponent()
+                )
+                connection.reply(.exported)
+            } catch {
+                connection.reply(.refused(.exportFailed, message: error.localizedDescription))
+            }
         }
     }
 

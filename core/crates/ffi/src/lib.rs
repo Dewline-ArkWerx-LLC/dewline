@@ -14,6 +14,7 @@ mod agents;
 mod allocator;
 mod docx;
 mod engine;
+mod git;
 mod highlight;
 mod markdown;
 mod save;

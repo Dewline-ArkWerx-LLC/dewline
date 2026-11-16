@@ -66,7 +66,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     /// When each marked change's fade began.
     private var shown: [UInt64: CFTimeInterval] = [:]
     /// When each marked change landed here, for its tooltip.
-    private var landed: [UInt64: Date] = [:]
+    private(set) var landed: [UInt64: Date] = [:]
     /// Ghosts and cards by change, with the offset of the character whose paragraph they hang under.
     private(set) var hangers: [UInt64: (anchor: Int, view: NSView)] = [:]
     private var tips: [(rect: NSRect, change: UInt64)] = []

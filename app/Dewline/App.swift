@@ -234,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Writes the PDF `dewline export --to pdf` asks for, from the Markdown file on disk, through a descriptor that
-    /// must be a regular file.
+    /// must be a regular file whose path, as opened, has a Markdown extension.
     func export(_ request: ControlSocket.PDFExport, for connection: ControlSocket.Connection) {
         resume(after: nil)
         let file = URL(fileURLWithPath: request.path)
@@ -245,7 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                     let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
                     var info = stat()
-                    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
+                    var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+                    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, fcntl(fd, F_GETPATH, &opened) == 0,
+                        FolderEntry.markdownExtensions.contains(URL(fileURLWithFileSystemRepresentation: opened, isDirectory: false, relativeTo: nil).pathExtension.lowercased())
+                    else { throw POSIXError(.EFTYPE) }
                     return try handle.readToEnd() ?? Data()
                 }.value
                 guard let text = String(data: data, encoding: .utf8) else {

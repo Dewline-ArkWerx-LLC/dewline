@@ -271,7 +271,16 @@ fn install_hooks(
         .map_err(|error| format!("{}: {error}", path.display()))?;
     let added: Vec<_> = missing(current.as_ref(), agent, runs)
         .into_iter()
-        .map(|event| json!({ (event): merged["hooks"][event] }))
+        .map(|event| {
+            let group = merged["hooks"][event].as_array().and_then(|groups| {
+                groups.iter().find(|group| {
+                    group["hooks"]
+                        .as_array()
+                        .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+                })
+            });
+            json!({ (event): group })
+        })
         .collect();
     println!("\n  In {} this sets:", path.display());
     for entry in &added {

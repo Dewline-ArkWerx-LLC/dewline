@@ -234,9 +234,10 @@ dewline: /Users/you/Documents/Dewline/Inbox.md: there is nothing to capture</cod
         <dd>Where the export goes. By default it goes beside <code>FILE</code> with the format's extension. The folder must exist.</dd>
       </dl>
       <p>The command writes HTML and DOCX itself, with no window. <a href="/docs/export/#command-line">Export</a> says how that output differs from the app's.</p>
+      <p><code>--to pdf</code> hands the export to the app over the control socket, starting the app if it isn't running, and returns once the PDF is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in <code>.pdf</code>.</p>
       <aside class="callout caution">
         <p class="callout-title">PDF from the command line fails in 0.1.0</p>
-        <p><code>--to pdf</code> hands the export to the app through a <code>dewline://export</code> link. In 0.1.0 that link names the wrong field, so no PDF is written and the command still exits 0. The fix is on main for the next release. Until then, export PDF from the app, or open a <a href="/docs/url-scheme/#export"><code>dewline://export</code></a> link with <code>path</code>.</p>
+        <p>In 0.1.0 the command hands a PDF export over through a link that names the wrong field, so no PDF is written and the command still exits 0. Export PDF from the app instead.</p>
       </aside>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline export projects/launch-plan.md --to html
@@ -281,7 +282,6 @@ Version: app and command are both 0.1.0
 Agent hooks:
   Claude Code: installed in /Users/you/.claude/settings.json
   Codex: PostToolUse missing from /Users/you/.codex/hooks.json
-  Cursor: preToolUse, postToolUse, stop missing from /Users/you/.cursor/hooks.json
   `dewline doctor --install-hooks` merges the missing ones in, asking first.
 
 Companions:
@@ -290,10 +290,10 @@ Companions:
   vale: not installed; brew install vale
   harper-ls: not installed; brew install harper</code></pre>
       </div>
-      <p>The version check reads the app that holds the command, or <code>/Applications/Dewline.app</code>. A mismatch says to use the command inside the app. Settings &gt; Agents shows the same hook check as Installed or Not set up.</p>
+      <p>The version check reads the app that holds the command, or <code>/Applications/Dewline.app</code>. A mismatch says to use the command inside the app. Settings &gt; Agents shows the same check: Claude Code as Installed or Not set up, Codex as Added or Not set up, since only Codex knows whether you trusted its hooks.</p>
       <dl>
         <dt><code>--install-hooks</code></dt>
-        <dd>Merges the missing hooks into <code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code> and <code>~/.cursor/hooks.json</code>. For each file it prints the entries and asks <code>Merge them in? [y/N]</code>, so it needs a terminal. It keeps every other key and hook. It copies the old file to <code>&lt;file&gt;.dewline-backup-&lt;seconds&gt;</code> first, and skips a file that changed after it was read. <a href="/docs/agents/#by-hand">Agents</a> shows the hooks it adds.</dd>
+        <dd>Merges the missing hooks into <code>~/.claude/settings.json</code> and <code>~/.codex/hooks.json</code>. A hook whose <code>dewline</code> no longer exists, as after the app moved, counts as missing, and its command is replaced with this one's path. For each file it prints the entries and asks <code>Merge them in? [y/N]</code>, so it needs a terminal. It keeps every other key and hook. It copies the old file to <code>&lt;file&gt;.dewline-backup-&lt;seconds&gt;</code> first, and skips a file that changed after it was read. <a href="/docs/agents/#by-hand">Agents</a> shows the hooks it adds.</dd>
         <dt><code>--links &lt;DIR&gt;</code></dt>
         <dd>Prints each broken relative link and CLAUDE.md <code>@import</code> in the Markdown files under <code>DIR</code>, and nothing else. A problem is <code>no such file</code>, <code>imports a file that imports it</code> or <code>more than 5 imports deep</code>. It skips hidden folders other than <code>.claude</code>, <code>.cursor</code> and <code>.github</code>, skips <code>node_modules</code> and <code>target</code>, and doesn't follow symlinked folders. It exits 1 when it finds any.</dd>
       </dl>
@@ -346,8 +346,8 @@ For more information, try '--help'.
         <dt><code>…/dev.arkwerx.dewline/snapshots/decisions.jsonl</code></dt>
         <dd>The app appends one line per Keep or Revert of an agent's change, readable only by you. <code>changes</code> and the MCP <code>decisions</code> tool read it.</dd>
         <dt><code>…/dev.arkwerx.dewline/run/control.sock</code></dt>
-        <dd><code>open</code> and <code>notify</code> talk to the app here. The command checks that the app on the other end runs as you.</dd>
-        <dt><code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code>, <code>~/.cursor/hooks.json</code></dt>
+        <dd><code>open</code>, <code>export --to pdf</code> and <code>notify</code> talk to the app here. The command checks that the app on the other end runs as you.</dd>
+        <dt><code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code></dt>
         <dd><code>doctor</code> reads them. <code>doctor --install-hooks</code> writes them after you agree, with a backup beside each.</dd>
       </dl>
     </article>

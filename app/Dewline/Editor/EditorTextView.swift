@@ -383,19 +383,20 @@ final class EditorTextView: CaretTextView {
         marks.layoutIfDirty()
     }
 
-    /// The change Keep Change and Revert Change decide: the one under the caret, else the one the stamp shows.
+    /// The change Keep Change and Revert Change decide, with the rest of its writer's (`ChangeMarks.group`): the one
+    /// under the caret, else the one the stamp shows.
     var changeToDecide: UInt64? {
         marks.changeAtCaret ?? marks.stamped
     }
 
     /// Cmd-Return.
     @objc func keepChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.keep(id) }
+        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: true) }
     }
 
     /// Option-Cmd-Delete.
     @objc func revertChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.revert(id) }
+        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: false) }
     }
 
     /// Shift-Cmd-Return: keeps every marked change in this file.

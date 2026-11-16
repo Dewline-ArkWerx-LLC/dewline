@@ -217,16 +217,15 @@ final class ConflictCard: NSView, Hanging {
 /// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 change" sits on the change's first text baseline
 /// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column. Where the margin is
 /// narrower than the stamp plus that 26 pt and a 24 pt gutter, it folds into a 30 pt bar under the block holding the
-/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. The cursor
-/// bar stands on the page just before Keep's leading edge: no dark orange reaches 3:1 on both the dark paper and
-/// Keep's cream fill.
+/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. No cursor
+/// bar: no dark orange reaches 3:1 on Keep's cream fill, and in the gap it read as a separator.
 @MainActor
 final class ChangeStamp: NSView {
     static let barHeight: CGFloat = 30
     /// From the stamp's right edge to the text column, and the least margin left of the stamp.
     static let inset: CGFloat = 26
     static let gutter: CGFloat = 24
-    /// Between Revert and Keep, where the cursor bar stands.
+    /// Between Revert and Keep.
     private static let gap: CGFloat = 10
 
     private let revert: StampButton
@@ -279,7 +278,8 @@ final class ChangeStamp: NSView {
         resized()
     }
 
-    /// Shows `writer`'s change, which landed at `time`, one of `count` from its session in the note.
+    /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`; Keep and Revert
+    /// decide them all.
     func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
@@ -288,8 +288,9 @@ final class ChangeStamp: NSView {
         self.count = count
         self.external = external
         setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")")
-        revert.setAccessibilityLabel("Revert \(writer.possessive) change")
-        keep.setAccessibilityLabel("Keep \(writer.possessive) change")
+        let changes = count == 1 ? "change" : "\(count) changes"
+        revert.setAccessibilityLabel("Revert \(writer.possessive) \(changes)")
+        keep.setAccessibilityLabel("Keep \(writer.possessive) \(changes)")
         setUp.isHidden = !(offering && external)
         if changed { needsDisplay = true }
         if external { offerHooks() }
@@ -389,10 +390,6 @@ final class ChangeStamp: NSView {
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         line.draw(at: NSPoint(x: textX, y: baseline - ascent))
-        // The 2 x 12 pt cursor bar, centered on Keep in the gap before it.
-        ThemeStore.shared.color(.cursor).setFill()
-        let bar = NSRect(x: keep.frame.minX - Self.gap / 2 - 1, y: keep.frame.midY - 6, width: 2, height: 12)
-        NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
     }
 }
 

@@ -65,7 +65,7 @@ enum Chrome {
         0
     }
 
-    /// Ink at 8%, 25% under Increase Contrast: the selected row in a window that isn't main.
+    /// Ink at 8%, 25% under Increase Contrast: the selected row in a window that isn't key.
     static var inactiveSelection: NSColor {
         let ink = color(.ink)
         return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isHighContrast ? 0.25 : 0.08) }
@@ -396,15 +396,15 @@ final class DewMark: NSView {
     }
 }
 
-/// A selected row: the accent at 15% in a 6 pt radius pill while its window is main, ink at 8% when it isn't. No
+/// A selected row: the accent at 15% in a 6 pt radius pill while its window is key, ink at 8% when it isn't. No
 /// hover, no system highlight. Cells that conform to `ChromeSelectable` hear about selection. Keyboard focus in the
 /// list changes nothing: the selection marks what is open, so `isEmphasized` only prompts a redraw.
 class StationRowView: NSTableRowView {
     /// Where the selection draws.
     var pill: NSRect { bounds.insetBy(dx: 6, dy: 0) }
 
-    /// Whether the row's window is the main one, so the selection shows in the accent.
-    var isWindowActive: Bool { window?.isMainWindow ?? false }
+    /// Whether the row's window is key, so the selection shows in the accent, as the tab bar's cursor bar and the caret do.
+    var isWindowActive: Bool { window?.isKeyWindow ?? false }
 
     override var isSelected: Bool {
         didSet {
@@ -422,13 +422,13 @@ class StationRowView: NSTableRowView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        for name in [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification] {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             NotificationCenter.default.removeObserver(self, name: name, object: nil)
-            if let window { NotificationCenter.default.addObserver(self, selector: #selector(mainChanged), name: name, object: window) }
+            if let window { NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: window) }
         }
     }
 
-    @objc private func mainChanged() {
+    @objc private func keyChanged() {
         if isSelected { needsDisplay = true }
     }
 

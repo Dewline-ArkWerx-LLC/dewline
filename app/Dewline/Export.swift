@@ -166,7 +166,7 @@ enum Export {
         }
     }
 
-    /// An export finished: the status bar says "Exported “Launch plan.pdf”" with Show in Finder.
+    /// An export finished: a notice says "Exported “Launch plan.pdf”" with Show in Finder.
     static func exported(_ url: URL) {
         lastExport = url
         NotificationCenter.default.post(name: didExport, object: url)

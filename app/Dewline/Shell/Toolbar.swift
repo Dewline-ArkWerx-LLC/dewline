@@ -266,6 +266,9 @@ final class ActivityButton: NSButton {
     private(set) var shows = false
     /// The writers and counts the title last showed.
     private var counts: [(writer: MarkWriter, count: Int)] = []
+    /// The title's width: the toolbar keeps an item at the size it had when it went in, hidden and empty, unless
+    /// told otherwise.
+    private lazy var width = widthAnchor.constraint(equalToConstant: 0)
 
     init() {
         super.init(frame: .zero)
@@ -314,6 +317,8 @@ final class ActivityButton: NSButton {
         guard force || !same else { return }
         self.counts = counts
         attributedTitle = Self.title(counts)
+        width.constant = ceil(attributedTitle.size().width) + 4
+        width.isActive = true
         let spoken = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")
         setAccessibilityLabel("Changes waiting: \(spoken)")
         toolTip = "Changes waiting (\u{21E7}\u{2318}R)"

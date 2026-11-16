@@ -106,7 +106,7 @@ final class WindowState {
 }
 
 /// The tab strip in the title row: one 26 pt pill per tab, SF Pro 13, radius 6, at most 200 pt, its file name with the
-/// extension in `ink3`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
+/// extension in `ink2`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
 /// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
 /// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
@@ -197,7 +197,7 @@ final class TabStrip: NSView {
         line.lineBreakMode = .byTruncatingMiddle
         let name = NSMutableAttributedString(
             string: file as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
-        name.addAttribute(.foregroundColor, value: Chrome.color(.ink3), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
+        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
         return name
     }
 

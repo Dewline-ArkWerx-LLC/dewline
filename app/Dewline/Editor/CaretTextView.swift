@@ -70,14 +70,17 @@ class CaretTextView: NSTextView {
         insertionPointColor = Self.cursor
     }
 
+    /// The caret, bar or block, shows only while the window is key.
     @objc private func keyStateDidChange(_ notification: Notification) {
         if window?.isKeyWindow == true {
+            if !blockCaret { indicator?.displayMode = .automatic }
             restartIdleClock()
         } else {
             idleTimer?.cancel()
             idleTimer = nil
             solid = false
         }
+        holdSolid()
     }
 
     /// Any change to the characters, from any writer, ends a streak in the same transaction as the change.
@@ -129,11 +132,15 @@ class CaretTextView: NSTextView {
     }
 
     /// NSTextView sets its indicator back to automatic whenever it updates it, and TextKit 2 does so on every
-    /// layout pass; at idle the caret stays solid.
+    /// layout pass; at idle the caret stays solid, and in a window that isn't key it stays hidden.
     private func holdSolid() {
         placeBlock()
-        guard !blockCaret, solid, window?.isKeyWindow == true, window?.firstResponder === self else { return }
-        indicator?.displayMode = .visible
+        guard !blockCaret else { return }
+        if window?.isKeyWindow != true {
+            indicator?.displayMode = .hidden
+        } else if solid, window?.firstResponder === self {
+            indicator?.displayMode = .visible
+        }
     }
 
     private enum Cause { case jump, find, click, longMove }
@@ -249,7 +256,7 @@ class CaretTextView: NSTextView {
     }
 
     private func placeBlock() {
-        guard blockCaret, let window else { return effects.showBlock(nil, color: nil) }
+        guard blockCaret, let window, window.isKeyWindow else { return effects.showBlock(nil, color: nil) }
         indicator?.displayMode = .hidden
         let text = textStorage!.mutableString
         let location = selectedRange().location

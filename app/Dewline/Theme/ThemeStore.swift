@@ -268,6 +268,12 @@ extension NSAppearance {
     var isDark: Bool {
         bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
+
+    /// Increase Contrast is on.
+    var isHighContrast: Bool {
+        let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        return [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains(bestMatch(from: names))
+    }
 }
 
 /// Three faces chosen together in the Fonts pane (synthesis 2.8); one click sets all three slots, installing any

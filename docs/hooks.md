@@ -20,7 +20,7 @@ Merge into `~/.claude/settings.json`, or a project's `.claude/settings.json`:
 }
 ```
 
-The tool hooks name the file. Stop, StopFailure, UserPromptSubmit and SessionEnd end the autosave holds a session's tool calls put on its files; InstructionsLoaded holds a file the session loaded as instructions until the session ends.
+The tool hooks name the file. An Edit, MultiEdit, Write or Codex apply_patch call holds the file's autosave from its PreToolUse to its PostToolUse, at most 10 seconds. Read and InstructionsLoaded hold nothing.
 
 ## Codex
 

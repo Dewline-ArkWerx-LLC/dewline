@@ -222,10 +222,8 @@ and don't redo a change the user reverted.</code></pre>
       <details id="holds">
         <summary>Autosave waits for the agent</summary>
       <ul>
-        <li>A Claude Code tool call on a note holds that note's autosave until the turn ends: Stop, StopFailure or the next UserPromptSubmit. Your edits stay in the window.</li>
-        <li>A file Claude Code loads as instructions, such as <code>CLAUDE.md</code>, is held until the session ends.</li>
-        <li>Every hold lapses 30 minutes after the session's last hook event.</li>
-        <li>Codex patches hold nothing. While any hooked call on a file is open, Dewline waits up to 10 seconds before it lands an outside change there.</li>
+        <li>While an agent's Edit, Write or patch on a note is open, from its PreToolUse to its PostToolUse, Dewline waits to autosave the note and to land outside changes there, at most 10 seconds.</li>
+        <li>A Read holds nothing, and neither does loading <code>CLAUDE.md</code> or another instructions file.</li>
       </ul>
       </details>
       <details id="what-a-hook-sends">

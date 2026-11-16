@@ -64,9 +64,7 @@ public final class ChangeEngine: Sendable {
     public enum Update: Sendable, Equatable {
         /// A late claim named a change already landed; a quiet one is now marked.
         case relabeled(doc: UInt64, change: UInt64, origin: Origin)
-        /// A hold ended: run a refused autosave again.
-        case released(doc: UInt64)
-        /// A hook call ended: land again.
+        /// A hook call ended: land again, then run a refused autosave again.
         case retry(doc: UInt64)
     }
 
@@ -78,6 +76,11 @@ public final class ChangeEngine: Sendable {
         public let pinned: Bool
         fileprivate let hash: Data
         fileprivate let label: String
+
+        /// Whether the snapshot is `bytes`.
+        public func holds(_ bytes: Data) -> Bool {
+            hash == contentHash(bytes)
+        }
     }
 
     public struct Opened: Sendable {
@@ -257,7 +260,6 @@ public final class ChangeEngine: Sendable {
         return updates.map { update in
             switch update {
             case .relabeled(let doc, let change, let origin): .relabeled(doc: doc, change: change, origin: Origin(origin))
-            case .released(let doc): .released(doc: doc)
             case .retry(let doc): .retry(doc: doc)
             }
         }
@@ -273,6 +275,17 @@ public final class ChangeEngine: Sendable {
         try Self.call { try engine.snapshots(doc: doc) }.map {
             Snapshot(id: $0.id, time: $0.time, origin: Origin($0.origin), pinned: $0.pinned, hash: $0.hash, label: $0.label)
         }
+    }
+
+    /// The draft a refused save left, while it holds other bytes than the file.
+    public func draft(_ doc: UInt64) throws(Failure) -> Snapshot? {
+        try Self.call { try engine.draft(doc: doc) }.map {
+            Snapshot(id: $0.id, time: $0.time, origin: Origin($0.origin), pinned: $0.pinned, hash: $0.hash, label: $0.label)
+        }
+    }
+
+    public func discardDraft(_ doc: UInt64) throws(Failure) {
+        try Self.call { try engine.discardDraft(doc: doc) }
     }
 
     public func pin(_ doc: UInt64, snapshot: Snapshot, pinned: Bool) throws(Failure) {

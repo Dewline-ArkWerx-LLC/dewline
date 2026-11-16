@@ -3,7 +3,8 @@ import MdCore
 
 /// The title row, a `.unifiedCompact` toolbar: the folder's tile over the sidebar, then from the sidebar's divider the
 /// tab strip, Activity, Search and New Note. Each item is a borderless button in a plain view, so no glass capsule
-/// draws behind it. The tile and the tabs outlast the others when the window narrows.
+/// draws behind it. The tile and the tabs outlast the others when the window narrows. After 1.5 s of typing, everything
+/// but the selected tab fades out until the pointer or a Command chord comes back.
 @MainActor
 final class WindowToolbar: NSObject, NSToolbarDelegate {
     static let tile = NSToolbarItem.Identifier("dev.arkwerx.dewline.tile")
@@ -20,6 +21,17 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private let folder: Folder?
     private let activity = ActivityButton()
     private var activityItem: NSToolbarItem?
+    /// The tile, Activity, Search and New Note, which fade out while typing.
+    private var fading: [NSView] = []
+    /// Whether the title row has faded for typing.
+    private var quiet = false
+    /// When the current run of typing started and its last keystroke.
+    private var typing: (start: Date, last: Date)?
+    private var monitor: Any?
+    /// The pointer on screen when the row faded.
+    private var anchor = NSPoint.zero
+    /// Counts fades, so a fade's end hides the controls only if no later fade began.
+    private var fadeCount = 0
 
     /// The window whose notes Activity counts. A full-screen toolbar sits in a window of its own, so its views can't
     /// ask theirs.
@@ -56,25 +68,95 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case Self.divider:
             return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: split, dividerIndex: 0)
         case Self.tile:
-            let item = Self.item(identifier, "Folder", ToolbarControl(tileButton()), priority: .high)
+            let item = Self.item(identifier, "Folder", fades(ToolbarControl(tileButton())), priority: .high)
             item.isHidden = folder == nil
             return item
         case Self.tabs:
             return Self.item(identifier, "Tabs", strip, priority: .high)
         case Self.activity:
-            let item = Self.item(identifier, "Activity", ToolbarControl(activity, inset: 7), priority: .user)
+            let item = Self.item(identifier, "Activity", fades(ToolbarControl(activity, inset: 7)), priority: .user)
             activityItem = item
             item.isHidden = !activity.shows
             return item
         case Self.search:
-            return Self.item(identifier, "Open Quickly", ToolbarControl(Self.symbolButton(
-                "magnifyingglass", "Open Quickly", tip: "Open Quickly (\u{21E7}\u{2318}O)", action: #selector(AppDelegate.quickOpen(_:)))), priority: .user)
+            return Self.item(identifier, "Open Quickly", fades(ToolbarControl(Self.symbolButton(
+                "magnifyingglass", "Open Quickly", tip: "Open Quickly (\u{21E7}\u{2318}O)", action: #selector(AppDelegate.quickOpen(_:))))), priority: .user)
         case Self.newNote:
-            return Self.item(identifier, "New Note", ToolbarControl(Self.symbolButton(
-                "square.and.pencil", "New Note", tip: "New Note (\u{2318}N)", action: #selector(AppDelegate.newNote(_:)))), priority: .user)
+            return Self.item(identifier, "New Note", fades(ToolbarControl(Self.symbolButton(
+                "square.and.pencil", "New Note", tip: "New Note (\u{2318}N)", action: #selector(AppDelegate.newNote(_:))))), priority: .user)
         default:
             return nil
         }
+    }
+
+    private func fades(_ view: NSView) -> NSView {
+        fading.append(view)
+        return view
+    }
+
+    // MARK: Typing
+
+    /// A keystroke in the note. Once a run of typing, with no pause over 1.5 s, has gone on 1.5 s, the row fades,
+    /// unless the pointer is in it.
+    func typed() {
+        let now = Date.now
+        let start = typing.flatMap { now.timeIntervalSince($0.last) <= 1.5 ? $0.start : nil } ?? now
+        typing = (start, now)
+        guard !quiet, now.timeIntervalSince(start) >= 1.5, let window, !inTitleRow(NSEvent.mouseLocation, of: window) else { return }
+        fade(true)
+    }
+
+    /// Brings the row back: focus left the note, the window stopped being key, or it is entering full screen.
+    func wake() {
+        typing = nil
+        fade(false)
+    }
+
+    private func inTitleRow(_ point: NSPoint, of window: NSWindow) -> Bool {
+        window.frame.contains(point) && window.convertPoint(fromScreen: point).y >= window.contentLayoutRect.maxY
+    }
+
+    /// Fades the row's other controls and tabs out or in over 150 ms, at once under Reduce Motion. A faded control is
+    /// hidden once the fade ends, so it takes no clicks and VoiceOver skips it; it shows again before fading in.
+    private func fade(_ out: Bool) {
+        guard out != quiet, let window else { return }
+        quiet = out
+        fadeCount += 1
+        let count = fadeCount
+        if out {
+            anchor = NSEvent.mouseLocation
+            window.acceptsMouseMovedEvents = true
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .keyDown]) { [weak self] event in
+                self?.woken(by: event)
+                return event
+            }
+        } else {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            window.acceptsMouseMovedEvents = false
+            for view in fading { view.isHidden = false }
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.15
+            for view in fading { view.animator().alphaValue = out ? 0 : 1 }
+            strip.animator().othersAlpha = out ? 0 : 1
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.quiet, self.fadeCount == count else { return }
+                for view in self.fading { view.isHidden = true }
+            }
+        }
+    }
+
+    /// The pointer moving more than 3 pt or into the title row, or a Command chord, brings the row back.
+    private func woken(by event: NSEvent) {
+        guard let window else { return }
+        let point = NSEvent.mouseLocation
+        let wakes = switch event.type {
+        case .mouseMoved: hypot(point.x - anchor.x, point.y - anchor.y) > 3 || inTitleRow(point, of: window)
+        default: event.modifierFlags.contains(.command)
+        }
+        if wakes { wake() }
     }
 
     private static func item(_ identifier: NSToolbarItem.Identifier, _ label: String, _ view: NSView, priority: NSToolbarItem.VisibilityPriority) -> NSToolbarItem {
@@ -285,8 +367,23 @@ final class ActivityButton: NSButton {
             menu.addItem(Self.note(note.url, "\(MarkWriter(note.origin).name), changed while closed"))
         }
         menu.addItem(.separator())
+        let files = Set(loads.compactMap(\.url)).count
+        if files > 0 {
+            let item = menu.addItem(withTitle: "Agents Read \(files) \(files == 1 ? "File" : "Files") Here", action: #selector(showLoads(_:)), keyEquivalent: "")
+            item.target = self
+        }
         menu.addItem(withTitle: "Review All Changes", action: #selector(ShellActions.toggleChanges(_:)), keyEquivalent: "R")
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
+    }
+
+    /// What agents load for the window's note's folder.
+    private var loads: [AgentRow] {
+        (owner?.windowController as? MainWindowController)?.agentLoads ?? []
+    }
+
+    /// Each agent and file the note's folder loads, with its estimate, under Activity.
+    @objc private func showLoads(_ sender: Any?) {
+        LoadsPopover.show(loads, under: self)
     }
 
     private static func note(_ url: URL, _ detail: String) -> NSMenuItem {

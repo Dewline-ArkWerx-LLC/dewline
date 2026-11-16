@@ -48,10 +48,10 @@ enum Chrome {
         ThemeStore.shared.color(token)
     }
 
-    /// The accent at 15%: the selected row's fill.
+    /// The accent at 15%, 25% under Increase Contrast: the selected row's fill.
     static var wash: NSColor {
         let accent = color(.accent)
-        return NSColor(name: nil) { accent.resolved(for: $0).withAlphaComponent(0.15) }
+        return NSColor(name: nil) { accent.resolved(for: $0).withAlphaComponent($0.isHighContrast ? 0.25 : 0.15) }
     }
 
     /// Ink at 8% in light and 7% in dark: a hovered tab, row or button.
@@ -65,10 +65,10 @@ enum Chrome {
         0
     }
 
-    /// Ink at 8%: the selected row in a window that isn't main.
+    /// Ink at 8%, 25% under Increase Contrast: the selected row in a window that isn't main.
     static var inactiveSelection: NSColor {
         let ink = color(.ink)
-        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent(0.08) }
+        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isHighContrast ? 0.25 : 0.08) }
     }
 
     /// The outer edge of islands and the palette: ink at 8% in light, ink2 at 10% in dark.

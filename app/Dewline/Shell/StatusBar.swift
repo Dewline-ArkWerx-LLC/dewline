@@ -1,12 +1,12 @@
 import AppKit
 
-/// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: on the left
-/// whether the note is saved, in the middle its word count, on the right one message at a time. Nothing in it blinks.
+/// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: one message at a
+/// time with its buttons. With no message it is hidden and takes no height. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
-    /// A line on the right, with its buttons. Other parts of the app post these: share requests, the update question,
-    /// an export's result, hooks and tracking problems.
+    /// A line with its buttons. Other parts of the app post these: share requests, a terminal waiting on the note, a
+    /// held save, an export's result and tracking problems.
     struct Message {
         enum Kind: Int, Comparable {
             // The one shown is the first that applies, in this order: what was just done, what someone waits on, what
@@ -44,58 +44,33 @@ final class StatusBar: NSView {
         ((window ?? NSApp.mainWindow)?.windowController as? MainWindowController)?.statusBar
     }
 
-    private let state = NSTextField(labelWithString: "")
-    private let words = NSTextField(labelWithString: "")
-    private let right = NSStackView()
+    private let line = NSStackView()
     private var messages: [Message] = []
-    /// The left side's button, such as Done for a terminal that waits.
-    private var stateAction: Message.Action?
-    private let stateButton = NSButton(title: "", target: nil, action: nil)
+    private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: 0)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        for label in [state, words] {
-            label.font = Chrome.status
-            label.lineBreakMode = .byTruncatingTail
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
-        stateButton.target = self
-        stateButton.action = #selector(runStateAction)
-        StatusBar.style(stateButton)
-        stateButton.isHidden = true
         let rule = RuleLine()
         rule.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rule)
+        line.spacing = 6
+        line.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(line)
         NSLayoutConstraint.activate([
             rule.topAnchor.constraint(equalTo: topAnchor),
             rule.leadingAnchor.constraint(equalTo: leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            heightConstraint,
+            line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            line.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        let left = NSStackView(views: [state, stateButton])
-        left.spacing = 6
-        right.spacing = 6
-        for view in [left, words, right] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-        }
-        words.alignment = .center
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Self.height),
-            left.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            left.centerYAnchor.constraint(equalTo: centerYAnchor),
-            words.centerXAnchor.constraint(equalTo: centerXAnchor),
-            words.centerYAnchor.constraint(equalTo: centerYAnchor),
-            words.leadingAnchor.constraint(greaterThanOrEqualTo: left.trailingAnchor, constant: 12),
-            right.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            right.centerYAnchor.constraint(equalTo: centerYAnchor),
-            right.leadingAnchor.constraint(greaterThanOrEqualTo: words.trailingAnchor, constant: 12),
-        ])
+        isHidden = true
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Status")
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
-        themeDidChange()
     }
 
     required init?(coder: NSCoder) {
@@ -109,29 +84,9 @@ final class StatusBar: NSView {
     }
 
     @objc private func themeDidChange() {
-        for label in [state, words] { label.textColor = Chrome.color(.ink2) }
         needsDisplay = true
-        StatusBar.style(stateButton)
         rebuild()
     }
-
-    /// "Saved", "Saving waits until you choose", or a line with a button; empty hides it.
-    func show(state text: String, action: Message.Action? = nil) {
-        state.stringValue = text
-        stateAction = action
-        stateButton.title = action?.title ?? ""
-        StatusBar.style(stateButton)
-        stateButton.isHidden = action == nil
-    }
-
-    var stateText: String { state.stringValue }
-
-    /// "1,204 words", or "38 of 1,204 words" with a selection.
-    func show(words text: String) {
-        words.stringValue = text
-    }
-
-    var wordsText: String { words.stringValue }
 
     func post(_ message: Message) {
         messages.removeAll { $0.id == message.id }
@@ -158,23 +113,21 @@ final class StatusBar: NSView {
     }
 
     private func rebuild() {
-        for view in right.arrangedSubviews { view.removeFromSuperview() }
+        for view in line.arrangedSubviews { view.removeFromSuperview() }
+        isHidden = shown == nil
+        heightConstraint.constant = isHidden ? 0 : Self.height
         guard let message = shown else { return }
         let text = NSTextField(labelWithString: message.text)
         text.font = Chrome.status
         text.textColor = Chrome.color(.ink2)
         text.lineBreakMode = .byTruncatingTail
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        right.addArrangedSubview(text)
+        line.addArrangedSubview(text)
         for action in message.actions {
             let button = ActionButton(action)
             StatusBar.style(button)
-            right.addArrangedSubview(button)
+            line.addArrangedSubview(button)
         }
-    }
-
-    @objc private func runStateAction() {
-        stateAction?.run(stateButton)
     }
 
     /// A borderless text button in `ink`, SF 11 medium, so it reads as the line's verb.

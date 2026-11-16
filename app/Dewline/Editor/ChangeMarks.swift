@@ -52,7 +52,13 @@ struct MarkWriter: Equatable {
 /// below it. The marks sit under the text; ghosts and cards sit over it.
 @MainActor
 final class ChangeMarks: NSView, NSViewToolTipOwner {
-    weak var textView: EditorTextView?
+    weak var textView: EditorTextView? {
+        didSet {
+            NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification, object: nil)
+            guard let storage = textView?.textStorage else { return }
+            NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: storage)
+        }
+    }
     /// Keep, Revert and the card's choices go through the engine here.
     weak var live: LiveFile?
     private var changes: [UInt64: LiveFile.Change] = [:]
@@ -132,6 +138,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         for id in marked.keys where landed[id] == nil { landed[id] = .now }
         self.changes = marked
         updateHangers()
+        dirty = true
+        textView?.needsLayout = true
+    }
+
+    /// Any edit, typing or styling, moves the lines the marks sit on: they lay out again on the text's next layout
+    /// pass, from the fragments that pass makes.
+    @objc private func storageEdited() {
+        guard !changes.isEmpty else { return }
         dirty = true
         textView?.needsLayout = true
     }

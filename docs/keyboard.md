@@ -9,6 +9,7 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Hide Others | Dewline | ⌥⌘H |
 | Quit Dewline | Dewline | ⌘Q |
 | New Note | File | ⌘N |
+| New Tab | File | ⌘T |
 | New Folder | File | ⇧⌘N |
 | New Window | File | ⌥⌘N |
 | Open… | File | ⌘O |

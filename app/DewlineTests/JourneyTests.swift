@@ -794,7 +794,7 @@ struct JourneyTests {
         defer { vault.remove() }
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { tab.close() }
-        let split = try #require(tab.window.contentViewController as? NSSplitViewController)
+        let split = try #require(tab.window.contentViewController?.children.first as? NSSplitViewController)
         let sidebar = try #require(split.splitViewItems.first)
         let chain = Self.chain(from: tab.textView)
         #expect(Self.enabled(#selector(NSSplitViewController.toggleSidebar(_:)), in: chain))

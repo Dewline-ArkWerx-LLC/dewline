@@ -279,7 +279,8 @@ final class ChangeStamp: NSView {
         resized()
     }
 
-    /// Shows `writer`'s change, which landed at `time`, one of `count` from its session in the note.
+    /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`; Keep and Revert
+    /// decide them all.
     func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
@@ -288,8 +289,9 @@ final class ChangeStamp: NSView {
         self.count = count
         self.external = external
         setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")")
-        revert.setAccessibilityLabel("Revert \(writer.possessive) change")
-        keep.setAccessibilityLabel("Keep \(writer.possessive) change")
+        let changes = count == 1 ? "change" : "\(count) changes"
+        revert.setAccessibilityLabel("Revert \(writer.possessive) \(changes)")
+        keep.setAccessibilityLabel("Keep \(writer.possessive) \(changes)")
         setUp.isHidden = !(offering && external)
         if changed { needsDisplay = true }
         if external { offerHooks() }

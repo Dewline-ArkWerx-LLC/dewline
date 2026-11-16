@@ -481,11 +481,17 @@ final class LiveFile {
 
     /// Keep All and Revert All: decides every marked change in the file, last first, as one undoable edit.
     func decideAll(keep: Bool) {
+        decide(changes.filter(\.value.marked).map(\.key), keep: keep, named: keep ? "Keep All Changes" : "Revert All Changes")
+    }
+
+    /// Keeps or reverts `ids`, last first, as one undoable edit: the stamp's changes, one writer's in this file.
+    func decide(_ ids: [UInt64], keep: Bool, named name: String? = nil) {
         guard let textView = document?.textView else { return }
-        let marked = changes.filter(\.value.marked).sorted { $0.value.range.location > $1.value.range.location }.map(\.key)
-        guard !marked.isEmpty else { return }
-        textView.history.perform(keep ? "Keep All Changes" : "Revert All Changes") {
-            for id in marked { keep ? self.keep(id) : self.revert(id) }
+        let ids = ids.filter { changes[$0] != nil }.sorted { changes[$0]!.range.location > changes[$1]!.range.location }
+        guard !ids.isEmpty else { return }
+        if ids.count == 1, name == nil { return keep ? self.keep(ids[0]) : revert(ids[0]) }
+        textView.history.perform(name ?? (keep ? "Keep Changes" : "Revert Changes")) {
+            for id in ids { keep ? self.keep(id) : self.revert(id) }
         }
     }
 

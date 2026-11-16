@@ -274,6 +274,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let motion = Motion.current != .off
         let storage = textView.textStorage!
         var hung: [UInt64: CGFloat] = [:]
+        var ruled: [(key: String, rules: [NSRect], color: NSColor)] = []
         // Hangers under one paragraph stack in change order; each change in it anchors at its own offset.
         func paragraph(_ anchor: Int) -> NSRange {
             storage.mutableString.paragraphRange(for: NSRange(location: min(anchor, storage.length), length: 0))
@@ -329,6 +330,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             // A rule per row; a 1 pt line at 35% joins the rows across what lies between them.
             let x = max(left - Self.ruleInset, 4)
             let rules = rows.map { NSRect(x: x, y: $0.minY + 2, width: ruleWidth, height: max($0.height - 4, 4)) }
+            if !change.conflict { ruled.append((Review.key(change.origin), rules, color)) }
             for (above, below) in zip(rules, rules.dropFirst()) where below.minY > above.maxY {
                 let join = CALayer()
                 join.frame = NSRect(x: x + (ruleWidth - 1) / 2, y: above.maxY, width: 1, height: below.minY - above.maxY)
@@ -361,6 +363,20 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 group.add(fade, forKey: "fade")
             }
             layer.addSublayer(group)
+        }
+        // One writer's changes read as one: the same 1 pt line joins a change's last rule to the next change's first
+        // when only a few lines lie between them.
+        let near = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight * 3
+        for writer in Dictionary(grouping: ruled, by: \.key).values {
+            let spans = writer.filter { !$0.rules.isEmpty }.sorted { $0.rules[0].minY < $1.rules[0].minY }
+            for (above, below) in zip(spans, spans.dropFirst()) {
+                let (top, bottom) = (above.rules.last!.maxY, below.rules[0].minY)
+                guard bottom > top, bottom - top <= near else { continue }
+                let join = CALayer()
+                join.frame = NSRect(x: below.rules[0].minX + (ruleWidth - 1) / 2, y: top, width: 1, height: bottom - top)
+                join.backgroundColor = above.color.withAlphaComponent(0.35).cgColor
+                layer.addSublayer(join)
+            }
         }
         CATransaction.commit()
         for tip in tips { addToolTip(tip.rect, owner: self, userData: nil) }
@@ -477,6 +493,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return changes.filter { !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
     }
 
+    /// The changes Keep and Revert decide with `id`: every waiting change from the same writer's session in the note,
+    /// which the stamp counts; a conflict alone.
+    func group(of id: UInt64) -> [UInt64] {
+        guard let change = changes[id], !change.conflict else { return [id] }
+        let key = Review.key(change.origin)
+        return changes.filter { !$0.value.conflict && Review.key($0.value.origin) == key }.map(\.key)
+    }
+
     private var changeHoldingCaret: UInt64? {
         guard let caret = textView?.selectedRanges.first?.rangeValue.location else { return nil }
         return changes.filter { !$0.value.conflict && (NSLocationInRange(caret, $0.value.range) || caret == NSMaxRange($0.value.range)) }.keys.min()
@@ -511,8 +535,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             self.stamp = stamp
             return stamp
         }()
-        let key = Review.key(change.origin)
-        let count = changes.values.count { !$0.conflict && Review.key($0.origin) == key }
+        let count = group(of: id).count
         stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: change.origin == .external)
         if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
@@ -589,7 +612,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     private func decideStamped(keep: Bool) {
         guard let id = stamped else { return }
-        if keep { live?.keep(id) } else { live?.revert(id) }
+        live?.decide(group(of: id), keep: keep)
     }
 
     /// One announcement per marked landing.

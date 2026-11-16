@@ -31,8 +31,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var sourceBeforePreview: Bool?
     /// The right pane collapsed the sidebar to make room, so closing the pane brings it back.
     private var paneHidSidebar = false
-    /// Review's line for a finished agent turn; the Keep bar says it now, so it is never laid out.
-    let finished = FinishedLine()
     private(set) var textView: EditorTextView?
     private var outlineUpdate: Task<Void, Never>?
     private var sectionUpdate: Task<Void, Never>?
@@ -359,7 +357,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(updateOutline), name: BlockMap.didParse, object: textView.styler.map)
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         self.textView = textView
-        keepBar.attach(textView, live: document.live)
+        keepBar.attach(to: textView)
         if !paneItem.isCollapsed, pane.tab == .preview {
             sourceBeforePreview = textView.styler.showsSource
             if !textView.styler.showsSource { textView.toggleSource(nil) }
@@ -393,7 +391,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             content.bottomAnchor.constraint(equalTo: page.bottomAnchor),
         ])
         // A note's page attaches it again once its text is in.
-        keepBar.attach(nil, live: nil)
+        keepBar.attach(to: nil)
     }
 
     /// Opens `url` here, in a new tab when asked or when this tab's text has edits or a terminal waits on it, or

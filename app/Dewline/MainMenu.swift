@@ -14,6 +14,7 @@ enum MainMenu {
     static func build() -> NSMenu {
         let (main, window, help) = bar()
         NSApplication.shared.windowsMenu = window
+        TabMenu.shared.menu = window
         NSApplication.shared.helpMenu = help
         return main
     }
@@ -52,6 +53,7 @@ enum MainMenu {
     private static func fileMenu() -> NSMenu {
         let menu = NSMenu(title: "File")
         menu.addItem(withTitle: "New Note", action: #selector(AppDelegate.newNote(_:)), keyEquivalent: "n")
+        menu.addItem(withTitle: "New Tab", action: #selector(NSResponder.newWindowForTab(_:)), keyEquivalent: "t")
         menu.addItem(withTitle: "New Folder", action: #selector(AppDelegate.newFolder(_:)), keyEquivalent: "N")
         let window = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
         window.keyEquivalentModifierMask = [.command, .option]

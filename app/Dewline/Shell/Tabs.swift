@@ -2,13 +2,15 @@ import AppKit
 
 /// One window's tabs, which Dewline draws itself. Each tab keeps its own controller and window, so its document,
 /// sheets and undo stay as they are; only the selected tab's window is on screen, and the others wait ordered out at
-/// the same frame. Posts `changed` when a tab comes, goes, is selected, or its name or marks change.
+/// the same frame. Posts `changed` when a tab comes, goes, moves, is selected, or its name or saved state changes.
 @MainActor
 final class TabSet {
     static let changed = Notification.Name("DewlineTabsChanged")
 
     private(set) var tabs: [MainWindowController] = []
     private(set) weak var selected: MainWindowController?
+    /// What the window owns rather than a tab, handed from the tab going out to the tab coming in.
+    let shared = WindowState()
 
     init(_ first: MainWindowController) {
         tabs = [first]
@@ -28,17 +30,36 @@ final class TabSet {
             selected = tab
             return
         }
-        if leaving.isVisible || leaving.isMiniaturized {
+        // A full-screen frame is the screen's; the tab keeps its own windowed frame, which the tabs share.
+        if leaving.isVisible || leaving.isMiniaturized, !leaving.styleMask.contains(.fullScreen) {
             window.setFrame(leaving.frame, display: false)
         }
+        old.saveWindowState()
         selected = tab
+        tab.adoptWindowState()
         tab.adoptPane(from: old)
         window.isExcludedFromWindowsMenu = false
         leaving.isExcludedFromWindowsMenu = true
-        // The window goes after the new one is in front, so the screen never shows neither.
+        // The window goes after the new one is in front, so the screen never shows neither. A full-screen window
+        // leaves full screen first; once it has, it goes and the new tab enters full screen
+        // (`MainWindowController.windowDidExitFullScreen`).
         Task { @MainActor in
-            if self.selected !== old { leaving.orderOut(nil) }
+            guard self.selected !== old else { return }
+            if leaving.styleMask.contains(.fullScreen) {
+                leaving.toggleFullScreen(nil)
+            } else {
+                leaving.orderOut(nil)
+            }
         }
+        post()
+    }
+
+    /// Moves `tab` to just after `neighbor`, or first.
+    func move(_ tab: MainWindowController, after neighbor: MainWindowController?) {
+        guard tab !== neighbor, let from = tabs.firstIndex(of: tab) else { return }
+        tabs.remove(at: from)
+        let index = neighbor.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+        tabs.insert(tab, at: index)
         post()
     }
 
@@ -48,7 +69,10 @@ final class TabSet {
         tabs.remove(at: index)
         if selected === tab || selected == nil, !tabs.isEmpty {
             let next = tabs[min(index, tabs.count - 1)]
+            tab.saveWindowState()
             selected = next
+            next.adoptWindowState()
+            next.adoptPane(from: tab)
             if let frame = tab.window?.frame { next.window?.setFrame(frame, display: false) }
             next.window?.isExcludedFromWindowsMenu = false
             next.showWindow(nil)
@@ -67,11 +91,31 @@ final class TabSet {
     }
 }
 
-/// The tab row along the top of the editor column, 30 pt, shown with two tabs or more: each tab 120 to 220 pt wide.
-/// The selected tab takes the page's paper and joins it, its name in `ink` 13 medium; the others sit on the chrome in
-/// `ink2`. A tab in back shows an accent dot while outside changes in it wait. The close glyph shows under the pointer.
-final class TabRow: NSView {
-    static let height: CGFloat = 30
+
+/// What the spec gives the window rather than a tab: the sidebar shown or collapsed and its width, the Find in Files
+/// query, the right pane's hold on the sidebar, and full screen. Expanded folders are kept per folder in user defaults,
+/// which the tab coming in reads again.
+@MainActor
+final class WindowState {
+    var sidebarCollapsed = false
+    var sidebarWidth: CGFloat = 264
+    /// Find in Files' query while it shows in place of the tree.
+    var search: String?
+    var paneHidSidebar = false
+    var fullScreen = false
+}
+
+/// The tab strip in the title row: one 26 pt pill per tab, SF Pro 13, radius 6, at most 200 pt, its file name with the
+/// extension in `ink3`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
+/// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
+/// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
+/// and the selected tab always shows. Dragging a tab along the strip moves it.
+final class TabStrip: NSView {
+    private static let height: CGFloat = 26
+    private static let padding: CGFloat = 16
+    private static let gap: CGFloat = 4
+    private static let widest: CGFloat = 200
+    private static let close = NSRect(x: 3, y: 7, width: 12, height: 12)
 
     weak var tabs: TabSet? {
         didSet {
@@ -81,157 +125,350 @@ final class TabRow: NSView {
         }
     }
 
-    private let stack = NSStackView()
-    /// Each tab's dot as the row last showed it.
-    private var dots: [NSColor?] = []
+    private struct Slot {
+        let tab: MainWindowController
+        var frame: NSRect
+    }
+
+    private var slots: [Slot] = []
+    private var overflow: [MainWindowController] = []
+    private var more: NSRect?
+    private var hovered: MainWindowController?
+    private var dragging: (tab: MainWindowController, offset: CGFloat)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        stack.orientation = .horizontal
-        stack.spacing = 0
-        stack.alignment = .bottom
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        let rule = RuleLine()
-        rule.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rule)
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rule.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
         setAccessibilityElement(true)
         setAccessibilityRole(.tabGroup)
         setAccessibilityLabel("Tabs")
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect], owner: self))
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: ThemeStore.didChange, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: LiveFile.changesDidChange, object: nil)
     }
 
     required init?(coder: NSCoder) {
-        fatalError("TabRow is built in code")
+        fatalError("TabStrip is built in code")
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
-    override var wantsUpdateLayer: Bool { true }
+    override var isFlipped: Bool { true }
 
-    override func updateLayer() {
-        layer?.backgroundColor = Chrome.color(.chrome).resolved(for: effectiveAppearance).cgColor
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        place()
     }
 
     @objc func reload() {
-        for view in stack.arrangedSubviews { view.removeFromSuperview() }
-        dots = tabs?.tabs.map(\.tabDot) ?? []
-        needsDisplay = true
-        guard let tabs else { return }
-        for tab in tabs.tabs {
-            let selected = tab === tabs.selected
-            stack.addArrangedSubview(TabButton(tab, selected: selected, dot: selected ? nil : tab.tabDot))
-        }
+        place()
     }
 
-    /// Each keystroke before a pending change moves it; the row rebuilds only when a tab's dot changes.
-    @objc private func changesChanged() {
-        guard tabs?.tabs.map(\.tabDot) ?? [] != dots else { return }
-        reload()
-    }
-}
+    // MARK: Layout
 
-/// One tab: its name, a dot for outside changes waiting in a tab in back, and a close glyph under the pointer.
-private final class TabButton: NSView {
-    private weak var tab: MainWindowController?
-    private let selected: Bool
-    private let name: String
-    private let dot: NSColor?
-    private let close = GlyphButton(.close, label: "Close Tab", target: nil, action: nil)
-    private var hovering = false {
-        didSet { close.isHidden = !hovering }
-    }
-
-    init(_ tab: MainWindowController, selected: Bool, dot: NSColor?) {
-        self.tab = tab
-        self.selected = selected
-        name = tab.tabName
-        self.dot = dot
-        super.init(frame: .zero)
-        wantsLayer = true
-        translatesAutoresizingMaskIntoConstraints = false
-        close.target = self
-        close.action = #selector(closeTab)
-        close.isHidden = true
-        addSubview(close)
-        let text = ceil((name as NSString).size(withAttributes: [.font: Self.font(selected)]).width)
-        let width = min(max(text + (dot == nil ? 0 : 11) + 24 + 24, 120), 220)
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: width),
-            heightAnchor.constraint(equalToConstant: selected ? TabRow.height : TabRow.height - 1),
-            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            close.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
-        setAccessibilityElement(true)
-        setAccessibilityRole(.radioButton)
-        setAccessibilityLabel(name)
-        setAccessibilityValue(selected)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("TabButton is built in code")
-    }
-
-    private static func font(_ selected: Bool) -> NSFont {
-        selected ? Chrome.labelActive : Chrome.label
-    }
-
-    override var mouseDownCanMoveWindow: Bool { false }
-    override var wantsUpdateLayer: Bool { false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if selected {
-            Chrome.color(.paper).setFill()
-            bounds.fill()
-            Chrome.color(.rule).setFill()
-            NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
-            NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
-        }
-        let attributes: [NSAttributedString.Key: Any] = [.font: Self.font(selected), .foregroundColor: Chrome.color(selected ? .ink : .ink2)]
+    private static func name(_ tab: MainWindowController) -> NSAttributedString {
+        let file = tab.tabFileName as NSString
+        let ext = file.pathExtension.isEmpty ? "" : "." + file.pathExtension
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byTruncatingMiddle
-        let string = NSAttributedString(string: name, attributes: attributes.merging([.paragraphStyle: line]) { $1 })
-        let size = string.size()
-        let room = bounds.width - 24 - 24 - (dot == nil ? 0 : 11)
-        string.draw(with: NSRect(x: 12, y: bounds.midY - ceil(size.height) / 2, width: room, height: ceil(size.height)), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        if let dot {
-            dot.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 12 + min(ceil(size.width), room) + 6, y: bounds.midY - 2.5, width: 5, height: 5)).fill()
+        let name = NSMutableAttributedString(
+            string: file as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
+        name.addAttribute(.foregroundColor, value: Chrome.color(.ink3), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
+        return name
+    }
+
+    private static func edited(_ tab: MainWindowController) -> Bool {
+        tab.window?.isDocumentEdited == true
+    }
+
+    private static func width(_ tab: MainWindowController) -> CGFloat {
+        min(ceil(name(tab).size().width) + padding * 2 + (edited(tab) ? 8 : 0), widest)
+    }
+
+    private static func moreWidth(_ count: Int) -> CGFloat {
+        ceil(("+\(count)" as NSString).size(withAttributes: [.font: Chrome.mono(12, weight: .medium)]).width) + 20
+    }
+
+    /// Lays the tabs out from the leading edge. When they overflow, the leading ones that fit stay, the selected tab
+    /// takes the last place if it is not among them, and the rest go into "+N".
+    private func place() {
+        let all = tabs?.tabs ?? []
+        let widths = all.map(Self.width)
+        let y = floor((bounds.height - Self.height) / 2)
+        var shown = Array(all.indices)
+        if widths.reduce(0, +) + Self.gap * CGFloat(max(all.count - 1, 0)) > bounds.width {
+            let selected = all.firstIndex { $0 === tabs?.selected }
+            var room = bounds.width - Self.moreWidth(all.count) - Self.gap
+            if let selected { room -= widths[selected] + Self.gap }
+            shown = []
+            for index in all.indices where index != selected {
+                guard widths[index] + Self.gap <= room else { break }
+                room -= widths[index] + Self.gap
+                shown.append(index)
+            }
+            if let selected { shown = (shown + [selected]).sorted() }
         }
+        var x: CGFloat = 0
+        slots = shown.map { index in
+            let width = min(widths[index], max(bounds.width - x, 0))
+            defer { x += width + Self.gap }
+            return Slot(tab: all[index], frame: NSRect(x: x, y: y, width: width, height: Self.height))
+        }
+        overflow = all.indices.filter { !shown.contains($0) }.map { all[$0] }
+        more = overflow.isEmpty ? nil : NSRect(x: x, y: y, width: min(Self.moreWidth(overflow.count), max(bounds.width - x, 0)), height: Self.height)
+        if let hovered, !slots.contains(where: { $0.tab === hovered }) { self.hovered = nil }
+        updateAccessibility()
+        needsDisplay = true
+    }
+
+    // MARK: Drawing
+
+    private var selectedFill: NSColor {
+        let (paper, ink) = (Chrome.color(.paper), Chrome.color(.ink))
+        return NSColor(name: nil) { $0.isDark ? ink.resolved(for: $0).withAlphaComponent(0.14) : paper.resolved(for: $0) }
+    }
+
+    /// Ink at 10%: the dividers and the close x's tile.
+    private var faint: NSColor {
+        let ink = Chrome.color(.ink)
+        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent(0.10) }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let selected = tabs?.selected
+        for (index, slot) in slots.enumerated() where slot.tab !== dragging?.tab {
+            draw(slot, selected: slot.tab === selected)
+            guard index + 1 < slots.count else { continue }
+            let next = slots[index + 1].tab
+            let quiet = [slot.tab, next].allSatisfy { $0 !== selected && $0 !== hovered && $0 !== dragging?.tab }
+            if quiet {
+                faint.setFill()
+                NSRect(x: slot.frame.maxX + Self.gap / 2 - 0.5, y: slot.frame.midY - 7, width: 1, height: 14).fill()
+            }
+        }
+        if let more {
+            let path = NSBezierPath(roundedRect: more.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+            Chrome.color(.rule).setStroke()
+            path.stroke()
+            let label = NSAttributedString(string: "+\(overflow.count)", attributes: [.font: Chrome.mono(12, weight: .medium), .foregroundColor: Chrome.color(.ink2)])
+            let size = label.size()
+            label.draw(at: NSPoint(x: more.midX - size.width / 2, y: more.midY - size.height / 2))
+        }
+        if let dragging, var slot = slots.first(where: { $0.tab === dragging.tab }) {
+            slot.frame.origin.x += dragging.offset
+            draw(slot, selected: slot.tab === selected)
+        }
+    }
+
+    private func draw(_ slot: Slot, selected: Bool) {
+        let frame = slot.frame
+        let hovering = slot.tab === hovered
+        let pill = NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6)
+        if selected {
+            selectedFill.setFill()
+            pill.fill()
+            Chrome.strokeSubtle.setStroke()
+            NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6).stroke()
+        } else if hovering || slot.tab === dragging?.tab {
+            Chrome.hover.setFill()
+            pill.fill()
+        }
+        if hovering {
+            let box = Self.close.offsetBy(dx: frame.minX, dy: frame.minY)
+            faint.setFill()
+            NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
+            Chrome.color(.ink).setStroke()
+            let cross = NSBezierPath()
+            cross.lineWidth = 1.2
+            cross.lineCapStyle = .round
+            let glyph = box.insetBy(dx: 3.5, dy: 3.5)
+            cross.move(to: NSPoint(x: glyph.minX, y: glyph.minY))
+            cross.line(to: NSPoint(x: glyph.maxX, y: glyph.maxY))
+            cross.move(to: NSPoint(x: glyph.minX, y: glyph.maxY))
+            cross.line(to: NSPoint(x: glyph.maxX, y: glyph.minY))
+            cross.stroke()
+        } else if selected {
+            Chrome.color(.cursor).setFill()
+            NSBezierPath(roundedRect: NSRect(x: frame.minX + 8, y: frame.midY - 6, width: 2, height: 12), xRadius: 1, yRadius: 1).fill()
+        }
+        let name = NSMutableAttributedString(attributedString: Self.name(slot.tab))
+        if !selected, !hovering {
+            let ext = (slot.tab.tabFileName as NSString).pathExtension
+            let stem = name.length - (ext.isEmpty ? 0 : ext.utf16.count + 1)
+            name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: stem))
+        }
+        let edited = Self.edited(slot.tab)
+        let height = ceil(name.size().height)
+        let room = frame.width - Self.padding * 2 - (edited ? 8 : 0)
+        name.draw(
+            with: NSRect(x: frame.minX + Self.padding, y: frame.midY - height / 2, width: max(room, 0), height: height),
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if edited {
+            Chrome.color(.ink2).setFill()
+            NSBezierPath(ovalIn: NSRect(x: frame.maxX - Self.padding - 4, y: frame.midY - 3, width: 6, height: 6)).fill()
+        }
+    }
+
+    // MARK: Pointer
+
+    private func slot(at point: NSPoint) -> Slot? {
+        slots.first { $0.frame.contains(point) }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        hover(slot(at: convert(event.locationInWindow, from: nil))?.tab)
     }
 
     override func mouseEntered(with event: NSEvent) {
-        hovering = true
+        mouseMoved(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
-        hovering = false
+        hover(nil)
     }
 
+    private func hover(_ tab: MainWindowController?) {
+        guard hovered !== tab else { return }
+        hovered = tab
+        needsDisplay = true
+    }
+
+    /// A click selects or closes a tab, or opens "+N"; a drag of more than 3 pt moves the tab along the strip.
     override func mouseDown(with event: NSEvent) {
-        tab?.showWindow(nil)
+        let start = convert(event.locationInWindow, from: nil)
+        if let more, more.contains(start) { return showMore() }
+        // The layout as the press found it; a tab that comes or goes mid-drag lays the strip out again.
+        let frames = slots
+        guard let slot = slot(at: start), let window else { return }
+        if Self.close.insetBy(dx: -2, dy: -2).offsetBy(dx: slot.frame.minX, dy: slot.frame.minY).contains(start) {
+            return close(slot.tab)
+        }
+        var moved = false
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let offset = convert(next.locationInWindow, from: nil).x - start.x
+            if next.type == .leftMouseUp { break }
+            moved = moved || abs(offset) > 3
+            guard moved else { continue }
+            let low = -slot.frame.minX
+            let high = (frames.last?.frame.maxX ?? 0) - slot.frame.maxX
+            dragging = (slot.tab, min(max(offset, low), high))
+            needsDisplay = true
+        }
+        guard moved, let dragging else { return slot.tab.showWindow(nil) }
+        self.dragging = nil
+        let middle = slot.frame.midX + dragging.offset
+        let others = frames.filter { $0.tab !== slot.tab }
+        let before = others.count { $0.frame.midX < middle }
+        tabs?.move(slot.tab, after: before == 0 ? nil : others[before - 1].tab)
+    }
+
+    private func close(_ tab: MainWindowController) {
+        tab.showWindow(nil)
+        tab.window?.performClose(nil)
+    }
+
+    /// The tabs past the strip's end, in a menu under "+N".
+    private func showMore() {
+        guard let more else { return }
+        let menu = NSMenu()
+        for tab in overflow {
+            let item = menu.addItem(withTitle: tab.tabFileName, action: #selector(NSWindowController.showWindow(_:)), keyEquivalent: "")
+            item.target = tab
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: more.minX, y: more.maxY + 4), in: self)
+    }
+
+    // MARK: Accessibility
+
+    private var elements: [NSAccessibilityElement] = []
+
+    /// Each shown tab as a radio button, "spec.md, tab 1 of 3, saved", with its close button; then "+N".
+    private func updateAccessibility() {
+        let all = tabs?.tabs ?? []
+        elements = slots.flatMap { slot -> [NSAccessibilityElement] in
+            let index = (all.firstIndex { $0 === slot.tab } ?? 0) + 1
+            let state = Self.edited(slot.tab) ? "edited" : "saved"
+            let tab = TabElement(slot.tab) { $0.showWindow(nil) }
+            tab.setAccessibilityRole(.radioButton)
+            tab.setAccessibilityLabel("\(slot.tab.tabFileName), tab \(index) of \(all.count), \(state)")
+            tab.setAccessibilityValue(slot.tab === tabs?.selected)
+            tab.setAccessibilityFrameInParentSpace(slot.frame)
+            tab.setAccessibilityParent(self)
+            let close = TabElement(slot.tab) { [weak self] in self?.close($0) }
+            close.setAccessibilityRole(.button)
+            close.setAccessibilityLabel("Close \(slot.tab.tabFileName)")
+            close.setAccessibilityFrameInParentSpace(Self.close.offsetBy(dx: slot.frame.minX, dy: slot.frame.minY))
+            close.setAccessibilityParent(self)
+            return [tab, close]
+        }
+        if let more, let first = overflow.first {
+            let element = TabElement(first) { [weak self] _ in self?.showMore() }
+            element.setAccessibilityRole(.popUpButton)
+            element.setAccessibilityLabel("\(overflow.count) more \(overflow.count == 1 ? "tab" : "tabs")")
+            element.setAccessibilityFrameInParentSpace(more)
+            element.setAccessibilityParent(self)
+            elements.append(element)
+        }
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        elements
+    }
+}
+
+/// A tab, its close button or "+N" for VoiceOver; pressing it runs `press` on its tab.
+private final class TabElement: NSAccessibilityElement {
+    private weak var tab: MainWindowController?
+    private let press: (MainWindowController) -> Void
+
+    init(_ tab: MainWindowController, press: @escaping (MainWindowController) -> Void) {
+        self.tab = tab
+        self.press = press
+        super.init()
     }
 
     override func accessibilityPerformPress() -> Bool {
-        tab?.showWindow(nil)
+        guard let tab else { return false }
+        press(tab)
         return true
     }
+}
 
-    /// A tab closes as its window would; a tab in back comes forward first.
-    @objc private func closeTab() {
-        guard let tab else { return }
-        tab.showWindow(nil)
-        tab.window?.performClose(nil)
+/// The main window's tabs in the Window menu, the first nine on Option-Command-1 to 9.
+@MainActor
+final class TabMenu: NSObject {
+    static let shared = TabMenu()
+    private static let tag = 0x7AB5
+
+    weak var menu: NSMenu? {
+        didSet { update() }
+    }
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(update), name: TabSet.changed, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(update), name: NSWindow.didBecomeMainNotification, object: nil)
+    }
+
+    @objc private func update() {
+        guard let menu else { return }
+        for item in menu.items where item.tag == Self.tag { menu.removeItem(item) }
+        guard let tabs = (NSApp.mainWindow?.windowController as? MainWindowController)?.tabs else { return }
+        // After Bring All to Front, so the system's list of windows stays below.
+        let bring = menu.indexOfItem(withTitle: "Bring All to Front")
+        var at = bring < 0 ? menu.numberOfItems : bring + 1
+        let separator = NSMenuItem.separator()
+        separator.tag = Self.tag
+        menu.insertItem(separator, at: at)
+        for (index, tab) in tabs.tabs.enumerated() {
+            at += 1
+            let item = NSMenuItem(title: tab.tabFileName, action: #selector(NSWindowController.showWindow(_:)), keyEquivalent: index < 9 ? "\(index + 1)" : "")
+            menu.insertItem(item, at: at)
+            item.keyEquivalentModifierMask = [.command, .option]
+            item.target = tab
+            item.tag = Self.tag
+            item.state = tab === tabs.selected ? .on : .off
+        }
     }
 }

@@ -62,23 +62,22 @@ struct ShellV4Tests {
         #expect(main.statusBar.wordsText.hasSuffix("words"))
     }
 
-    @Test func theTabRowShowsOnlyWithTwoTabs() async throws {
+    @Test func eachTabsTitleRowHoldsTheWindowsTabs() async throws {
         Offscreen.install()
         defer { Offscreen.uninstall() }
         let root = try folder(["a.md": "# A\n", "b.md": "# B\n"])
         let main = MainWindowController(folder: Folder(root))
         main.display(try document(root.appending(path: "a.md")))
         main.showWindow(nil)
-        func row(_ controller: MainWindowController) -> TabRow? {
-            func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
-            return all(controller.window!.contentView!).compactMap { $0 as? TabRow }.first
+        func strip(_ controller: MainWindowController) -> TabStrip? {
+            controller.window?.toolbar?.items.first { $0.itemIdentifier == WindowToolbar.tabs }?.view as? TabStrip
         }
-        #expect(row(main)?.isHidden == true)
         let second = MainWindowController(folder: main.folder, joining: main)
         second.display(try document(root.appending(path: "b.md")))
         defer { close([main, second]) }
         await settle()
-        #expect(row(main)?.isHidden == false && row(second)?.isHidden == false)
+        #expect(main.tabs.tabs.map(\.tabFileName) == ["a.md", "b.md"])
+        #expect(strip(main)?.tabs === main.tabs && strip(second)?.tabs === main.tabs)
     }
 
     @Test func theSidebarListsTheTreeUnderTheFoldersOwnName() async throws {

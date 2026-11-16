@@ -3,8 +3,8 @@ import MdCore
 
 /// One tab: the sidebar, the open note in the editor column with the status bar under it, and the right pane. The
 /// window's content runs under a transparent title bar on the chrome ground, with a compact toolbar for its title row
-/// and the window's title hidden. Each tab has its own window; its `TabSet` keeps only the selected one on screen and
-/// draws the tab row.
+/// and the window's title hidden; the tabs are in that row. Each tab has its own window; its `TabSet` keeps only the
+/// selected one on screen.
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSToolbarItemValidation {
     /// Every tab, kept here because a folder window has no document to own its controller.
     private static var all: Set<MainWindowController> = []
@@ -17,10 +17,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private let sidebar: SidebarViewController
     private let split = StationSplitController()
     private let toolbar: WindowToolbar
-    /// The editor column: the tab row, the page, the Keep bar and the status bar, top to bottom.
+    /// The editor column: the page, the Keep bar and the status bar, top to bottom.
     private let column = PaperView()
-    private let tabRow = TabRow()
-    private var tabRowHeight: NSLayoutConstraint!
     /// This window's tabs, shared with the tabs beside this one.
     private(set) var tabs: TabSet!
     private let keepBar = KeepBar()
@@ -93,7 +91,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = Chrome.color(.chrome)
         window.identifier = NSUserInterfaceItemIdentifier("Document")
-        MainWindowController.lay(tabs: tabRow, page: page, bar: keepBar, status: statusBar, in: column)
+        MainWindowController.lay(page: page, bar: keepBar, status: statusBar, in: column)
         sidebar.view.setFrameSize(NSSize(width: 264, height: sidebar.view.frame.height))
         if let front = neighbor?.window ?? NSApp.orderedWindows.first(where: { $0.isVisible && $0.windowController is MainWindowController }) {
             if neighbor == nil {
@@ -106,8 +104,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         super.init(window: window)
         toolbar.window = window
-        tabRowHeight = tabRow.heightAnchor.constraint(equalToConstant: 0)
-        tabRowHeight.isActive = true
         if let neighbor {
             tabs = neighbor.tabs
             tabs.insert(self, after: neighbor)
@@ -115,7 +111,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else {
             tabs = TabSet(self)
         }
-        tabRow.tabs = tabs
+        toolbar.strip.tabs = tabs
         window.delegate = self
         sidebar.open = { [weak self] url, newTab in self?.open(url, newTab: newTab) }
         sidebar.jump = { [weak self] heading in self?.jump(to: heading) }
@@ -123,7 +119,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pane.picked = { [weak self] tab in self?.tabs.tabs.forEach { $0.showPane(tab) } }
         NotificationCenter.default.addObserver(self, selector: #selector(updatePresence), name: Collaboration.changed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: LiveFile.changesDidChange, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(tabsChanged), name: TabSet.changed, object: tabs)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
         Self.all.insert(self)
         if let folder {
@@ -131,7 +126,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             window.representedURL = folder.url
             setPage(Self.emptyPage())
         }
-        tabsChanged()
         updateTitle()
         updateNavigation()
         updateState()
@@ -157,17 +151,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return root
     }
 
-    /// The tab row along the column's top, the page, the Keep bar, and the status bar along the bottom.
-    private static func lay(tabs: TabRow, page: NSView, bar: KeepBar, status: StatusBar, in column: NSView) {
-        for view in [tabs, page, bar, status] {
+    /// The page, the Keep bar, and the status bar along the bottom.
+    private static func lay(page: NSView, bar: KeepBar, status: StatusBar, in column: NSView) {
+        for view in [page, bar, status] {
             view.translatesAutoresizingMaskIntoConstraints = false
             column.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: column.topAnchor),
-            tabs.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            tabs.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            page.topAnchor.constraint(equalTo: tabs.bottomAnchor),
+            page.topAnchor.constraint(equalTo: column.topAnchor),
             page.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             page.trailingAnchor.constraint(equalTo: column.trailingAnchor),
             page.bottomAnchor.constraint(equalTo: bar.topAnchor),
@@ -202,6 +193,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard dirtyFlag != edited else { return }
         edited = dirtyFlag
         updateState()
+        tabs?.post()
     }
 
     /// The note's name without its extension, so the title and its rename popover read as the note.
@@ -216,11 +208,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return folder.map { FileManager.default.displayName(atPath: $0.url.path) } ?? "Untitled"
     }
 
-    /// The tab's dot: the accent while outside changes wait for a decision, else none. The tab row shows it only on a
-    /// tab in back.
-    var tabDot: NSColor? {
-        let live = (document as? MarkdownDocument)?.live
-        return live?.changes.values.contains(where: { $0.marked || $0.conflict }) == true ? Chrome.color(.accent) : nil
+    /// A rename or Save As changes the tab's name.
+    override func synchronizeWindowTitleWithDocumentName() {
+        super.synchronizeWindowTitleWithDocumentName()
+        tabs?.post()
+    }
+
+    /// The tab's file name with its extension, as the tab strip and the Window menu show it.
+    var tabFileName: String {
+        if let url = (document as? NSDocument)?.fileURL { return url.lastPathComponent }
+        if let pending { return URL(filePath: pending.path).lastPathComponent }
+        return tabName
     }
 
     @objc func showNextTab(_ sender: Any?) {
@@ -268,13 +266,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pane.changesCount = live?.changes.values.count(where: { $0.marked || $0.conflict }) ?? 0
     }
 
-    /// The tab row shows with two tabs or more.
-    @objc private func tabsChanged() {
-        let shows = tabs.tabs.count > 1
-        tabRow.isHidden = !shows
-        tabRowHeight.constant = shows ? TabRow.height : 0
-    }
-
     @objc private func themeDidChange() {
         window?.backgroundColor = Chrome.color(.chrome)
     }
@@ -298,6 +289,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let place = readPending()
         tabs.select(self)
         super.showWindow(sender)
+        enterSharedFullScreen()
         (NSApp.delegate as? AppDelegate)?.closeLaunchWindow()
         if let window { Updates.shared.windowDidShow(window) }
         shown(at: place)
@@ -618,6 +610,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         previewShown(false)
     }
 
+    /// Writes what the window shares from this tab, the one going out.
+    func saveWindowState() {
+        let shared = tabs.shared
+        shared.sidebarCollapsed = split.splitViewItems[0].isCollapsed
+        if !shared.sidebarCollapsed { shared.sidebarWidth = sidebar.view.frame.width }
+        shared.search = sidebar.searchQuery
+        shared.paneHidSidebar = paneHidSidebar
+    }
+
+    /// Takes what the window shares, as the tab coming in: the sidebar and its width, its expanded folders, and Find
+    /// in Files, which keeps the focus where this tab had it.
+    func adoptWindowState() {
+        let shared = tabs.shared
+        window?.layoutIfNeeded()
+        sidebar.adoptExpansion()
+        if shared.search != sidebar.searchQuery {
+            let focus = window?.firstResponder
+            if let search = shared.search { sidebar.showSearch(search) } else { sidebar.showFiles() }
+            let hidden = (focus as? NSView)?.isHiddenOrHasHiddenAncestor ?? false
+            window?.makeFirstResponder(hidden ? textView : focus)
+        }
+        // After the search, which opens the sidebar.
+        let item = split.splitViewItems[0]
+        if item.isCollapsed != shared.sidebarCollapsed { item.isCollapsed = shared.sidebarCollapsed }
+        if !shared.sidebarCollapsed { split.splitView.setPosition(shared.sidebarWidth, ofDividerAt: 0) }
+        paneHidSidebar = shared.paneHidSidebar
+    }
+
+    /// Takes the window's full screen once no other tab's window holds it.
+    private func enterSharedFullScreen() {
+        guard tabs.shared.fullScreen, tabs.selected === self, let window, !window.styleMask.contains(.fullScreen),
+            !tabs.tabs.contains(where: { $0.window?.styleMask.contains(.fullScreen) == true })
+        else { return }
+        window.toggleFullScreen(nil)
+    }
+
     /// Takes the pane's state from the tab this one replaces, so every tab in a window shows the same pane.
     func adoptPane(from other: MainWindowController) {
         if other.paneItem.isCollapsed {
@@ -820,6 +848,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        if tabs.selected === self { tabs.shared.fullScreen = true }
+    }
+
+    /// A tab that left full screen as another took its place goes now, and that tab enters full screen.
+    func windowDidExitFullScreen(_ notification: Notification) {
+        if tabs.selected === self {
+            tabs.shared.fullScreen = false
+        } else {
+            window?.orderOut(nil)
+            tabs.selected?.enterSharedFullScreen()
+        }
+    }
+
     /// The title row stays in full screen.
     func window(_ window: NSWindow, willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions = []) -> NSApplication.PresentationOptions {
         proposedOptions.subtracting(.autoHideToolbar)
@@ -839,6 +881,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let url = (document as? NSDocument)?.fileURL { Self.closed.append((url, folder)) }
         tabs.remove(self)
         Self.all.remove(self)
+        // A full-screen tab's window is gone after this turn; the tab in its place then takes full screen.
+        if tabs.shared.fullScreen { Task { self.tabs.selected?.enterSharedFullScreen() } }
         Task {
             if Self.all.isEmpty { (NSApp.delegate as? AppDelegate)?.nothingIsOpen() }
         }

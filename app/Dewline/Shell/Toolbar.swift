@@ -14,8 +14,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     static let newNote = NSToolbarItem.Identifier("dev.arkwerx.dewline.newNote")
 
     let toolbar = NSToolbar(identifier: "dev.arkwerx.dewline.main")
-    /// The tab strip's place; it holds at least 160 pt and takes the row's free width.
-    let strip = NSView()
+    /// The tab strip; it holds at least 160 pt and takes the row's free width.
+    let strip = TabStrip()
     private let split: NSSplitView
     private let folder: Folder?
     private let activity = ActivityButton()

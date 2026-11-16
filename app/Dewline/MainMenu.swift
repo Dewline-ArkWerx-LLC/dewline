@@ -118,7 +118,8 @@ enum MainMenu {
             menu.addItem(format(command, key, modifiers))
         }
         menu.addItem(.separator())
-        for (command, key) in zip([MarkdownFormat.heading1, .heading2, .heading3, .heading4, .heading5, .heading6, .body], ["1", "2", "3", "4", "5", "6", "0"]) {
+        // Body Text has no key: ⌘0 is Actual Size, as in Bear, and a heading's own key turns it back to body text.
+        for (command, key) in zip([MarkdownFormat.heading1, .heading2, .heading3, .heading4, .heading5, .heading6, .body], ["1", "2", "3", "4", "5", "6", ""]) {
             menu.addItem(format(command, key, .command))
         }
         menu.addItem(.separator())
@@ -175,6 +176,17 @@ enum MainMenu {
         menu.addItem(withTitle: "Show Previous Tab", action: #selector(MainWindowController.showPreviousTab(_:)), keyEquivalent: "{")
         menu.addItem(withTitle: "Show Next Tab", action: #selector(MainWindowController.showNextTab(_:)), keyEquivalent: "}")
         menu.addItem(withTitle: "Folding", action: nil, keyEquivalent: "").submenu = foldMenu()
+        menu.addItem(.separator())
+        for (title, action, key) in [
+            ("Zoom In", #selector(TextZoom.zoomIn(_:)), "+"), ("Zoom In", #selector(TextZoom.zoomIn(_:)), "="),
+            ("Zoom Out", #selector(TextZoom.zoomOut(_:)), "-"), ("Actual Size", #selector(TextZoom.actualSize(_:)), "0"),
+        ] {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+            item.target = TextZoom.self
+            // ⌘= zooms in without Shift, from an item the menu doesn't show.
+            item.isHidden = key == "="
+            item.allowsKeyEquivalentWhenHidden = true
+        }
         return menu
     }
 

@@ -74,8 +74,8 @@ final class ThemeStore {
         bodyFace = face("BodyFace") ?? Faces.body
         headingFace = face("HeadingFace") ?? Faces.heading
         codeFace = face("CodeFace") ?? Faces.code
-        bodySize = number("BodySize", in: Self.bodySizes) ?? 17
-        lineHeight = number("LineHeight", in: Self.lineHeights) ?? 1.44
+        bodySize = number("BodySize", in: Self.bodySizes) ?? 16
+        lineHeight = number("LineHeight", in: Self.lineHeights) ?? 1.5
         columnWidth = number("ColumnWidth", in: Self.columnWidths) ?? 68
         headingStyle = string("HeadingStyle").flatMap(HeadingStyle.init) ?? .standard
         vimMode = defaults.bool(forKey: "DewlineVimMode")
@@ -127,9 +127,17 @@ final class ThemeStore {
         return color
     }
 
-    /// The writer's mark color: the accent for every outside writer, ink2 for collaborators and you.
+    /// The writer's ink: Claude's, Codex's, git's (its modified word), ink2 for you, your other Mac and collaborators,
+    /// and the other-app ink for everyone else.
     func writerColor(_ writer: Writer) -> NSColor {
-        color(writer == .collaborator || writer == .you ? .ink2 : .accent)
+        let token: Token = switch writer {
+        case .claude: .writerClaude
+        case .codex: .writerCodex
+        case .git: .gitModified
+        case .you, .otherMac, .collaborator: .ink2
+        case .cursor, .copilot, .gemini, .unknown, .agent, .demo: .writerApp
+        }
+        return color(token)
     }
 
     var bodyFont: NSFont {
@@ -285,9 +293,9 @@ struct Pairing: Identifiable {
 
 /// Faces by family name, where New York, SF Pro, SF Pro Rounded and SF Mono name the system designs.
 enum Faces {
-    static let body = "New York"
-    static let heading = "SF Pro"
-    static let code = "JetBrains Mono"
+    static let body = "Seravek"
+    static let heading = "Bricolage Grotesque"
+    static let code = "SF Mono"
     static let system = ["New York", "SF Pro", "SF Pro Rounded", "SF Mono"]
     static let bundled = ["Bricolage Grotesque", "JetBrains Mono"]
 

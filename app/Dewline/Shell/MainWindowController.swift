@@ -39,6 +39,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var countUpdate: Task<Void, Never>?
     private var linkUpdate: Task<Void, Never>?
     private var loadsUpdate: Task<Void, Never>?
+    /// "1,204 words", or "38 of 1,204 words" with a selection, for the tab's tooltip.
+    private(set) var wordCount = ""
+    /// What agents load for the note's folder, for Activity's menu.
+    private(set) var agentLoads: [AgentRow] = []
     private var edited = false
     /// A resumed tab's file and place, read when the tab is first selected.
     private var pending: Session.Tab? {
@@ -265,18 +269,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window?.backgroundColor = Chrome.color(.chrome)
     }
 
-    /// The status bar's left side: a terminal waiting, a conflict holding the save, or Saved.
+    private static let awaitedMessage = "awaited"
+    private static let heldMessage = "held"
+
+    /// A terminal waiting on the note, and a conflict holding its save, in the status bar.
     private func updateState() {
-        guard let document = document as? MarkdownDocument else { return statusBar.show(state: "") }
-        if document.isAwaited {
-            statusBar.show(state: "A terminal is waiting for this note", action: .init(title: "Done") { [weak self] _ in
-                self?.window?.performClose(nil)
-            })
-        } else if document.live?.changes.values.contains(where: \.conflict) == true {
-            statusBar.show(state: "Saving waits until you choose")
+        let document = document as? MarkdownDocument
+        if document?.isAwaited == true {
+            statusBar.post(.init(id: Self.awaitedMessage, kind: .request, text: "A terminal is waiting for this note", actions: [
+                .init(title: "Done") { [weak self] _ in self?.window?.performClose(nil) },
+            ]))
         } else {
-            statusBar.show(state: "Saved")
+            statusBar.clear(Self.awaitedMessage)
         }
+        if document?.live?.changes.values.contains(where: \.conflict) == true {
+            statusBar.post(.init(id: Self.heldMessage, kind: .problem, text: "Saving waits until you choose"))
+        } else {
+            statusBar.clear(Self.heldMessage)
+        }
+    }
+
+    /// "Saved 15:31", or "Not saved yet" while an edit waits; nil for a tab without a note.
+    var savedState: String? {
+        guard let document = document as? NSDocument else { return nil }
+        guard !edited, document.fileURL != nil else { return "Not saved yet" }
+        guard let date = document.fileModificationDate else { return "Saved" }
+        let time = Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .shortened)
+        return "Saved \(time)"
     }
 
     /// Selects this tab, in its window's place, and brings it front.
@@ -347,8 +366,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             NotificationCenter.default.removeObserver(self, name: BlockMap.didParse, object: old.styler.map)
             NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: old.enclosingScrollView?.contentView)
             NotificationCenter.default.removeObserver(self, name: NSTextView.didChangeSelectionNotification, object: old)
+            NotificationCenter.default.removeObserver(self, name: NSText.didEndEditingNotification, object: old)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(wakeTitleRow), name: NSText.didEndEditingNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(countWords), name: NSTextView.didChangeSelectionNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(updateOutline), name: BlockMap.didParse, object: textView.styler.map)
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
@@ -726,8 +747,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         sidebar.showSearch()
     }
 
-    /// Shows the note's word count in the status bar, and the selection's beside it, 250 ms after the text or the
-    /// selection last changed, once the map has the whole text. It counts on the main thread from the storage itself, a
+    /// Counts the note's words, and the selection's, for the tab's tooltip 250 ms after the text or the selection last
+    /// changed, once the map has the whole text. It counts on the main thread from the storage itself, a
     /// piece between events, and starts over when the text changes.
     @objc private func countWords() {
         countUpdate?.cancel()
@@ -749,40 +770,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 try? await Task.sleep(for: .milliseconds(1))
             }
             guard !Task.isCancelled, let self, let textView = self.textView else { return }
-            self.statusBar.show(words: WordCount.label(total: count.total, selected: textView.selectedRange().length > 0 ? count.selected : nil))
+            self.wordCount = WordCount.label(total: count.total, selected: textView.selectedRange().length > 0 ? count.selected : nil)
         }
     }
 
     /// The text one step of the word count reads: a millisecond or two of work.
     private static let countedPiece = 1 << 15
 
-    /// "Agents read 2 files here" in the status bar, when agents load instruction files for the note's folder; a click
-    /// lists each agent and file with its estimate. Read off the main thread.
+    /// Reads what agents load for the note's folder off the main thread.
     private func countLoads() {
         loadsUpdate?.cancel()
-        guard let directory = (document as? NSDocument)?.fileURL?.deletingLastPathComponent() else {
-            return statusBar.clear(Self.loadsMessage)
-        }
+        agentLoads = []
+        guard let directory = (document as? NSDocument)?.fileURL?.deletingLastPathComponent() else { return }
         let root = folder?.url
         loadsUpdate = Task { [weak self] in
             let rows = await Task.detached(priority: .utility) { whatLoadsRows(in: directory, root: root) }.value
-            guard !Task.isCancelled, let self else { return }
-            let files = Set(rows.compactMap(\.url)).count
-            guard files > 0 else { return self.statusBar.clear(Self.loadsMessage) }
-            let title = "Agents read \(files) \(files == 1 ? "file" : "files") here"
-            self.statusBar.post(.init(id: Self.loadsMessage, kind: .info, text: "", actions: [.init(title: title) { view in
-                LoadsPopover.show(rows, under: view)
-            }]))
+            guard !Task.isCancelled else { return }
+            self?.agentLoads = rows
         }
     }
-
-    private static let loadsMessage = "loads"
 
     /// Lists the headings 300 ms after typing stops, or once a whole parse lands. The preview takes the text, and a
     /// result shown until the next keystroke goes.
     @objc private func textChanged() {
         countWords()
         statusBar.typed()
+        if let event = NSApp.currentEvent, event.type == .keyDown, !event.modifierFlags.contains(.command) { toolbar.typed() }
         if !paneItem.isCollapsed, pane.tab == .preview { pane.preview.textChanged() }
         outlineUpdate?.cancel()
         outlineUpdate = Task { [weak self] in
@@ -840,6 +853,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    @objc private func wakeTitleRow() {
+        toolbar.wake()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        toolbar.wake()
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        toolbar.wake()
+    }
+
     func windowDidEnterFullScreen(_ notification: Notification) {
         if tabs.selected === self { tabs.shared.fullScreen = true }
     }
@@ -870,6 +895,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     func windowWillClose(_ notification: Notification) {
+        toolbar.wake()
         if let url = (document as? NSDocument)?.fileURL { Self.closed.append((url, folder)) }
         tabs.remove(self)
         Self.all.remove(self)
@@ -897,9 +923,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 }
 
-/// What agents load for the note's folder, under the status bar's line: each agent with its total, then its files.
+/// What agents load for the note's folder, under Activity: each agent with its total, then its files.
 @MainActor
-private enum LoadsPopover {
+enum LoadsPopover {
     static func show(_ rows: [AgentRow], under view: NSView) {
         let stack = NSStackView()
         stack.orientation = .vertical

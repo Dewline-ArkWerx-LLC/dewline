@@ -214,7 +214,7 @@ final class FolderPicker: NSView {
 }
 
 /// A sidebar row: a 22 pt pill in its 24 pt pitch, 8 pt in from each side, and under it the indent guides: 1 pt, ink at
-/// 10%, one per enclosing folder. The selected row's pill carries the 2 x 12 cursor bar while its window is main.
+/// 10% (30% under Increase Contrast), one per enclosing folder. The selected row's pill carries the 2 x 12 cursor bar while its window is main.
 final class SidebarRowView: StationRowView {
     var guides: [CGFloat] = [] {
         didSet { if guides != oldValue { needsDisplay = true } }
@@ -224,7 +224,7 @@ final class SidebarRowView: StationRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         guard !isSelected, !guides.isEmpty else { return }
-        Chrome.color(.ink).resolved(for: effectiveAppearance).withAlphaComponent(0.10).setFill()
+        Chrome.color(.ink).resolved(for: effectiveAppearance).withAlphaComponent(effectiveAppearance.isHighContrast ? 0.30 : 0.10).setFill()
         for x in guides {
             NSRect(x: x, y: bounds.minY, width: 1, height: bounds.height).fill()
         }

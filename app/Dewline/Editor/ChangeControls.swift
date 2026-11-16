@@ -315,6 +315,11 @@ final class ChangeStamp: NSView {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
         let line = NSMutableAttributedString(attributedString: writer.stamp)
+        // The bar's 8% wash takes Claude's light ink to 4.1:1; a quarter of the way to ink keeps every writer over 4.5:1.
+        if folded, let name = OKLCH(writer.color.resolved(for: effectiveAppearance)),
+            let ink = OKLCH(ThemeStore.shared.color(.ink).resolved(for: effectiveAppearance)) {
+            line.addAttribute(.foregroundColor, value: name.mixed(with: ink, by: 0.25).color, range: NSRange(location: 0, length: line.length))
+        }
         line.append(NSAttributedString(string: "  " + time, attributes: [.font: Chrome.mono(10.5), .foregroundColor: ink2]))
         line.append(NSAttributedString(string: " \u{00B7} \(count) \(count == 1 ? "change" : "changes")", attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,

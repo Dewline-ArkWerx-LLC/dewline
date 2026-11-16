@@ -4,6 +4,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,13 +22,13 @@ struct Agent {
     settings: &'static str,
     /// Each hook event, with the tool matcher it takes.
     events: &'static [(&'static str, Option<&'static str>)],
-    /// Cursor's shape: each event a list of `{"command"}` with no matcher groups, under `"version": 1`.
-    flat: bool,
 }
 
 const TOOLS: &str = "Read|Edit|MultiEdit|Write";
 
-const AGENTS: [Agent; 3] = [
+/// Cursor has none: its hooks don't say what an edit wrote (docs/decisions/0007-agent-attribution.md), so its edits
+/// show as another app's.
+const AGENTS: [Agent; 2] = [
     Agent {
         name: "claude",
         title: "Claude Code",
@@ -41,7 +42,6 @@ const AGENTS: [Agent; 3] = [
             ("SessionEnd", None),
             ("InstructionsLoaded", None),
         ],
-        flat: false,
     },
     Agent {
         name: "codex",
@@ -51,14 +51,6 @@ const AGENTS: [Agent; 3] = [
             ("PreToolUse", Some("^apply_patch$")),
             ("PostToolUse", Some("^apply_patch$")),
         ],
-        flat: false,
-    },
-    Agent {
-        name: "cursor",
-        title: "Cursor",
-        settings: ".cursor/hooks.json",
-        events: &[("preToolUse", None), ("postToolUse", None), ("stop", None)],
-        flat: true,
     },
 ];
 
@@ -108,9 +100,18 @@ pub fn run(install: bool) -> Result<(), String> {
                 continue;
             }
         };
-        let missing = missing(settings.as_ref().map(|(value, _)| value), agent);
+        let missing = missing(settings.as_ref().map(|(value, _)| value), agent, runs);
         if missing.is_empty() {
-            println!("  {}: installed in {}", agent.title, path.display());
+            println!(
+                "  {}: installed in {}{}",
+                agent.title,
+                path.display(),
+                if agent.name == "codex" {
+                    "; Codex runs them once you trust them in /hooks"
+                } else {
+                    ""
+                }
+            );
         } else {
             println!(
                 "  {}: {} missing from {}",
@@ -160,21 +161,43 @@ fn read(path: &Path) -> Result<Option<(Value, Vec<u8>)>, String> {
     }
 }
 
-/// The events of `agent` with no hook calling `dewline notify --hook <name>`.
-fn missing(settings: Option<&Value>, agent: &Agent) -> Vec<&'static str> {
+/// The program of `command`, as a shell word, when `command` is a `dewline notify --hook <name>` hook of `agent`.
+fn program<'a>(command: &'a str, agent: &Agent) -> Option<&'a str> {
+    if !command.contains("dewline") {
+        return None;
+    }
     let suffix = format!(" notify --hook {}", agent.name);
+    command.trim_end().strip_suffix(&suffix).map(str::trim)
+}
+
+/// Whether `program`, a hook command's first word, can run. A path, bare or quoted as `quoted` quotes it, must name an
+/// executable file; any other word resolves in the agent's shell, which this can't see, so it counts.
+fn runs(program: &str) -> bool {
+    let path = match program
+        .strip_prefix('\'')
+        .and_then(|word| word.strip_suffix('\''))
+    {
+        Some(inner) => inner.replace(r"'\''", "'"),
+        None => program.to_owned(),
+    };
+    !path.starts_with('/')
+        || fs::metadata(&path)
+            .is_ok_and(|info| info.is_file() && info.permissions().mode() & 0o111 != 0)
+}
+
+/// The events of `agent` with no hook calling `dewline notify --hook <name>` through a program that `runs`. A hook
+/// whose program is gone, as after the app moved, is missing.
+fn missing(settings: Option<&Value>, agent: &Agent, runs: fn(&str) -> bool) -> Vec<&'static str> {
     let installed = |event: &str| {
         settings
             .and_then(|settings| settings.pointer(&format!("/hooks/{event}")))
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .flat_map(|group| match group.get("hooks") {
-                Some(hooks) if !agent.flat => hooks.as_array().map_or(&[][..], Vec::as_slice),
-                _ => std::slice::from_ref(group),
-            })
-            .filter_map(|hook| hook.get("command")?.as_str())
-            .any(|command| command.contains("dewline") && command.trim_end().ends_with(&suffix))
+            .filter_map(|group| group.get("hooks")?.as_array())
+            .flatten()
+            .filter_map(|hook| program(hook.get("command")?.as_str()?, agent))
+            .any(runs)
     };
     agent
         .events
@@ -184,17 +207,19 @@ fn missing(settings: Option<&Value>, agent: &Agent) -> Vec<&'static str> {
         .collect()
 }
 
-/// `settings` with a hook running `command` added to each of `agent`'s events that lacks one; every other key and
-/// hook kept as it was.
-fn merge(settings: Option<&Value>, agent: &Agent, command: &str) -> Result<Value, String> {
-    let missing = missing(settings, agent);
+/// `settings` with a hook running `command` for each of `agent`'s events that lacks one: a Dewline hook whose program
+/// is gone gets `command` in its place, and otherwise one is added. Every other key and hook is kept as it was.
+fn merge(
+    settings: Option<&Value>,
+    agent: &Agent,
+    command: &str,
+    runs: fn(&str) -> bool,
+) -> Result<Value, String> {
+    let missing = missing(settings, agent, runs);
     let mut settings = settings.cloned().unwrap_or_else(|| json!({}));
     let root = settings
         .as_object_mut()
         .ok_or("the settings aren't a JSON object")?;
-    if agent.flat {
-        root.entry("version").or_insert(json!(1));
-    }
     let hooks = root
         .entry("hooks")
         .or_insert_with(|| json!({}))
@@ -204,24 +229,33 @@ fn merge(settings: Option<&Value>, agent: &Agent, command: &str) -> Result<Value
         if !missing.contains(&event) {
             continue;
         }
-        let mut group = Map::new();
-        if agent.flat {
-            group.insert("command".into(), json!(command));
-        } else if let Some(matcher) = matcher {
-            group.insert("matcher".into(), json!(matcher));
-        }
-        if !agent.flat {
-            group.insert(
-                "hooks".into(),
-                json!([{"type": "command", "command": command}]),
-            );
-        }
-        hooks
+        let groups = hooks
             .entry(event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
-            .ok_or_else(|| format!("its hooks for {event} aren't a JSON array"))?
-            .push(Value::Object(group));
+            .ok_or_else(|| format!("its hooks for {event} aren't a JSON array"))?;
+        let stale = groups
+            .iter_mut()
+            .filter_map(|group| group.get_mut("hooks")?.as_array_mut())
+            .flatten()
+            .find(|hook| {
+                hook.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|old| program(old, agent).is_some())
+            });
+        if let Some(hook) = stale {
+            hook["command"] = json!(command);
+            continue;
+        }
+        let mut group = Map::new();
+        if let Some(matcher) = matcher {
+            group.insert("matcher".into(), json!(matcher));
+        }
+        group.insert(
+            "hooks".into(),
+            json!([{"type": "command", "command": command}]),
+        );
+        groups.push(Value::Object(group));
     }
     Ok(settings)
 }
@@ -233,13 +267,13 @@ fn install_hooks(
     command: &str,
 ) -> Result<(), String> {
     let (current, bytes) = settings.unzip();
-    let merged = merge(current.as_ref(), agent, command)
+    let merged = merge(current.as_ref(), agent, command, runs)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    let added: Vec<_> = missing(current.as_ref(), agent)
+    let added: Vec<_> = missing(current.as_ref(), agent, runs)
         .into_iter()
-        .map(|event| json!({ (event): merged["hooks"][event].as_array().and_then(|groups| groups.last()) }))
+        .map(|event| json!({ (event): merged["hooks"][event] }))
         .collect();
-    println!("\n  This adds to {}:", path.display());
+    println!("\n  In {} this sets:", path.display());
     for entry in &added {
         println!("    {entry}");
     }
@@ -258,7 +292,7 @@ fn install_hooks(
     println!("  Merged into {}.", path.display());
     if agent.name == "codex" {
         println!(
-            "  Codex runs a new hook once you trust it: start Codex, open /hooks, select each Dewline hook and press t."
+            "  Codex runs a new or changed hook once you trust it: in Codex, open /hooks and trust each Dewline hook."
         );
     }
     Ok(())
@@ -348,6 +382,11 @@ mod tests {
 
     const COMMAND: &str = "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook claude";
 
+    /// Counts every hook's program as present.
+    fn every(_: &str) -> bool {
+        true
+    }
+
     #[test]
     fn merging_adds_every_event_once_and_keeps_the_rest() {
         let claude = &AGENTS[0];
@@ -359,9 +398,9 @@ mod tests {
                 "Notification": [{"hooks": [{"type": "command", "command": "say hi"}]}],
             },
         });
-        let once = merge(Some(&settings), claude, COMMAND).unwrap();
-        assert!(missing(Some(&once), claude).is_empty());
-        assert_eq!(merge(Some(&once), claude, COMMAND).unwrap(), once);
+        let once = merge(Some(&settings), claude, COMMAND, every).unwrap();
+        assert!(missing(Some(&once), claude, every).is_empty());
+        assert_eq!(merge(Some(&once), claude, COMMAND, every).unwrap(), once);
         assert_eq!(once["model"], "opus");
         assert_eq!(once["permissions"], settings["permissions"]);
         assert_eq!(
@@ -392,19 +431,66 @@ mod tests {
         let by_hand = json!({"hooks": {
             "PreToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": "/opt/dewline notify --hook codex"}]}],
         }});
-        assert_eq!(missing(Some(&by_hand), codex), ["PostToolUse"]);
-        assert_eq!(missing(None, codex), ["PreToolUse", "PostToolUse"]);
-        let merged = merge(Some(&by_hand), codex, "dewline notify --hook codex").unwrap();
+        assert_eq!(missing(Some(&by_hand), codex, every), ["PostToolUse"]);
+        assert_eq!(missing(None, codex, every), ["PreToolUse", "PostToolUse"]);
+        let merged = merge(Some(&by_hand), codex, "dewline notify --hook codex", every).unwrap();
         assert_eq!(merged["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
-        assert!(missing(Some(&merged), codex).is_empty());
+        assert!(missing(Some(&merged), codex, every).is_empty());
     }
 
     #[test]
     fn settings_of_another_shape_are_refused() {
         let claude = &AGENTS[0];
-        assert!(merge(Some(&json!([])), claude, COMMAND).is_err());
-        assert!(merge(Some(&json!({"hooks": []})), claude, COMMAND).is_err());
-        assert!(merge(Some(&json!({"hooks": {"Stop": {}}})), claude, COMMAND).is_err());
+        assert!(merge(Some(&json!([])), claude, COMMAND, every).is_err());
+        assert!(merge(Some(&json!({"hooks": []})), claude, COMMAND, every).is_err());
+        assert!(
+            merge(
+                Some(&json!({"hooks": {"Stop": {}}})),
+                claude,
+                COMMAND,
+                every
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_hook_whose_program_is_gone_is_missing_and_set_up_replaces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("it's here/dewline");
+        fs::create_dir(live.parent().unwrap()).unwrap();
+        fs::write(&live, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&live, fs::Permissions::from_mode(0o755)).unwrap();
+        let gone = dir.path().join("Old Dewline.app/Contents/Helpers/dewline");
+        assert!(runs(&quoted(&live)));
+        assert!(!runs(&quoted(&gone)));
+        assert!(runs("dewline"), "a bare word resolves in the agent's shell");
+        fs::set_permissions(&live, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!runs(&quoted(&live)));
+
+        let codex = &AGENTS[1];
+        let old = format!("{} notify --hook codex", quoted(&gone));
+        let moved = json!({"hooks": {
+            "PreToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": old}]}],
+            "PostToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": old}]}],
+        }});
+        assert_eq!(
+            missing(Some(&moved), codex, runs),
+            ["PreToolUse", "PostToolUse"]
+        );
+        let command = "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook codex";
+        let merged = merge(Some(&moved), codex, command, runs).unwrap();
+        for event in ["PreToolUse", "PostToolUse"] {
+            assert_eq!(
+                merged["hooks"][event],
+                json!([{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": command}]}])
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_gets_no_hooks() {
+        assert!(AGENTS.iter().all(|agent| agent.name != "cursor"));
     }
 
     #[test]

@@ -1057,8 +1057,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
     static let note = NSUserInterfaceItemIdentifier("note")
 
     private var indent: NSLayoutConstraint?
-    /// The text's ink at rest; dimmed rows take `ink3`.
-    private var tone: Token = .ink2
     private var current = false
 
     var selected = false {
@@ -1091,7 +1089,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
             constraints.append(indent)
         default:
             label.font = Chrome.small
-            tone = .ink3
             constraints.append(label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22))
         }
         NSLayoutConstraint.activate(constraints)
@@ -1115,7 +1112,7 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
         if identifier == Self.heading {
             textField?.font = current ? .systemFont(ofSize: 12, weight: .medium) : Chrome.small
         }
-        textField?.textColor = Chrome.color(selected || current ? .ink : tone)
+        textField?.textColor = Chrome.color(selected || current ? .ink : .ink2)
     }
 
     func show(_ title: String) {
@@ -1127,7 +1124,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
         self.current = current
         textField?.stringValue = heading.title
         indent?.constant = 4 + CGFloat(heading.level - 1) * 10
-        tone = .ink2
         paint()
     }
 }

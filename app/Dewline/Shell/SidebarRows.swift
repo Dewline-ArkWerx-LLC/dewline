@@ -109,7 +109,7 @@ final class SidebarHeader: NSView {
 }
 
 /// "tidepool main ⌄": the folder's name in 11 semibold, its branch in SF Mono 11, a chevron in `ink3`, on a 22 pt pill
-/// that fills on hover. Text sits 6 pt in. In a window that isn't main, the text goes to `ink3`.
+/// that fills on hover. Text sits 6 pt in, in `ink2` whether or not the window is key, so it holds 4.5:1.
 final class FolderPicker: NSView {
     var folderMenu: () -> NSMenu = { NSMenu() }
     private var name = ""
@@ -153,14 +153,6 @@ final class FolderPicker: NSView {
         NSSize(width: 6 + nameWidth + branchWidth + 4 + 10 + 6, height: 22)
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        for name in [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification] {
-            NotificationCenter.default.removeObserver(self, name: name, object: nil)
-            if let window { NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: name, object: window) }
-        }
-    }
-
     @objc private func redraw() {
         needsDisplay = true
     }
@@ -171,8 +163,7 @@ final class FolderPicker: NSView {
             Chrome.hover.resolved(for: appearance).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
-        let active = window?.isMainWindow ?? true
-        let text = Chrome.color(active ? .ink2 : .ink3).resolved(for: appearance)
+        let text = Chrome.color(.ink2).resolved(for: appearance)
         var x: CGFloat = 6
         let nameSize = (name as NSString).size(withAttributes: [.font: Self.nameFont])
         (name as NSString).draw(at: NSPoint(x: x, y: (bounds.height - nameSize.height) / 2), withAttributes: [.font: Self.nameFont, .foregroundColor: text])
@@ -243,7 +234,7 @@ final class SidebarRowView: StationRowView {
 
 /// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), the writer badge
 /// right after it, and git's word alone on the trailing edge, at least 12 pt clear of the badge. A ".md" extension
-/// shows in `ink3`. A name too long for the row keeps its head through the first word and whole words from its end.
+/// shows in `ink2`. A name too long for the row keeps its head through the first word and whole words from its end.
 final class SidebarFileCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("file")
 
@@ -357,12 +348,13 @@ final class SidebarFileCell: NSTableCellView {
         }
     }
 
-    /// The name in `ink` (`ink3` when dimmed), its ".md" in `ink3`.
+    /// The name in `ink` (`ink2` when dimmed), its ".md" in `ink2`: 4.5:1 or more on the chrome, the selection and
+    /// the hover.
     private func display(_ text: String) -> NSAttributedString {
-        let ink = Chrome.color(dimmed ? .ink3 : .ink)
+        let ink = Chrome.color(dimmed ? .ink2 : .ink)
         let string = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: ink])
         if text.lowercased().hasSuffix(".md"), text.count > 3 {
-            string.addAttribute(.foregroundColor, value: Chrome.color(.ink3), range: NSRange(location: (text as NSString).length - 3, length: 3))
+            string.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: (text as NSString).length - 3, length: 3))
         }
         return string
     }

@@ -65,6 +65,12 @@ enum Chrome {
         0
     }
 
+    /// Ink at 8%: the selected row in a window that isn't main.
+    static var inactiveSelection: NSColor {
+        let ink = color(.ink)
+        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent(0.08) }
+    }
+
     /// The outer edge of islands and the palette: ink at 8% in light, ink2 at 10% in dark.
     static var strokeSubtle: NSColor {
         let (ink, ink2) = (color(.ink), color(.ink2))
@@ -390,9 +396,16 @@ final class DewMark: NSView {
     }
 }
 
-/// A selected row: an ink wash at 6 pt radius. No hover, no system highlight. Cells that conform to `ChromeSelectable`
-/// hear about selection.
-final class StationRowView: NSTableRowView {
+/// A selected row: the accent at 15% in a 6 pt radius pill while its window is main, ink at 8% when it isn't. No
+/// hover, no system highlight. Cells that conform to `ChromeSelectable` hear about selection. Keyboard focus in the
+/// list changes nothing: the selection marks what is open, so `isEmphasized` only prompts a redraw.
+class StationRowView: NSTableRowView {
+    /// Where the selection draws.
+    var pill: NSRect { bounds.insetBy(dx: 6, dy: 0) }
+
+    /// Whether the row's window is the main one, so the selection shows in the accent.
+    var isWindowActive: Bool { window?.isMainWindow ?? false }
+
     override var isSelected: Bool {
         didSet {
             guard isSelected != oldValue else { return }
@@ -404,15 +417,26 @@ final class StationRowView: NSTableRowView {
 
     override var isEmphasized: Bool {
         get { false }
-        set {}
+        set { if isSelected { needsDisplay = true } }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        for name in [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification] {
+            NotificationCenter.default.removeObserver(self, name: name, object: nil)
+            if let window { NotificationCenter.default.addObserver(self, selector: #selector(mainChanged), name: name, object: window) }
+        }
+    }
+
+    @objc private func mainChanged() {
+        if isSelected { needsDisplay = true }
     }
 
     override func drawBackground(in dirtyRect: NSRect) {}
 
     override func drawSelection(in dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 6, dy: 0)
-        Chrome.wash.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+        (isWindowActive ? Chrome.wash : Chrome.inactiveSelection).setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
     }
 
     override func didAddSubview(_ subview: NSView) {

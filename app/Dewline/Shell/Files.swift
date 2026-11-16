@@ -252,12 +252,24 @@ func shortDate(_ date: Date, now: Date = .now, calendar: Calendar = .current) ->
     return date.formatted(style)
 }
 
-/// The branch a repository at `folder` has checked out, read from .git/HEAD.
+/// The branch checked out in the repository holding `folder`, read from its HEAD; nil when detached or in none. A
+/// worktree's .git file names its git directory.
 func gitBranch(at folder: URL) -> String? {
-    guard let head = try? String(contentsOf: folder.appending(path: ".git/HEAD"), encoding: .utf8),
-        head.hasPrefix("ref: refs/heads/")
-    else { return nil }
-    return head.dropFirst("ref: refs/heads/".count).trimmingCharacters(in: .whitespacesAndNewlines)
+    var directory = folder.standardizedFileURL
+    while true {
+        let dotGit = directory.appending(path: ".git")
+        var gitdir = dotGit
+        if let file = try? String(contentsOf: dotGit, encoding: .utf8), file.hasPrefix("gitdir: ") {
+            let path = file.dropFirst("gitdir: ".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            gitdir = path.hasPrefix("/") ? URL(filePath: path) : directory.appending(path: path)
+        }
+        if let head = try? String(contentsOf: gitdir.appending(path: "HEAD"), encoding: .utf8) {
+            guard head.hasPrefix("ref: refs/heads/") else { return nil }
+            return head.dropFirst("ref: refs/heads/".count).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard directory.pathComponents.count > 1 else { return nil }
+        directory = directory.deletingLastPathComponent()
+    }
 }
 
 /// `url`'s path with the home folder as "~".

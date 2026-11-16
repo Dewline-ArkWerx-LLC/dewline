@@ -285,6 +285,8 @@ final class EditorTextView: CaretTextView {
 
     /// With Vim on, keys outside insert mode go to Vim and never to the input method; marked text keeps its keys.
     override func keyDown(with event: NSEvent) {
+        // ⌘↩ is Keep Change; with no change to keep it does nothing rather than break the line.
+        if event.modifierFlags.contains(.command), [36, 76].contains(event.keyCode) { return }
         guard let vim, !hasMarkedText(), !event.modifierFlags.contains(.command) else { return super.keyDown(with: event) }
         let key = Self.vimKey(event)
         if vim.mode == .insert, key != "<Esc>" { return super.keyDown(with: event) }
@@ -380,16 +382,9 @@ final class EditorTextView: CaretTextView {
         marks.layoutIfDirty()
     }
 
-    /// The Keep bar's focused change, set by the bar.
-    var keepBarFocus: () -> UInt64? = { nil }
-
-    /// The change Keep Change and Revert Change decide: the one under the caret, else the Keep bar's, else the first
-    /// marked change, where the bar starts.
+    /// The change Keep Change and Revert Change decide: the one under the caret, else the one the stamp shows.
     var changeToDecide: UInt64? {
-        if let id = marks.changeAtCaret { return id }
-        let changes = marks.live?.changes ?? [:]
-        if let id = keepBarFocus(), changes[id]?.marked == true { return id }
-        return changes.filter { $0.value.marked && !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
+        marks.changeAtCaret ?? marks.stamped
     }
 
     /// Cmd-Return.
@@ -551,6 +546,7 @@ final class EditorTextView: CaretTextView {
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !stillSelecting else { return }
+        marks.caretMoved()
         updateFocus()
         centerCaretSoon()
     }

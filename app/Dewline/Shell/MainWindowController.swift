@@ -16,13 +16,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private let sidebar: SidebarViewController
     private let split = StationSplitController()
     private let toolbar = WindowToolbar()
-    /// The editor column: the tab row, the page, the Keep bar and the status bar, top to bottom.
+    /// The editor column: the tab row, the page and the status bar, top to bottom.
     private let column = PaperView()
     private let tabRow = TabRow()
     private var tabRowHeight: NSLayoutConstraint!
     /// This window's tabs, shared with the tabs beside this one.
     private(set) var tabs: TabSet!
-    private let keepBar = KeepBar()
     private let page = NSView()
     private var pageContent: NSView?
     let statusBar = StatusBar()
@@ -87,7 +86,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window.titleVisibility = .visible
         window.backgroundColor = Chrome.color(.chrome)
         window.identifier = NSUserInterfaceItemIdentifier("Document")
-        MainWindowController.lay(tabs: tabRow, page: page, bar: keepBar, status: statusBar, in: column)
+        MainWindowController.lay(tabs: tabRow, page: page, status: statusBar, in: column)
         sidebar.view.setFrameSize(NSSize(width: 240, height: sidebar.view.frame.height))
         if let front = neighbor?.window ?? NSApp.orderedWindows.first(where: { $0.isVisible && $0.windowController is MainWindowController }) {
             if neighbor == nil {
@@ -134,9 +133,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         fatalError("MainWindowController is built in code")
     }
 
-    /// The tab row along the column's top, the page, the Keep bar, and the status bar along the bottom.
-    private static func lay(tabs: TabRow, page: NSView, bar: KeepBar, status: StatusBar, in column: NSView) {
-        for view in [tabs, page, bar, status] {
+    /// The tab row along the column's top, the page, and the status bar along the bottom.
+    private static func lay(tabs: TabRow, page: NSView, status: StatusBar, in column: NSView) {
+        for view in [tabs, page, status] {
             view.translatesAutoresizingMaskIntoConstraints = false
             column.addSubview(view)
         }
@@ -147,10 +146,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             page.topAnchor.constraint(equalTo: tabs.bottomAnchor),
             page.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             page.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            page.bottomAnchor.constraint(equalTo: bar.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: status.topAnchor),
+            page.bottomAnchor.constraint(equalTo: status.topAnchor),
             status.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: column.trailingAnchor),
             status.bottomAnchor.constraint(equalTo: column.bottomAnchor),
@@ -341,7 +337,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(updateOutline), name: BlockMap.didParse, object: textView.styler.map)
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         self.textView = textView
-        keepBar.attach(to: textView)
         if !paneItem.isCollapsed, pane.tab == .preview {
             sourceBeforePreview = textView.styler.showsSource
             if !textView.styler.showsSource { textView.toggleSource(nil) }
@@ -374,8 +369,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             content.topAnchor.constraint(equalTo: page.topAnchor),
             content.bottomAnchor.constraint(equalTo: page.bottomAnchor),
         ])
-        // A note's page attaches it again once its text is in.
-        keepBar.attach(to: nil)
     }
 
     /// Opens `url` here, in a new tab when asked or when this tab's text has edits or a terminal waits on it, or

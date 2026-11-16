@@ -370,7 +370,7 @@ extension MarkdownStyler {
         styled.addAttributes(baseAttributes, range: whole)
         revealed = revealed.filter { !NSLocationInRange($0.range.location, paragraphs) }
         let selection = selection.map { NSRange(location: $0.location - paragraphs.location, length: $0.length) }
-        // A caret in an agent's marked change, where the Keep bar puts it, leaves the markers around it hidden.
+        // A caret in an agent's marked change, where Next Change puts it, leaves the markers around it hidden.
         let changed = textView?.marks.painted.values.map { NSRange(location: $0.location - paragraphs.location, length: $0.length) } ?? []
         let revealing = selection.filter { caret in
             caret.length > 0 || !changed.contains { $0.location <= caret.location && caret.location <= NSMaxRange($0) }
@@ -461,13 +461,14 @@ extension MarkdownStyler {
             ], range: local)
         }
         highlights.update(map.blocks(in: paragraphs), in: paragraphs, text: storage.mutableString)
-        // Removed text and a conflict's other version hang under their paragraph, in space added below it.
-        for (anchor, height) in textView?.marks.space(in: paragraphs) ?? [] {
+        // Removed text, a conflict's other version and the folded stamp hang under their paragraph, in space added
+        // below it, or above the next paragraph when theirs is drawn as a block.
+        for (anchor, height, before) in textView?.marks.space(in: paragraphs) ?? [] {
             let paragraph = styled.mutableString.paragraphRange(for: NSRange(location: anchor - paragraphs.location, length: 0))
             guard styled.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) == nil else { continue }
             let style = (styled.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle ?? .default)
                 .mutableCopy() as! NSMutableParagraphStyle
-            style.paragraphSpacing += height
+            if before { style.paragraphSpacingBefore += height } else { style.paragraphSpacing += height }
             styled.addAttribute(.paragraphStyle, value: style, range: paragraph)
         }
         // A short removal's ghost reads inline, in a gap after the character before its deletion point.

@@ -2,8 +2,8 @@ import AppKit
 
 /// The dew line: the editor's vertical scroller. Its hairline is the whole note, a 9 pt tick marks each H2, a bracket
 /// spans what is on screen, and each waiting change is a 3 x 10 pt rule in its writer's ink at its place in the note.
-/// A click on a tick scrolls to its heading and a click on a mark scrolls its change to the middle of the view;
-/// the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
+/// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
+/// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
 final class Rail: NSScroller {
     static let width: CGFloat = 22
     /// The hairline's left edge; the ticks, marks and bracket caps center on it.
@@ -302,6 +302,8 @@ final class Rail: NSScroller {
             convert(NSPoint(x: 0, y: railY(y)), to: labels).y
         }
         let hovered = hovering.flatMap { mark(at: $0) }
+        // The hovered mark lights its change in the page: a halo on its margin rules, its wash from 15% to 28%.
+        textView.marks.lit = hovered?.id
         if let mark = hovered ?? marks.first(where: { $0.id == arrival }) {
             let (name, time) = spoken(mark)
             let visible = textView.visibleRect

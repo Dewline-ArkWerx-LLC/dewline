@@ -67,16 +67,23 @@ final class LiveFile {
     private var autosaveRefused = false
     private var applying = false
     private var closed = false
-    /// Opened over an agent's write made while the file was closed: the write lands once a text view shows it.
+    /// Opened over a change made while the file was closed: the change lands once a text view shows it.
     private var landsWrite: Bool
+    /// The changes left undecided when the file last closed, marked once a text view shows them.
+    private var restored: [ChangeEngine.Mark]
+    private weak var textView: EditorTextView?
     private nonisolated static let log = Logger(subsystem: "dev.arkwerx.dewline", category: "engine")
 
-    init(engine: ChangeEngine, doc: UInt64, url: URL, gitdir: URL?, document: MarkdownDocument, closedWrite: Bool = false) {
+    init(
+        engine: ChangeEngine, doc: UInt64, url: URL, gitdir: URL?, document: MarkdownDocument, closedWrite: Bool = false,
+        marks: [ChangeEngine.Mark] = []
+    ) {
         self.engine = engine
         self.doc = doc
         self.url = url
         self.document = document
         landsWrite = closedWrite
+        restored = marks
         Self.open[Key(engine, doc)] = self
         watchGit(gitdir)
         arm()
@@ -93,6 +100,13 @@ final class LiveFile {
         textView.marks.live = self
         textView.edited = { [weak self] range, delta in self?.edited(range, delta: delta) }
         textView.inputEnded = { [weak self] in self?.inputEnded() }
+        self.textView = textView
+        if !restored.isEmpty {
+            changes = Dictionary(uniqueKeysWithValues: restored.map {
+                ($0.change, Change(range: $0.range, origin: $0.origin, marked: true, conflict: false, removed: $0.removed))
+            })
+            restored = []
+        }
         if landsWrite {
             landsWrite = false
             Task { await refresh() }
@@ -100,6 +114,7 @@ final class LiveFile {
     }
 
     func close() {
+        let keep = keepingMarks()
         closed = true
         Self.open[Key(engine, doc)] = nil
         watchGit(nil)
@@ -107,7 +122,33 @@ final class LiveFile {
         sources = []
         for task in [debounce, retry, autosaving] { task?.cancel() }
         let (engine, doc) = (engine, doc)
-        queue.async { engine.close(doc) }
+        queue.async {
+            keep()
+            engine.close(doc)
+        }
+    }
+
+    /// Before the app quits: keeps every open file's undecided changes for the next launch.
+    static func keepAllMarks() {
+        for live in open.values {
+            live.queue.sync(execute: live.keepingMarks())
+        }
+    }
+
+    /// Keeps the buffer's undecided changes with the engine, to run off the main thread, so they show again the next
+    /// time the file opens.
+    private func keepingMarks() -> @Sendable () -> Void {
+        let (engine, doc) = (engine, doc)
+        let buffer = (document?.textView ?? textView)?.string
+        let ranges = changes.filter { $0.value.marked && !$0.value.conflict }.mapValues(\.range)
+        return {
+            guard let buffer else { return }
+            do throws(ChangeEngine.Failure) {
+                try engine.keepMarks(doc, buffer: buffer, ranges: ranges)
+            } catch {
+                Self.log.error("A file's undecided changes were not kept: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     /// The file is now at `url`.

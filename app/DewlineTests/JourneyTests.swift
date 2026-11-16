@@ -347,6 +347,31 @@ struct JourneyTests {
         .replacingOccurrences(of: "Charlie line.", with: "Charlie line, revised.")
         .replacingOccurrences(of: "Delta line.", with: "Delta line, revised.")
 
+    /// FL-3: closing a tab keeps its undecided changes, and the note opens with them marked where they were.
+    @Test func undecidedChangesSurviveClosingTheTab() async throws {
+        let vault = try Vault(["plan.md": Self.plan])
+        defer { vault.remove() }
+        let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
+        try vault.write("plan.md", Self.agentPlan)
+        try await Self.until { tab.marked.count == 4 }
+        tab.live.keep(tab.marked[0].id)
+        let waiting = tab.marked.map(\.change)
+        #expect(waiting.count == 3)
+        let doc = tab.live.doc
+        tab.window.performClose(nil)
+        try await Self.until { (try? vault.engine.observe(doc)) == nil }
+
+        let reopened = try Tab(vault.url("plan.md"), engine: vault.engine)
+        defer { reopened.close() }
+        try await Self.until { reopened.marked.count == 3 }
+        #expect(reopened.textView.string == Self.agentPlan)
+        #expect(reopened.marked.map(\.change.range) == waiting.map(\.range))
+        #expect(reopened.marked.allSatisfy { $0.change.origin == .external })
+        #expect(reopened.marked.map(\.change.removed) == waiting.map(\.removed))
+        reopened.live.revert(reopened.marked[0].id)
+        #expect(reopened.textView.string == Self.agentPlan.replacingOccurrences(of: "Bravo line, revised.", with: "Bravo line."))
+    }
+
     /// Claude Code rewrites the open file and two closed ones. The open file's four changes land marked with Claude's
     /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and Keep,
     /// Revert and Keep All decide them: Keep and Revert act on the stamp's change when the caret is elsewhere, the

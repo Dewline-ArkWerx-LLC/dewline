@@ -234,6 +234,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         refreshHeader()
         NotificationCenter.default.addObserver(self, selector: #selector(libraryChanged), name: Library.changed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: LiveFile.changesDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: ClosedChanges.changed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(preferencesChanged), name: Preferences.didChange, object: nil)
     }
 
@@ -296,6 +297,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if let waiting { show(waiting, headings: headings) }
         changesChanged()
+        if let folder { ClosedChanges.scan(folder.url, deep: true) }
     }
 
     override func viewDidLayout() {
@@ -418,6 +420,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// Folders the watch saw change. They wait while a name is edited, since listing them again would end the edit.
     private func foldersChanged(_ paths: Set<String>) {
+        for path in paths { ClosedChanges.scan(URL(filePath: path), deep: false) }
         guard renaming == nil else {
             changedWhileRenaming.formUnion(paths)
             return
@@ -578,7 +581,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     // MARK: Waiting changes and git
 
-    /// Counts each note's undecided changes by writer, from the window's tabs, as the Keep bar does.
+    /// Counts each note's undecided changes by writer, from the window's tabs, as the Keep bar does, and the changes
+    /// waiting in notes changed while closed.
     @objc private func changesChanged() {
         guard filled else { return }
         var waiting: [String: [WaitingCount]] = [:]
@@ -593,6 +597,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 }
             }
             if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count > $1.count } }
+        }
+        for note in Review.closedNotes() where waiting[note.url.standardizedFileURL.path] == nil {
+            waiting[note.url.standardizedFileURL.path] = [WaitingCount(writer: MarkWriter(note.origin), count: note.count)]
         }
         waitingChanges = waiting
         refreshRows()

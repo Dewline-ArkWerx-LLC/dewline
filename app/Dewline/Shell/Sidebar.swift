@@ -312,7 +312,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         find.begin(query)
     }
 
-    private func showFiles() {
+    /// Find in Files' query while it shows in place of the tree.
+    var searchQuery: String? {
+        find.flatMap { $0.view.isHidden ? nil : $0.query }
+    }
+
+    func showFiles() {
         find?.view.isHidden = true
         outlineView.enclosingScrollView?.isHidden = false
         view.window?.makeFirstResponder(outlineView)
@@ -836,6 +841,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ outlineView: NSOutlineView, didAdd rowView: NSTableRowView, forRow row: Int) {
         decorate(rowView, row: row)
+    }
+
+    /// Expands and collapses the tree to the folders kept in user defaults, which another tab may have changed.
+    func adoptExpansion() {
+        guard filled, let folder, tree != nil else { return }
+        let kept = Set(UserDefaults.standard.stringArray(forKey: "Expanded " + folder.url.path) ?? [])
+        for row in (0..<outlineView.numberOfRows).reversed() {
+            guard let node = outlineView.item(atRow: row) as? SidebarNode, outlineView.isItemExpanded(node), case .entry(let entry) = node.kind,
+                entry.isFolder, let path = folder.relativePath(of: entry.url), !kept.contains(path)
+            else { continue }
+            outlineView.collapseItem(node)
+        }
+        for path in kept.sorted() {
+            _ = treeNode(for: folder.url.appending(path: path))
+        }
     }
 
     /// Keeps each root's expanded folders in user defaults; collapsing a folder forgets the folders inside it.

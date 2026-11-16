@@ -23,7 +23,7 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private(set) var hover: LinkHover?
     private(set) var restyles = 0
     private(set) var showsSource = false
-    /// Source line height: 22 pt, or prose's 24.5 pt pitch through `DewlineSourceLineHeight`, until the owner picks one.
+    /// Source line height: 22 pt, or prose's 24 pt pitch through `DewlineSourceLineHeight`, until the owner picks one.
     var sourceLineHeight: CGFloat = {
         let height = UserDefaults.standard.double(forKey: "DewlineSourceLineHeight")
         return height > 0 ? height : 22

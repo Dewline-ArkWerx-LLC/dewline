@@ -51,11 +51,13 @@ final class GitStates {
         // A gitdir outside the folder changes on commits and staging without the folder changing.
         if let gitdir = status?.gitdir.standardizedFileURL, gitdir != self.gitdir {
             self.gitdir = gitdir
-            let roots = gitdir.path.hasPrefix(folder.path + "/") ? [folder] : [folder, gitdir]
-            watch = FolderWatch(roots) { [weak self] _ in self?.read() }
+            let inside = gitdir.path.hasPrefix(folder.resolvingSymlinksInPath().path + "/")
+            watch = FolderWatch(inside ? [folder] : [folder, gitdir]) { [weak self] _ in self?.read() }
         }
+        // A repository caught mid-write reads as none; the states stand until the next read.
+        let kept = status == nil && gitdir.map { FileManager.default.fileExists(atPath: $0.path) } == true
         let files = status?.files ?? [:]
-        if files != self.files {
+        if !kept && files != self.files {
             self.files = files
             changed()
         }

@@ -42,8 +42,13 @@ pub struct Statuses {
     pub files: Vec<(PathBuf, Status)>,
 }
 
-/// Longest delta chain read, as git caps `pack.depth`.
+/// Bounds the work of reading one object: deltas in its chain, and bytes
+/// inflated.
 const MAX_DEPTH: usize = 4095;
+const MAX_INFLATED: u64 = MAX_INDEX;
+/// Bounds HEAD's tree entries read, which a tree naming one subtree many
+/// times could otherwise multiply.
+const MAX_TREE_ENTRIES: usize = 1 << 22;
 
 const LINK: u32 = 0o120000;
 const GITLINK: u32 = 0o160000;
@@ -52,9 +57,10 @@ const TREE: u32 = 0o040000;
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
 /// exact: the same blob at the new path. Ignore files are the repository's
-/// .gitignore files and info/exclude. None when the folder is in no
-/// repository, or its index, HEAD or objects can't be read: split or sparse
-/// indexes, SHA-256 repositories, alternates and missing objects.
+/// .gitignore files and info/exclude. A file over 256 MB whose stat data
+/// changed counts as modified. None when the folder is in no repository, or
+/// its index, HEAD or objects can't be read: split or sparse indexes,
+/// SHA-256 repositories, reftables, alternates and missing objects.
 pub fn status(folder: &Path) -> Option<Statuses> {
     // `find` looks for `.git` in each folder above the path, the folder first.
     let repo = Repo::find(&folder.join(".git"))?;
@@ -97,7 +103,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         if index.trees.get(&b""[..]) == Some(&tree) {
             same.insert(Vec::new());
         } else {
-            objects.flatten(tree, b"", prefix, &index.trees, &mut head, &mut same)?;
+            objects.flatten(tree, prefix, &index.trees, &mut head, &mut same)?;
         }
     }
 
@@ -146,25 +152,28 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         files.entry(name.to_vec()).or_insert(status);
     }
 
-    let mut deleted: Vec<_> = head
+    // Deleted files by blob, each list in reverse byte order of path, so a
+    // rename takes the first.
+    let mut deleted: HashMap<(u32, Oid), Vec<&Vec<u8>>> = HashMap::new();
+    let mut gone: Vec<_> = head
         .iter()
         .filter(|(name, _)| !indexed.contains(&name[..]))
         .collect();
-    deleted.sort_by(|a, b| a.0.cmp(b.0));
+    gone.sort_by(|a, b| b.0.cmp(a.0));
+    for (name, &(mode, id)) in gone {
+        deleted.entry((canonical(mode), id)).or_default().push(name);
+    }
     let empty = blob_id(b"");
     for entry in added {
         if files.get(&entry.name) != Some(&Status::New) || entry.id == empty {
             continue;
         }
-        let from = deleted.iter().position(|(_, (mode, id))| {
-            *id == entry.id && canonical(*mode) == canonical(entry.mode)
-        });
-        if let Some(from) = from {
-            deleted.remove(from);
+        let from = deleted.get_mut(&(canonical(entry.mode), entry.id));
+        if from.and_then(|names| names.pop()).is_some() {
             files.insert(entry.name.clone(), Status::Renamed);
         }
     }
-    for (name, _) in deleted {
+    for name in deleted.into_values().flatten() {
         files.insert(name.clone(), Status::Deleted);
     }
 
@@ -192,15 +201,16 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         walk.walk(&folder);
     }
 
+    // A file at the folder's own path is not under it.
     let files = files
         .into_iter()
-        .map(|(name, status)| {
+        .filter_map(|(name, status)| {
             let relative = if prefix.is_empty() {
                 &name[..]
             } else {
-                &name[prefix.len() + 1..]
+                name.strip_prefix(prefix)?.strip_prefix(b"/")?
             };
-            (PathBuf::from(OsStr::from_bytes(relative)), status)
+            Some((PathBuf::from(OsStr::from_bytes(relative)), status))
         })
         .collect();
     Some(Statuses {
@@ -276,7 +286,13 @@ fn worktree(path: &Path, entry: &IndexEntry, racy: (i64, i64)) -> Option<Status>
     let bytes = if link {
         fs::read_link(path).ok()?.into_os_string().into_vec()
     } else {
-        read_file(path, 1 << 40).ok()?
+        match read_file(path, MAX_INDEX) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => {
+                return Some(Status::Modified);
+            }
+            Err(_) => return None,
+        }
     };
     (blob_id(&bytes) != entry.id).then_some(Status::Modified)
 }
@@ -301,6 +317,9 @@ fn parse_oid(hex: &str) -> Option<Oid> {
 /// The commit HEAD names, or None on a branch with no commit yet. The outer
 /// None: HEAD can't be read.
 fn head_commit(gitdir: &Path, common: &Path) -> Option<Option<Oid>> {
+    if common.join("reftable").exists() {
+        return None;
+    }
     let mut line = read_line(&gitdir.join("HEAD"))?;
     // A symbolic ref may name another; git follows five.
     for _ in 0..5 {
@@ -315,26 +334,44 @@ fn head_commit(gitdir: &Path, common: &Path) -> Option<Option<Oid>> {
         {
             return None;
         }
-        match read_line(&common.join(name)) {
-            Some(next) => line = next,
-            None => return Some(packed_ref(common, name)),
+        match read_file(&common.join(name), MAX_LINE_FILE) {
+            Ok(bytes) => line = String::from_utf8(bytes).ok()?.lines().next()?.to_owned(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return packed_ref(common, name);
+            }
+            Err(_) => return None,
         }
     }
     None
 }
 
-fn packed_ref(common: &Path, name: &str) -> Option<Oid> {
-    let packed = read_file(&common.join("packed-refs"), MAX_INDEX).ok()?;
-    String::from_utf8_lossy(&packed).lines().find_map(|line| {
-        let (id, named) = line.split_once(' ')?;
-        (named == name).then(|| parse_oid(id))?
-    })
+/// The ref's commit in packed-refs, None inside when it isn't there.
+fn packed_ref(common: &Path, name: &str) -> Option<Option<Oid>> {
+    let packed = match read_file(&common.join("packed-refs"), MAX_INDEX) {
+        Ok(packed) => packed,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Some(None),
+        Err(_) => return None,
+    };
+    for line in String::from_utf8_lossy(&packed).lines() {
+        if let Some((id, named)) = line.split_once(' ')
+            && named == name
+        {
+            return Some(Some(parse_oid(id)?));
+        }
+    }
+    Some(None)
 }
 
-/// A repository's object store: loose objects and version 2 pack indexes.
+/// A repository's object store: loose objects, and packs with version 2
+/// indexes.
 struct Objects {
     folder: PathBuf,
-    packs: Vec<(Vec<u8>, File)>,
+    packs: Vec<Pack>,
+}
+
+struct Pack {
+    idx: File,
+    pack: File,
 }
 
 impl Objects {
@@ -350,14 +387,13 @@ impl Objects {
                 continue;
             }
             // A pack being written or removed has one file of the two.
-            let Ok(idx) = read_file(&path, MAX_INDEX) else {
+            let (Ok(idx), Ok(pack)) = (File::open(&path), File::open(path.with_extension("pack")))
+            else {
                 continue;
             };
-            let Ok(pack) = File::open(path.with_extension("pack")) else {
-                continue;
-            };
-            if idx.starts_with(b"\xfftOc\0\0\0\x02") {
-                packs.push((idx, pack));
+            let mut header = [0u8; 8];
+            if idx.read_exact_at(&mut header, 0).is_ok() && &header == b"\xfftOc\0\0\0\x02" {
+                packs.push(Pack { idx, pack });
             }
         }
         Objects {
@@ -366,88 +402,75 @@ impl Objects {
         }
     }
 
-    /// The object's type (1 commit, 2 tree, 3 blob, 4 tag) and bytes.
-    /// `depth` counts the deltas read to reach it.
-    fn read(&self, id: Oid, depth: usize) -> Option<(u8, Vec<u8>)> {
-        let hex = id.to_string();
-        if let Ok(loose) = read_file(&self.folder.join(&hex[..2]).join(&hex[2..]), MAX_INDEX) {
-            let mut bytes = Vec::new();
-            ZlibDecoder::new(&loose[..])
-                .take(MAX_INDEX + 64)
-                .read_to_end(&mut bytes)
-                .ok()?;
-            let nul = bytes.iter().position(|&byte| byte == 0)?;
-            let header = std::str::from_utf8(&bytes[..nul]).ok()?;
-            let (kind, size) = header.split_once(' ')?;
-            let size = size.parse::<usize>().ok()?;
-            let kind = match kind {
-                "commit" => 1,
-                "tree" => 2,
-                "blob" => 3,
-                "tag" => 4,
-                _ => return None,
-            };
-            bytes.drain(..=nul);
-            return (size == bytes.len()).then_some((kind, bytes));
-        }
-        self.packs.iter().find_map(|(idx, pack)| {
-            let offset = find(idx, id)?;
-            Some(self.packed(pack, offset, depth))
-        })?
-    }
-
-    /// The object at `offset` in `pack`, its deltas applied.
-    fn packed(&self, pack: &File, mut offset: u64, depth: usize) -> Option<(u8, Vec<u8>)> {
+    /// The object's type (1 commit, 2 tree, 3 blob, 4 tag) and bytes, its
+    /// deltas applied.
+    fn read(&self, id: Oid) -> Option<(u8, Vec<u8>)> {
         let mut deltas = Vec::new();
-        let (kind, mut bytes) = loop {
-            if depth + deltas.len() > MAX_DEPTH {
-                return None;
+        let mut inflated = 0u64;
+        let mut next = id;
+        let (kind, mut bytes) = 'chain: loop {
+            let hex = next.to_string();
+            if let Ok(loose) = read_file(&self.folder.join(&hex[..2]).join(&hex[2..]), MAX_INDEX) {
+                break loose_object(&loose)?;
             }
-            // Type and size, then a base's offset or id: at most 30 bytes.
-            let mut head = [0u8; 32];
-            let length = pack.read_at(&mut head, offset).ok()?;
-            let mut head = head[..length].iter().copied();
-            let mut byte = head.next()?;
-            let kind = (byte >> 4) & 7;
-            let mut size = u64::from(byte & 15);
-            let mut shift = 4;
-            while byte & 0x80 != 0 {
-                byte = head.next()?;
-                if shift > 57 {
+            let (pack, mut offset) = self
+                .packs
+                .iter()
+                .find_map(|pack| Some((&pack.pack, pack.find(next)?)))?;
+            loop {
+                if deltas.len() > MAX_DEPTH {
                     return None;
                 }
-                size |= u64::from(byte & 0x7f) << shift;
-                shift += 7;
-            }
-            match kind {
-                1..=4 => {
-                    let at = offset + (length - head.len()) as u64;
-                    break (kind, inflate_at(pack, at, size)?);
-                }
-                6 => {
-                    // Git's offset varint (varint.c).
-                    let mut byte = head.next()?;
-                    let mut back = u64::from(byte & 0x7f);
-                    while byte & 0x80 != 0 {
-                        byte = head.next()?;
-                        back = back.checked_add(1)?;
-                        if back >> 57 != 0 {
-                            return None;
-                        }
-                        back = (back << 7) | u64::from(byte & 0x7f);
+                // Type and size, then a base's offset or id: at most 30 bytes.
+                let mut head = [0u8; 32];
+                let length = pack.read_at(&mut head, offset).ok()?;
+                let mut head = head[..length].iter().copied();
+                let mut byte = head.next()?;
+                let kind = (byte >> 4) & 7;
+                let mut size = u64::from(byte & 15);
+                let mut shift = 4;
+                while byte & 0x80 != 0 {
+                    byte = head.next()?;
+                    if shift > 57 {
+                        return None;
                     }
-                    let at = offset + (length - head.len()) as u64;
-                    deltas.push(inflate_at(pack, at, size)?);
-                    offset = offset.checked_sub(back).filter(|_| back > 0)?;
+                    size |= u64::from(byte & 0x7f) << shift;
+                    shift += 7;
                 }
-                7 => {
-                    let base: Vec<u8> = head.by_ref().take(20).collect();
-                    let base = Oid(base.try_into().ok()?);
-                    let at = offset + (length - head.len()) as u64;
-                    deltas.push(inflate_at(pack, at, size)?);
-                    break self.read(base, depth + deltas.len())?;
+                inflated += size;
+                if inflated > MAX_INFLATED {
+                    return None;
                 }
-                _ => return None,
+                match kind {
+                    1..=4 => {
+                        let at = offset + (length - head.len()) as u64;
+                        break 'chain (kind, inflate_at(pack, at, size)?);
+                    }
+                    6 => {
+                        // Git's offset varint (varint.c).
+                        let mut byte = head.next()?;
+                        let mut back = u64::from(byte & 0x7f);
+                        while byte & 0x80 != 0 {
+                            byte = head.next()?;
+                            back = back.checked_add(1)?;
+                            if back >> 57 != 0 {
+                                return None;
+                            }
+                            back = (back << 7) | u64::from(byte & 0x7f);
+                        }
+                        let at = offset + (length - head.len()) as u64;
+                        deltas.push(inflate_at(pack, at, size)?);
+                        offset = offset.checked_sub(back).filter(|_| back > 0)?;
+                    }
+                    7 => {
+                        let base: Vec<u8> = head.by_ref().take(20).collect();
+                        next = Oid(base.try_into().ok()?);
+                        let at = offset + (length - head.len()) as u64;
+                        deltas.push(inflate_at(pack, at, size)?);
+                        continue 'chain;
+                    }
+                    _ => return None,
+                }
             }
         };
         for delta in deltas.iter().rev() {
@@ -457,79 +480,118 @@ impl Objects {
     }
 
     fn commit_tree(&self, commit: Oid) -> Option<Oid> {
-        let (kind, bytes) = self.read(commit, 0)?;
+        let (kind, bytes) = self.read(commit)?;
         let line = bytes.strip_prefix(b"tree ")?.get(..40)?;
         (kind == 1).then(|| parse_oid(std::str::from_utf8(line).ok()?))?
     }
 
-    /// Adds the files of `tree`, at `base`, that are under `folder`, by path,
-    /// and the folders whose tree `trees` holds to `same` in place of theirs.
+    /// Adds the files of `tree` that are under `folder`, by path, and the
+    /// folders whose tree `trees` holds to `same` in place of theirs.
     fn flatten(
         &self,
         tree: Oid,
-        base: &[u8],
         folder: &[u8],
         trees: &HashMap<Vec<u8>, Oid>,
         files: &mut HashMap<Vec<u8>, (u32, Oid)>,
         same: &mut HashSet<Vec<u8>>,
     ) -> Option<()> {
-        let (kind, bytes) = self.read(tree, 0)?;
-        if kind != 2 {
-            return None;
-        }
-        let mut rest = &bytes[..];
-        while !rest.is_empty() {
-            let space = rest.iter().position(|&byte| byte == b' ')?;
-            let mode = u32::from_str_radix(std::str::from_utf8(&rest[..space]).ok()?, 8).ok()?;
-            let nul = space + rest[space..].iter().position(|&byte| byte == 0)?;
-            let path = join(base, &rest[space + 1..nul]);
-            let id = Oid(rest.get(nul + 1..nul + 21)?.try_into().ok()?);
-            rest = &rest[nul + 21..];
-            if mode == TREE {
-                if trees.get(&path) == Some(&id) {
-                    same.insert(path);
-                } else if within(&path, folder) || within(folder, &path) {
-                    self.flatten(id, &path, folder, trees, files, same)?;
+        let mut entries = 0;
+        let mut open = vec![(tree, Vec::new())];
+        while let Some((tree, base)) = open.pop() {
+            let (kind, bytes) = self.read(tree)?;
+            if kind != 2 {
+                return None;
+            }
+            let mut rest = &bytes[..];
+            while !rest.is_empty() {
+                entries += 1;
+                if entries > MAX_TREE_ENTRIES {
+                    return None;
                 }
-            } else if within(&path, folder) {
-                files.insert(path, (mode, id));
+                let space = rest.iter().position(|&byte| byte == b' ')?;
+                let mode =
+                    u32::from_str_radix(std::str::from_utf8(&rest[..space]).ok()?, 8).ok()?;
+                let nul = space + rest[space..].iter().position(|&byte| byte == 0)?;
+                let path = join(&base, &rest[space + 1..nul]);
+                let id = Oid(rest.get(nul + 1..nul + 21)?.try_into().ok()?);
+                rest = &rest[nul + 21..];
+                if mode == TREE {
+                    if trees.get(&path) == Some(&id) {
+                        same.insert(path);
+                    } else if within(&path, folder) || within(folder, &path) {
+                        open.push((id, path));
+                    }
+                } else if within(&path, folder) {
+                    files.insert(path, (mode, id));
+                }
             }
         }
         Some(())
     }
 }
 
-/// The offset of `id` in a version 2 pack index: a 256-entry fanout of
-/// counts, the sorted ids, their CRCs, 31-bit offsets, then 64-bit ones.
-fn find(idx: &[u8], id: Oid) -> Option<u64> {
-    let word = |at: usize| Some(u32::from_be_bytes(idx.get(at..at + 4)?.try_into().ok()?));
-    let first = usize::from(id.0[0]);
-    let count = word(8 + 4 * 255)? as usize;
-    let mut low = if first == 0 {
-        0
-    } else {
-        word(8 + 4 * (first - 1))? as usize
+/// A loose object's type and bytes.
+fn loose_object(compressed: &[u8]) -> Option<(u8, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    ZlibDecoder::new(compressed)
+        .take(MAX_INFLATED + 64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let nul = bytes.iter().position(|&byte| byte == 0)?;
+    let header = std::str::from_utf8(&bytes[..nul]).ok()?;
+    let (kind, size) = header.split_once(' ')?;
+    let size = size.parse::<usize>().ok()?;
+    let kind = match kind {
+        "commit" => 1,
+        "tree" => 2,
+        "blob" => 3,
+        "tag" => 4,
+        _ => return None,
     };
-    let mut high = (word(8 + 4 * first)? as usize).min(count);
-    let ids = 8 + 4 * 256;
-    while low < high {
-        let middle = (low + high) / 2;
-        let at = ids + 20 * middle;
-        match idx.get(at..at + 20)?.cmp(&id.0[..]) {
-            std::cmp::Ordering::Less => low = middle + 1,
-            std::cmp::Ordering::Greater => high = middle,
-            std::cmp::Ordering::Equal => {
-                let offsets = ids + 24 * count;
-                let offset = word(offsets + 4 * middle)?;
-                if offset & 0x8000_0000 == 0 {
-                    return Some(u64::from(offset));
+    bytes.drain(..=nul);
+    (size == bytes.len()).then_some((kind, bytes))
+}
+
+impl Pack {
+    /// The offset of `id`, from the index: a 256-entry fanout of counts, the
+    /// sorted ids, their CRCs, 31-bit offsets, then 64-bit ones.
+    fn find(&self, id: Oid) -> Option<u64> {
+        let read = |at: u64, bytes: &mut [u8]| self.idx.read_exact_at(bytes, at).ok();
+        let word = |at: u64| {
+            let mut bytes = [0u8; 4];
+            read(at, &mut bytes)?;
+            Some(u64::from(u32::from_be_bytes(bytes)))
+        };
+        let first = u64::from(id.0[0]);
+        let count = word(8 + 4 * 255)?;
+        let mut low = if first == 0 {
+            0
+        } else {
+            word(8 + 4 * (first - 1))?
+        };
+        let mut high = word(8 + 4 * first)?.min(count);
+        let ids = 8 + 4 * 256;
+        let mut candidate = [0u8; 20];
+        while low < high {
+            let middle = (low + high) / 2;
+            read(ids + 20 * middle, &mut candidate)?;
+            match candidate.cmp(&id.0) {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => {
+                    let offsets = ids + 24 * count;
+                    let offset = word(offsets + 4 * middle)?;
+                    if offset & 0x8000_0000 == 0 {
+                        return Some(offset);
+                    }
+                    let mut large = [0u8; 8];
+                    read(offsets + 4 * count + 8 * (offset & 0x7fff_ffff), &mut large)?;
+                    return Some(u64::from_be_bytes(large));
                 }
-                let at = offsets + 4 * count + 8 * (offset & 0x7fff_ffff) as usize;
-                return Some(u64::from_be_bytes(idx.get(at..at + 8)?.try_into().ok()?));
             }
         }
+        None
     }
-    None
 }
 
 /// Inflates the zlib stream at `offset`, which must give `size` bytes.
@@ -1057,6 +1119,10 @@ mod tests {
             git_paths(&root, "docs/").len()
         );
         assert_eq!(statuses(&root.join("docs/drafts")), []);
+
+        // HEAD's c.md is not under a folder now at its path.
+        fs::create_dir(root.join("c.md")).unwrap();
+        assert_eq!(statuses(&root.join("c.md")), []);
     }
 
     #[test]

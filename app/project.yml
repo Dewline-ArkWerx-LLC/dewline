@@ -190,6 +190,9 @@ schemes:
     test:
       config: Test
       targets: [DewlineTests]
+      # The test host never adds to Recent Items.
+      commandLineArguments:
+        "-NSRecentDocumentsLimit 0": true
     profile:
       config: Release
     analyze:

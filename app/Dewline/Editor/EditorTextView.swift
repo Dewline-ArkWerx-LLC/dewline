@@ -125,8 +125,20 @@ final class EditorTextView: CaretTextView {
         if Preferences.shared.opensInSource { textView.styler.toggleSource(restyling: NSRange()) }
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        let rail = Rail()
+        scrollView.verticalScroller = rail
+        scrollView.scrollerStyle = .legacy
         scrollView.backgroundColor = textView.backgroundColor
         scrollView.documentView = textView
+        rail.labels.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(rail.labels)
+        NSLayoutConstraint.activate([
+            rail.labels.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            rail.labels.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            rail.labels.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            rail.labels.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+        ])
+        rail.attach(textView)
         let status = NSTextField(labelWithString: "")
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         status.textColor = ThemeStore.shared.color(.ink2)

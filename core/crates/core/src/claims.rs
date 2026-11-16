@@ -9,15 +9,12 @@ pub const MAX_ID: usize = 128;
 /// A pair of claims explains only a change seen from this long before its
 /// PreToolUse arrived to this long after its PostToolUse did.
 pub const LINK_GRACE: Duration = Duration::from_secs(5);
-/// Landings on a file wait at most this long for an open call's
-/// PostToolUse.
+/// Landings on a file and its autosave wait at most this long for an open
+/// call's PostToolUse.
 pub const OPEN_CALL_WAIT: Duration = Duration::from_secs(10);
-/// A session's holds lapse this long after its last hook event.
-pub const HOLD_LAPSE: Duration = Duration::from_secs(30 * 60);
 /// PATH_MAX: no realpath is longer.
 const MAX_PATH: usize = 1024;
-/// The ledger forgets its oldest tool uses, and its oldest holds, past this
-/// many of each.
+/// The ledger forgets its oldest tool uses past this many.
 const CAPACITY: usize = 4096;
 
 /// A session id or a `tool_use_id`.
@@ -120,8 +117,8 @@ pub struct Claim {
 enum Event {
     PreToolUse(ToolUse),
     PostToolUse(ToolUse),
-    /// The session loaded the file as instructions.
-    InstructionsLoaded(PathBuf),
+    /// The session loaded a file as instructions.
+    InstructionsLoaded,
     /// Stop, StopFailure, or UserPromptSubmit, the first hook after an
     /// interrupt.
     TurnEnd,
@@ -198,7 +195,10 @@ impl Claim {
         let event = match fields.event {
             "PreToolUse" => Event::PreToolUse(tool_use()?),
             "PostToolUse" => Event::PostToolUse(tool_use()?),
-            "InstructionsLoaded" => Event::InstructionsLoaded(path()?),
+            "InstructionsLoaded" => {
+                path()?;
+                Event::InstructionsLoaded
+            }
             "Stop" | "StopFailure" | "UserPromptSubmit" => Event::TurnEnd,
             "SessionEnd" => Event::SessionEnd,
             _ => return Err(Refused::Invalid("event")),
@@ -247,72 +247,25 @@ struct Link {
     post_at: Instant,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Until {
-    TurnEnd,
-    SessionEnd,
-}
-
-struct Hold {
-    path: PathBuf,
-    writer: Writer,
-    until: Until,
-}
-
 /// What the hooks have claimed: tool uses by vendor and `tool_use_id`,
-/// paired in any arrival order, and the autosave holds they put on files.
-/// The engine consults it; it changes no bytes.
+/// paired in any arrival order. The engine consults it; it changes no bytes.
 #[derive(Default)]
 pub struct Claims {
     /// Keyed by file too: a Codex patch sends one pair per file it names,
     /// all with the call's one `tool_use_id`.
     uses: HashMap<(Vendor, Id, PathBuf), Use>,
-    holds: Vec<Hold>,
-    /// When each session that holds a file last sent a hook event.
-    heard: HashMap<Writer, Instant>,
 }
 
 impl Claims {
-    /// Records `claim`, which arrived at `now`. Claude's PreToolUse holds the
-    /// file's autosave until the session's turn ends, InstructionsLoaded
-    /// until the session ends, and either lapses `HOLD_LAPSE` after the
-    /// session's last hook event.
+    /// Records `claim`, which arrived at `now`. Only tool uses are kept:
+    /// instructions loaded and turns and sessions ending change nothing here.
     pub fn record(&mut self, claim: Claim, now: Instant) -> Result<(), Refused> {
         let Claim { writer, event } = claim;
-        let result = match event {
-            Event::PreToolUse(tool_use) => {
-                if tool_use.half.tool != Tool::ApplyPatch {
-                    self.hold(&tool_use.half.path, &writer, Until::TurnEnd);
-                }
-                self.half(writer.vendor, tool_use, true, now)
-            }
+        match event {
+            Event::PreToolUse(tool_use) => self.half(writer.vendor, tool_use, true, now),
             Event::PostToolUse(tool_use) => self.half(writer.vendor, tool_use, false, now),
-            Event::InstructionsLoaded(path) => {
-                self.hold(&path, &writer, Until::SessionEnd);
-                Ok(())
-            }
-            Event::TurnEnd => {
-                self.holds
-                    .retain(|hold| hold.writer != writer || hold.until != Until::TurnEnd);
-                Ok(())
-            }
-            Event::SessionEnd => {
-                self.holds.retain(|hold| hold.writer != writer);
-                Ok(())
-            }
-        };
-        if self.holds.iter().any(|hold| hold.writer == writer) {
-            self.heard.insert(writer, now);
+            Event::InstructionsLoaded | Event::TurnEnd | Event::SessionEnd => Ok(()),
         }
-        let heard = &self.heard;
-        self.holds.retain(|hold| {
-            heard
-                .get(&hold.writer)
-                .is_some_and(|at| now.saturating_duration_since(*at) <= HOLD_LAPSE)
-        });
-        let holding: HashSet<&Writer> = self.holds.iter().map(|hold| &hold.writer).collect();
-        self.heard.retain(|writer, _| holding.contains(writer));
-        result
     }
 
     fn half(
@@ -323,7 +276,7 @@ impl Claims {
         now: Instant,
     ) -> Result<(), Refused> {
         let ToolUse { id, half } = tool_use;
-        // A Read only holds: it never links, so it needs no pair.
+        // A Read writes nothing: it never links and opens no call.
         if half.tool == Tool::Read {
             return Ok(());
         }
@@ -386,39 +339,11 @@ impl Claims {
         result
     }
 
-    fn hold(&mut self, path: &Path, writer: &Writer, until: Until) {
-        let held = self
-            .holds
-            .iter()
-            .any(|hold| hold.path == path && hold.writer == *writer && hold.until == until);
-        if !held {
-            self.holds.push(Hold {
-                path: path.to_path_buf(),
-                writer: writer.clone(),
-                until,
-            });
-            if self.holds.len() > CAPACITY {
-                self.holds.remove(0);
-            }
-        }
-    }
-
-    /// Whether a hook's claim holds the autosave of the file at `path` at
-    /// `now`.
-    pub fn held(&self, path: &Path, now: Instant) -> bool {
-        self.holds.iter().any(|hold| {
-            hold.path == path
-                && self
-                    .heard
-                    .get(&hold.writer)
-                    .is_some_and(|at| now.saturating_duration_since(*at) <= HOLD_LAPSE)
-        })
-    }
-
     /// Whether a hooked call on `path` is open at `now`: its PreToolUse
     /// arrived at most `OPEN_CALL_WAIT` before and its PostToolUse hasn't.
     /// Landings on the file wait while it is, since Codex truncates the file
-    /// and then writes it.
+    /// and then writes it, and so does autosave, since the tool writes bytes
+    /// it read before the call.
     pub fn open_call(&self, path: &Path, now: Instant) -> bool {
         self.uses.values().any(|entry| {
             matches!(entry, Use::Half { pre: true, half, at }
@@ -977,6 +902,10 @@ mod tests {
                 vec![pre("s1", "t1", "Edit", P, "A", "B"), post("s1", "t1", "Edit", P, "B")], P, t0, false),
             ("a Post alone opens nothing", vec![post("s1", "t1", "Edit", P, "B")], P, t0, false),
             ("a Read writes nothing", vec![pre("s1", "t1", "Read", P, "A", "A")], P, t0, false),
+            ("loading instructions opens nothing", vec![loaded("s1", P)], P, t0, false),
+            ("a turn's end leaves it open",
+                vec![pre("s1", "t1", "Edit", P, "A", "B"), bare("Stop", "s1")], P, t0, true),
+            ("and so does the session's", vec![pre("s1", "t1", "Edit", P, "A", "B"), bare("SessionEnd", "s1")], P, t0, true),
             ("a closed id is no open call",
                 vec![pre("s1", "t1", "Edit", P, "A", "B"), pre("s1", "t1", "Edit", P, "X", "B")], P, t0, false),
         ];
@@ -987,83 +916,6 @@ mod tests {
             }
             assert_eq!(ledger.open_call(Path::new(path), now), open, "{name}");
         }
-    }
-
-    #[test]
-    fn the_hold_table() {
-        let t0 = Instant::now();
-        #[rustfmt::skip]
-        let table: Vec<(&str, Vec<Claim>, &str, bool)> = vec![
-            ("a Read holds its file", vec![pre("s1", "t1", "Read", P, "A", "A")], P, true),
-            ("and only its file", vec![pre("s1", "t1", "Read", P, "A", "A")], Q, false),
-            ("a Post alone holds nothing", vec![post("s1", "t1", "Edit", P, "B")], P, false),
-            ("a Codex patch holds nothing",
-                vec![pre_by("codex", "c1", "call_1", "apply_patch", P, "A", "B")], P, false),
-            ("Stop releases it", vec![pre("s1", "t1", "Edit", P, "A", "B"), bare("Stop", "s1")], P, false),
-            ("StopFailure releases it",
-                vec![pre("s1", "t1", "Write", P, "A", "B"), bare("StopFailure", "s1")], P, false),
-            ("UserPromptSubmit, after an interrupt, releases it",
-                vec![pre("s1", "t1", "MultiEdit", P, "A", "B"), bare("UserPromptSubmit", "s1")], P, false),
-            ("SessionEnd releases it", vec![pre("s1", "t1", "Edit", P, "A", "B"), bare("SessionEnd", "s1")], P, false),
-            ("another session's Stop doesn't", vec![pre("s1", "t1", "Edit", P, "A", "B"), bare("Stop", "s2")], P, true),
-            ("nor another vendor's with the same session id",
-                vec![pre("s1", "t1", "Edit", P, "A", "B"),
-                     Claim::parse(Fields { event: "Stop", vendor: "codex", session: "s1", ..Fields::default() }).unwrap()],
-                P, true),
-            ("a hold from each session needs each Stop",
-                vec![pre("s1", "t1", "Edit", P, "A", "B"), pre("s2", "t2", "Edit", P, "A", "B"), bare("Stop", "s1")],
-                P, true),
-            ("a Post on another file doesn't release it",
-                vec![pre("s1", "t1", "Edit", P, "A", "B"), post("s1", "t1", "Edit", Q, "B")], P, true),
-            ("InstructionsLoaded holds past Stop", vec![loaded("s1", P), bare("Stop", "s1")], P, true),
-            ("until SessionEnd", vec![loaded("s1", P), bare("SessionEnd", "s1")], P, false),
-        ];
-        for (name, claims, path, held) in table {
-            let mut ledger = Claims::default();
-            for claim in claims {
-                let _ = ledger.record(claim, t0);
-            }
-            assert_eq!(ledger.held(Path::new(path), t0), held, "{name}");
-        }
-    }
-
-    #[test]
-    fn holds_lapse_30_minutes_after_the_sessions_last_hook_event() {
-        let t0 = Instant::now();
-        let at = |minutes: u64| t0 + Duration::from_secs(minutes * 60);
-        let ms = Duration::from_millis(1);
-        let mut ledger = Claims::default();
-        ledger
-            .record(pre("s1", "t1", "Read", P, "A", "A"), t0)
-            .unwrap();
-        ledger.record(loaded("s1", Q), t0).unwrap();
-        assert!(ledger.held(Path::new(P), at(30)));
-        assert!(!ledger.held(Path::new(P), at(30) + ms));
-        assert!(
-            !ledger.held(Path::new(Q), at(30) + ms),
-            "InstructionsLoaded lapses too"
-        );
-
-        // Any hook event from the session keeps every hold of its alive;
-        // another session's events don't.
-        ledger.record(bare("Stop", "s2"), at(20)).unwrap();
-        assert!(!ledger.held(Path::new(P), at(30) + ms));
-        ledger
-            .record(post("s1", "t9", "Edit", Q, "B"), at(20))
-            .unwrap();
-        assert!(ledger.held(Path::new(P), at(50)));
-        assert!(ledger.held(Path::new(Q), at(50)));
-        assert!(!ledger.held(Path::new(P), at(50) + ms));
-
-        // A lapsed hold is gone for good: a later event revives nothing.
-        ledger
-            .record(bare("UserPromptSubmit", "s3"), at(51))
-            .unwrap();
-        ledger
-            .record(post("s1", "t10", "Edit", Q, "C"), at(52))
-            .unwrap();
-        assert!(!ledger.held(Path::new(P), at(52)));
-        assert!(ledger.holds.is_empty() && ledger.heard.is_empty());
     }
 
     #[test]
@@ -1078,8 +930,6 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(ledger.uses.len(), CAPACITY);
-        assert_eq!(ledger.holds.len(), CAPACITY);
-        assert_eq!(ledger.heard.len(), CAPACITY);
         let key = |id: &str| (Vendor::Claude, Id::new(id).unwrap(), PathBuf::from(P));
         assert!(!ledger.uses.contains_key(&key("t0")));
         assert!(

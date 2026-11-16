@@ -59,7 +59,7 @@ pub enum SaveRefused {
     Conflict,
     #[error("the file changed")]
     Changed,
-    #[error("a hook holds the file")]
+    #[error("an agent's call on the file is open")]
     Held,
     #[error("text is being composed")]
     Composing,
@@ -363,9 +363,7 @@ pub enum Update {
         change: u64,
         origin: Origin,
     },
-    /// A hold ended: run the refused autosave again.
-    Released { doc: u64 },
-    /// A hook call ended: land again.
+    /// A hook call ended: land again, then run a refused autosave again.
     Retry { doc: u64 },
 }
 
@@ -572,7 +570,6 @@ impl Engine {
                     change: change.0,
                     origin: origin.into(),
                 },
-                core::Update::Released(doc) => Update::Released { doc: doc.0 },
                 core::Update::Retry(doc) => Update::Retry { doc: doc.0 },
             })
             .collect())
@@ -602,6 +599,16 @@ impl Engine {
     pub fn snapshots(&self, doc: u64) -> Result<Vec<Snapshot>, EngineError> {
         let snapshots = self.0.snapshots(DocId(doc))?;
         Ok(snapshots.into_iter().map(Snapshot::from).collect())
+    }
+
+    /// The draft a refused save left, while it holds other bytes than the
+    /// file.
+    pub fn draft(&self, doc: u64) -> Result<Option<Snapshot>, EngineError> {
+        Ok(self.0.draft(DocId(doc))?.map(Snapshot::from))
+    }
+
+    pub fn discard_draft(&self, doc: u64) -> Result<(), EngineError> {
+        Ok(self.0.discard_draft(DocId(doc))?)
     }
 
     pub fn pin(&self, doc: u64, snapshot: Snapshot, pinned: bool) -> Result<(), EngineError> {

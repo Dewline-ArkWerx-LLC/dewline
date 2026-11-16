@@ -257,20 +257,23 @@ struct LiveFileTests {
         }
     }
 
-    @Test func aReleasedHoldSaves() async throws {
+    @Test func anEditHoldsAutosaveUntilItsPostAndAReadHoldsNothing() async throws {
         let file = try OpenFile("# Plan\n")
         defer { file.close() }
-        file.claim(.preToolUse(.init(id: "toolu_1", tool: .read, path: file.realpath, hash: Self.hex("# Plan\n"), declared: nil)))
+        file.record("PreToolUse", tool: "Read", id: "toolu_0")
+        file.record("InstructionsLoaded")
         file.textView.insertText("!", replacementRange: NSRange(location: 6, length: 0))
-        var refusal: ChangeEngine.Refusal?
-        for _ in 0..<50 where refusal != .held {
-            refusal = await file.live.autosave()
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(refusal == .held)
-        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan\n")
+        #expect(await file.live.autosave() == nil)
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
+
+        file.record("PreToolUse", tool: "Edit", id: "toolu_1")
+        file.textView.insertText("?", replacementRange: NSRange(location: 7, length: 0))
+        #expect(await file.live.autosave() == .held)
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
+        // The turn's end leaves the call open; its PostToolUse ends it and the refused autosave runs.
         file.claim(.turnEnd)
-        try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!\n" }
+        file.claim(.postToolUse(.init(id: "toolu_1", tool: .edit, path: file.realpath, hash: Self.hex("# Plan!\n"), declared: nil)))
+        try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!?\n" }
     }
 
     @Test func restoringASnapshotIsOneUndo() async throws {
@@ -532,6 +535,13 @@ struct LiveFileTests {
         /// The file's realpath, as hooks name it.
         var realpath: String {
             Darwin.realpath(url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? url.path
+        }
+
+        /// A Claude Code hook's claim on the file in session s1, recorded before it returns; the app doesn't hear what
+        /// it changed.
+        func record(_ event: String, tool: String? = nil, id: String? = nil) {
+            _ = document.engine!.claim(
+                event: event, vendor: "claude", session: "s1", toolUseId: id, tool: tool, path: realpath, hash: nil, declared: nil)
         }
 
         /// A Claude Code hook's claim in session s1, as `dewline notify` sends it.

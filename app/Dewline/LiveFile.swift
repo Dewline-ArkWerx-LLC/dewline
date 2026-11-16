@@ -148,10 +148,13 @@ final class LiveFile {
                     switch update {
                     case .relabeled(let doc, let change, let origin):
                         open[Key(engine, doc)]?.relabel(change, origin: origin)
-                    case .released(let doc):
-                        open[Key(engine, doc)]?.released()
                     case .retry(let doc):
-                        if let live = open[Key(engine, doc)] { Task { await live.refresh() } }
+                        if let live = open[Key(engine, doc)] {
+                            Task {
+                                await live.refresh()
+                                live.released()
+                            }
+                        }
                     }
                 }
                 if finished { Review.finished(vendor: claim.vendor, session: claim.session) }
@@ -188,8 +191,8 @@ final class LiveFile {
         Review.landed(self, change)
     }
 
-    /// A hold on the file ended.
-    func released() {
+    /// A hooked call on the file ended.
+    private func released() {
         if autosaveRefused { Task { await autosave() } }
     }
 

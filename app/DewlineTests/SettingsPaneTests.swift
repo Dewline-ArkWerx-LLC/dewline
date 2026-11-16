@@ -86,6 +86,26 @@ struct SettingsPaneTests {
         #expect(HookStatus.read(home: home).agents == [true, true])
     }
 
+    /// Hooks that run a Dewline the user moved or deleted name nothing, so they don't read as installed.
+    @Test func hooksRunningAMovedAppAreNotSetUp() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home.appending(path: ".claude"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home.appending(path: "Here"), withIntermediateDirectories: true)
+        let here = home.appending(path: "Here/dewline").path
+        #expect(FileManager.default.createFile(atPath: here, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755]))
+        func install(_ program: String) throws {
+            let events = ["PreToolUse", "PostToolUse", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"]
+            let group = ["hooks": [["type": "command", "command": "\(program) notify --hook claude"]]]
+            try JSONSerialization.data(withJSONObject: ["hooks": Dictionary(uniqueKeysWithValues: events.map { ($0, [group]) })])
+                .write(to: home.appending(path: ".claude/settings.json"))
+        }
+        try install(here)
+        #expect(HookStatus.read(home: home).claude)
+        try install(home.appending(path: "Gone/dewline").path)
+        #expect(HookStatus.read(home: home).claude == false)
+    }
+
     @Test func installCommandRunsTheBundledToolQuoted() {
         #expect(HookStatus.installCommand(bundle: URL(filePath: "/Applications/Dewline.app"))
             == "'/Applications/Dewline.app/Contents/Helpers/dewline' doctor --install-hooks")

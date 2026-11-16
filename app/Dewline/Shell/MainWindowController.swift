@@ -2,8 +2,9 @@ import AppKit
 import MdCore
 
 /// One tab: the sidebar, the open note in the editor column with the status bar under it, and the right pane. The
-/// window is a standard titled window with a unified toolbar; its title is the note's name and its subtitle the note's
-/// folder. Each tab has its own window; its `TabSet` keeps only the selected one on screen and draws the tab row.
+/// window's content runs under a transparent title bar on the chrome ground, with a compact toolbar for its title row
+/// and the window's title hidden. Each tab has its own window; its `TabSet` keeps only the selected one on screen and
+/// draws the tab row.
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, NSToolbarItemValidation {
     /// Every tab, kept here because a folder window has no document to own its controller.
     private static var all: Set<MainWindowController> = []
@@ -15,7 +16,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let index: FolderIndex?
     private let sidebar: SidebarViewController
     private let split = StationSplitController()
-    private let toolbar = WindowToolbar()
+    private let toolbar: WindowToolbar
     /// The editor column: the tab row, the page, the Keep bar and the status bar, top to bottom.
     private let column = PaperView()
     private let tabRow = TabRow()
@@ -58,7 +59,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let sidebarItem = NSSplitViewItem(viewController: sidebar)
         sidebarItem.canCollapse = true
         sidebarItem.minimumThickness = 200
-        sidebarItem.maximumThickness = 360
+        sidebarItem.maximumThickness = 320
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
         let columnController = NSViewController()
         columnController.view = column
@@ -71,26 +72,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         paneItem.maximumThickness = RightPane.widths.upperBound
         paneItem.holdingPriority = NSLayoutConstraint.Priority(259)
         split.splitViewItems = [sidebarItem, columnItem, paneItem]
+        toolbar = WindowToolbar(split: split.splitView, folder: folder)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = split
-        window.setContentSize(NSSize(width: 1000, height: 700))
-        window.contentMinSize = NSSize(width: 560, height: 360)
+        window.contentViewController = MainWindowController.underTitleRow(split)
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        window.contentMinSize = NSSize(width: 960, height: 600)
         // Dewline draws the tabs, so each keeps its own document, sheets and undo.
         window.tabbingMode = .disallowed
         // Resume reopens every window at launch, so AppKit restores none.
         window.isRestorable = false
         window.toolbar = toolbar.toolbar
-        window.toolbarStyle = .unified
-        window.titleVisibility = .visible
+        window.toolbarStyle = .unifiedCompact
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.backgroundColor = Chrome.color(.chrome)
         window.identifier = NSUserInterfaceItemIdentifier("Document")
         MainWindowController.lay(tabs: tabRow, page: page, bar: keepBar, status: statusBar, in: column)
-        sidebar.view.setFrameSize(NSSize(width: 240, height: sidebar.view.frame.height))
+        sidebar.view.setFrameSize(NSSize(width: 264, height: sidebar.view.frame.height))
         if let front = neighbor?.window ?? NSApp.orderedWindows.first(where: { $0.isVisible && $0.windowController is MainWindowController }) {
             if neighbor == nil {
                 window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
@@ -101,6 +105,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             window.center()
         }
         super.init(window: window)
+        toolbar.window = window
         tabRowHeight = tabRow.heightAnchor.constraint(equalToConstant: 0)
         tabRowHeight.isActive = true
         if let neighbor {
@@ -134,6 +139,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     required init?(coder: NSCoder) {
         fatalError("MainWindowController is built in code")
+    }
+
+    /// The split in a view that keeps it below the title row, whose ground is the window's chrome.
+    private static func underTitleRow(_ split: NSSplitViewController) -> NSViewController {
+        let root = NSViewController()
+        root.view = NSView()
+        root.addChild(split)
+        split.view.translatesAutoresizingMaskIntoConstraints = false
+        root.view.addSubview(split.view)
+        NSLayoutConstraint.activate([
+            split.view.topAnchor.constraint(equalTo: root.view.safeAreaLayoutGuide.topAnchor),
+            split.view.leadingAnchor.constraint(equalTo: root.view.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.view.trailingAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.view.bottomAnchor),
+        ])
+        return root
     }
 
     /// The tab row along the column's top, the page, the Keep bar, and the status bar along the bottom.
@@ -219,10 +240,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if document == nil, pageContent != nil, folder == nil { window.title = "Dewline" }
     }
 
-    /// The Share button's count of people editing with you.
+    /// The people editing the note with you, which File > Share counts.
+    private var peers: Int {
+        (document as? NSDocument).flatMap { Collaboration.of($0)?.share.peers.count } ?? 0
+    }
+
     @objc private func updatePresence() {
-        let peers = (document as? NSDocument).flatMap { Collaboration.of($0)?.share.peers.count } ?? 0
-        toolbar.showEditing(peers)
         showRequest()
     }
 
@@ -536,6 +559,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(togglePreview(_:)): menuItem.state = open && pane.tab == .preview ? .on : .off
         case #selector(toggleAgent(_:)): menuItem.state = open && pane.tab == .agent ? .on : .off
         case #selector(toggleChanges(_:)): menuItem.state = open && pane.tab == .changes ? .on : .off
+        case #selector(shareNote(_:)): menuItem.title = peers > 0 ? "Share\u{2026} (\(peers) editing)" : "Share\u{2026}"
         default: break
         }
         return validates(menuItem.action)
@@ -796,6 +820,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    /// The title row stays in full screen.
+    func window(_ window: NSWindow, willUseFullScreenPresentationOptions proposedOptions: NSApplication.PresentationOptions = []) -> NSApplication.PresentationOptions {
+        proposedOptions.subtracting(.autoHideToolbar)
+    }
+
+    /// Opens a note Activity lists, at its first waiting change.
+    @objc func openWaiting(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        open(url, newTab: false)
+        guard let live = (NSDocumentController.shared.document(for: url) as? MarkdownDocument)?.live,
+            let first = live.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location })
+        else { return }
+        live.reveal(first.key, caret: true)
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let url = (document as? NSDocument)?.fileURL { Self.closed.append((url, folder)) }
         tabs.remove(self)
@@ -805,19 +844,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    /// Shares the note live (D13): starts the share on first use, then shows the Share sheet.
-    /// Share: a popover under the toolbar button, where nothing is shared until Copy Invite Link.
+    /// Shares the note live (D13): a popover at the window's top trailing corner, where nothing is shared until Copy
+    /// Invite Link.
     @objc func shareDocument(_ sender: Any?) {
         guard let document = document as? MarkdownDocument, document.fileURL != nil, let content = window?.contentView else { return NSSound.beep() }
         let popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = Collaboration.sharePopover(for: document)
-        if let item = sender as? NSToolbarItem, window?.toolbar?.isVisible == true {
-            popover.show(relativeTo: item)
-        } else {
-            let corner = NSRect(x: content.bounds.maxX - 60, y: content.bounds.maxY - 1, width: 1, height: 1)
-            popover.show(relativeTo: corner, of: content, preferredEdge: .minY)
-        }
+        let corner = NSRect(x: content.bounds.maxX - 60, y: content.bounds.maxY - content.safeAreaInsets.top - 1, width: 1, height: 1)
+        popover.show(relativeTo: corner, of: content, preferredEdge: .minY)
     }
 
     /// File > Share….

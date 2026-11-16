@@ -56,7 +56,7 @@ struct ShellV4Tests {
         let window = try #require(main.window)
         #expect(window.title == "Launch plan")
         #expect(window.subtitle == "Field Notes")
-        #expect(window.toolbar?.items.map(\.itemIdentifier).contains(WindowToolbar.preview) == true)
+        #expect(window.toolbar?.items.map(\.itemIdentifier).contains(WindowToolbar.tabs) == true)
         #expect(main.tabName == "Launch plan")
         #expect(main.statusBar.stateText == "Saved")
         #expect(main.statusBar.wordsText.hasSuffix("words"))

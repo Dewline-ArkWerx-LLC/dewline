@@ -94,11 +94,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Opens a file from Find in Files, at a match when there is one.
     var reveal: (URL, TextMatch?, _ newTab: Bool) -> Void = { _, _, _ in }
 
-    /// Git's words for the tree; nothing shows until a source is set.
-    static var gitStatus: (any GitStatusSource)?
-
     private let folder: Folder?
     private let header: SidebarHeader?
+    private let gitStates: GitStates?
     private let find: FindInFilesController?
     private let outlineView = SidebarOutlineView()
     private let pinned = SidebarNode(.section("Pinned"))
@@ -124,8 +122,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var changedWhileRenaming: Set<String> = []
     /// Each note's undecided changes by writer, most first, by standardized path.
     private var waitingChanges: [String: [WaitingCount]] = [:]
-    /// Git's word for each path relative to the folder.
-    private var gitWords: [String: GitWord] = [:]
     /// The file Quick Look shows.
     private var looking: URL?
 
@@ -133,10 +129,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         self.folder = folder
         find = folder.map(FindInFilesController.init)
         header = folder.map { _ in SidebarHeader() }
+        gitStates = folder.map { GitStates(folder: $0.url) }
         showsIgnored = Preferences.shared.showsIgnored
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
+        gitStates?.changed = { [weak self] in self?.refreshRows() }
         watch = folder.map { folder in
             FolderWatch([folder.url]) { [weak self] folders in
                 self?.foldersChanged(Set(folders.map(\.standardizedFileURL.path)))
@@ -262,11 +260,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// The branch, the waiting changes and git's words may have moved while the window was in back.
+    /// The branch and the waiting changes may have moved while the window was in back.
     @objc private func windowBecameMain() {
         refreshHeader()
         changesChanged()
-        refreshGit()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -299,7 +296,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if let waiting { show(waiting, headings: headings) }
         changesChanged()
-        refreshGit()
     }
 
     override func viewDidLayout() {
@@ -446,7 +442,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         visit(tree, folder.url)
         if let url = fileNode?.url { fileNode = treeNode(for: url) }
         selectOpenFile()
-        refreshGit()
     }
 
     private func children(of node: SidebarNode) -> [SidebarNode] {
@@ -598,21 +593,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         refreshRows()
     }
 
-    /// Asks the git source for the folder's words off the main thread.
-    private func refreshGit() {
-        guard filled, let source = Self.gitStatus, let url = folder?.url else { return }
-        Task.detached { [weak self] in
-            let words = source.words(under: url)
-            await self?.showGit(words)
-        }
-    }
-
-    private func showGit(_ words: [String: GitWord]) {
-        guard words != gitWords else { return }
-        gitWords = words
-        refreshRows()
-    }
-
     /// Shows the badges and git words again on the rows on screen.
     private func refreshRows() {
         outlineView.enumerateAvailableRowViews { rowView, row in
@@ -626,7 +606,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .entry(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: false, expanded: entry.isFolder && outlineView.isItemExpanded(node),
-                waiting: node === fileNode ? [] : waitingChanges[path] ?? [], git: folder?.relativePath(of: entry.url).flatMap { gitWords[$0] })
+                waiting: node === fileNode ? [] : waitingChanges[path] ?? [], git: gitStates?.state(of: entry.url))
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
@@ -738,7 +718,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         renaming = node
         field.isEditable = true
         field.delegate = self
-        view.window?.makeFirstResponder(field)
+        guard view.window?.makeFirstResponder(field) == true else {
+            renaming = nil
+            field.isEditable = false
+            field.delegate = nil
+            cell.endEditing()
+            return
+        }
         let name = field.stringValue as NSString
         let base = name.deletingPathExtension as NSString
         field.currentEditor()?.selectedRange = NSRange(location: 0, length: base.length == 0 ? name.length : base.length)

@@ -1,14 +1,16 @@
 import AppKit
 import MdCore
 
-/// Git's word for a file in the tree.
-enum GitWord: Sendable {
-    case modified, new
-
-    var text: String {
+/// Git's word for a file in the tree: "modified" and "renamed" in `gitModified`, "new" in `gitAdded`, the rest in
+/// `ink2`.
+extension GitFileState {
+    var word: String {
         switch self {
         case .modified: "modified"
         case .new: "new"
+        case .deleted: "deleted"
+        case .renamed: "renamed"
+        case .conflicted: "conflicted"
         }
     }
 
@@ -16,20 +18,19 @@ enum GitWord: Sendable {
         switch self {
         case .modified: "Modified since the last commit"
         case .new: "New, not yet committed"
+        case .deleted: "Deleted since the last commit"
+        case .renamed: "Renamed since the last commit"
+        case .conflicted: "In conflict"
         }
     }
 
     var token: Token {
         switch self {
-        case .modified: .gitModified
+        case .modified, .renamed: .gitModified
         case .new: .gitAdded
+        case .deleted, .conflicted: .ink2
         }
     }
-}
-
-/// Per-file git state under a folder, by path relative to it. Runs off the main thread.
-protocol GitStatusSource: Sendable {
-    func words(under folder: URL) -> [String: GitWord]
 }
 
 /// One writer's undecided changes in a note.
@@ -134,7 +135,7 @@ final class FolderPicker: NSView {
     func show(_ name: String, branch: String?, openKey: String) {
         self.name = name
         self.branch = branch
-        toolTip = "Open Folder, Open Recent (\(openKey))"
+        toolTip = openKey.isEmpty ? "Open Folder, Open Recent" : "Open Folder, Open Recent (\(openKey))"
         setAccessibilityLabel(branch.map { "Folder \(name) on branch \($0)" } ?? "Folder \(name)")
         invalidateIntrinsicContentSize()
         needsDisplay = true
@@ -249,7 +250,7 @@ final class SidebarFileCell: NSTableCellView {
     private let git = NSTextField(labelWithString: "")
     private var fullName = ""
     private var dimmed = false
-    private var word: GitWord?
+    private var word: GitFileState?
     private var goneTip: String?
     private var editing = false
 
@@ -272,18 +273,18 @@ final class SidebarFileCell: NSTableCellView {
 
     /// A file or folder; one that has `gone` from disk, one .gitignore hides, and any file Dewline doesn't edit show
     /// dimmed. `waiting` is empty for the open note, whose changes show beside its text.
-    func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitWord?) {
+    func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?) {
         fullName = entry.url.lastPathComponent
         dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.isMarkdown || isAgentFile(entry.url))
         self.word = word
         chevron.isHidden = !entry.isFolder
         setExpanded(expanded)
         badge.show(waiting)
-        git.stringValue = word?.text ?? ""
+        git.stringValue = word?.word ?? ""
         git.toolTip = word?.tip
         git.isHidden = word == nil
         goneTip = gone ? "Moved or deleted" : nil
-        setAccessibilityLabel(([fullName] + waiting.map(\.spoken) + (word.map { [$0.text] } ?? [])).joined(separator: ", "))
+        setAccessibilityLabel(([fullName] + waiting.map(\.spoken) + (word.map { [$0.word] } ?? [])).joined(separator: ", "))
         paint()
         needsLayout = true
     }

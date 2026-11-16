@@ -260,7 +260,8 @@ func gitBranch(at folder: URL) -> String? {
         let dotGit = directory.appending(path: ".git")
         var gitdir = dotGit
         if let file = try? String(contentsOf: dotGit, encoding: .utf8), file.hasPrefix("gitdir: ") {
-            gitdir = URL(filePath: file.dropFirst("gitdir: ".count).trimmingCharacters(in: .whitespacesAndNewlines), relativeTo: directory)
+            let path = file.dropFirst("gitdir: ".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            gitdir = path.hasPrefix("/") ? URL(filePath: path) : directory.appending(path: path)
         }
         if let head = try? String(contentsOf: gitdir.appending(path: "HEAD"), encoding: .utf8) {
             guard head.hasPrefix("ref: refs/heads/") else { return nil }

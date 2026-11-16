@@ -13,7 +13,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let folder: Folder?
     /// The folder's Markdown files for Quick Open, shared with the folder's other tabs.
     let index: FolderIndex?
-    private let sidebar: SidebarViewController
+    let sidebar: SidebarViewController
     private let split = StationSplitController()
     private let toolbar = WindowToolbar()
     /// The editor column: the tab row, the page, the Keep bar and the status bar, top to bottom.

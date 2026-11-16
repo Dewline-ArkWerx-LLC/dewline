@@ -75,6 +75,14 @@ enum Export {
         try data.write(to: url, options: .atomic)
     }
 
+    /// `text` as the body of an HTML page, for the pasteboard: diagrams and math in the light palette, images at their
+    /// paths.
+    static func fragment(_ text: String) -> String {
+        let page = exportPage(text, title: "", css: "", folder: nil, colors: Palette(.aqua).colors, dark: nil, mathSize: ThemeStore.shared.bodySize)
+        guard let start = page.range(of: "<body>\n"), let end = page.range(of: "</body>", options: .backwards) else { return page }
+        return String(page[start.upperBound..<end.lowerBound])
+    }
+
     /// Keeps the HTML page's stylesheet, in both palettes, in the app group's defaults for the Quick Look preview,
     /// whose sandbox can't read the app's settings.
     static func publishPreviewStylesheet() {

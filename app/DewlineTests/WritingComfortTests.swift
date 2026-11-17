@@ -310,6 +310,94 @@ struct ImagePasteTests {
 }
 
 @MainActor
+struct RichPasteTests {
+    private func pasteboard() -> NSPasteboard {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("dev.arkwerx.dewline.tests.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        return pasteboard
+    }
+
+    @Test func copyAsMarkdownWritesTheSelectionOrTheWholeNote() {
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let editor = Editor("# Title\n\nSome **bold** text.\n", caret: 0)
+        editor.view.writeMarkdown(to: board)
+        #expect(board.string(forType: .string) == editor.text)
+        #expect(board.string(forType: NSPasteboard.PasteboardType("net.daringfireball.markdown")) == editor.text)
+        editor.view.setSelectedRange(NSRange(location: 9, length: 13))
+        editor.view.writeMarkdown(to: board)
+        #expect(board.string(forType: .string) == "Some **bold**")
+    }
+
+    @Test func copyAsHTMLWritesTheExportersBody() {
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let editor = Editor("# Title\n\nSome **bold** text.\n", caret: 0)
+        editor.view.writeHTML(to: board)
+        let html = board.string(forType: .html) ?? ""
+        #expect(html.contains("<h1>Title</h1>"))
+        #expect(html.contains("<p>Some <strong>bold</strong> text.</p>"))
+        #expect(!html.contains("<body>") && !html.contains("<style>"))
+        #expect(board.string(forType: .string) == html)
+    }
+
+    @Test func richHTMLPastesAsMarkdown() {
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        board.setString("""
+            <meta charset="utf-8"><h2>Plan</h2><p>Ship <b>this</b> <a href="https://example.com/a">now</a>, <code>x*y</code>.</p>
+            <ul><li>one</li><li>two<ul><li>deep</li></ul></li></ul><blockquote><p>Quoted <i>words</i></p></blockquote>
+            <table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
+            """, forType: .html)
+        board.setString("Plan\nShip this now, x*y.\none\ntwo\ndeep\nQuoted words\nA B\n1 2", forType: .string)
+        let editor = Editor("Before ", caret: nil)
+        editor.view.history.perform("Paste") { #expect(editor.view.pasteHTMLAsMarkdown(from: board)) }
+        #expect(editor.text == """
+            Before ## Plan
+
+            Ship **this** [now](https://example.com/a), `x*y`.
+
+            - one
+            - two
+              - deep
+
+            > Quoted *words*
+
+            | A | B |
+            | --- | --- |
+            | 1 | 2 |
+            """)
+        editor.undo()
+        #expect(editor.text == "Before ")
+    }
+
+    @Test func markdownTextAndPlainSpansPasteAsText() {
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let editor = Editor("")
+        // A Markdown editor's copy: its plain text is the source.
+        board.setString("<h1>Title</h1><p><b>bold</b></p>", forType: .html)
+        board.setString("# Title\n\n**bold**", forType: .string)
+        #expect(!editor.view.pasteHTMLAsMarkdown(from: board))
+        // A code editor's copy: colored spans, nothing Markdown marks.
+        board.clearContents()
+        board.setString("<div><span style=\"color:#f00\">let</span> x = 1</div>", forType: .html)
+        board.setString("let x = 1", forType: .string)
+        #expect(!editor.view.pasteHTMLAsMarkdown(from: board))
+        // Into a code block, HTML pastes as its plain text.
+        board.clearContents()
+        board.setString("<p>Ship <b>this</b></p>", forType: .html)
+        board.setString("Ship this", forType: .string)
+        let fence = Editor("```\n\n```\n", caret: 4)
+        #expect(!fence.view.pasteHTMLAsMarkdown(from: board))
+        board.clearContents()
+        board.setString("words", forType: .string)
+        #expect(!editor.view.pasteHTMLAsMarkdown(from: board))
+        #expect(editor.text == "")
+    }
+}
+
+@MainActor
 struct WritingModeTests {
     /// The ranges drawn in a rendering color, which leaves the storage alone.
     private func dimmed(_ view: EditorTextView) -> [NSRange] {

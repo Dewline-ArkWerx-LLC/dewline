@@ -106,6 +106,9 @@ enum MainMenu {
         keepAll.keyEquivalentModifierMask = [.command, .shift]
         let revertAll = menu.addItem(withTitle: "Revert All Changes", action: #selector(EditorTextView.revertAllChanges(_:)), keyEquivalent: "\u{8}")
         revertAll.keyEquivalentModifierMask = [.command, .option, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")
         return menu
     }
 

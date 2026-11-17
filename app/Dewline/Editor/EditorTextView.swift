@@ -26,6 +26,12 @@ final class EditorTextView: CaretTextView {
     private var vimStatus: NSTextField?
     /// The foldable block under the pointer, by its location.
     private(set) var hoveredFold: Int?
+    /// The hovered code block's language and Copy button.
+    private(set) lazy var codeBar: CodeBar = {
+        let bar = CodeBar()
+        addSubview(bar)
+        return bar
+    }()
     private var centering = false
     private var dimmed = false
     /// Focus dims every block but the caret's.
@@ -543,6 +549,7 @@ final class EditorTextView: CaretTextView {
     override func didChangeText() {
         history.didChangeText()
         snapshot?.removeFromSuperview()
+        codeBar.show(block: nil)
         super.didChangeText()
         updateFocus()
     }
@@ -650,6 +657,7 @@ final class EditorTextView: CaretTextView {
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         hoverFootnote(at: point)
+        hoverCode(at: point)
         let hovered = point.x < textContainerOrigin.x + (textContainer?.size.width ?? 0) ? foldable(at: point)?.block.range.location : nil
         guard hovered != hoveredFold else { return }
         hoveredFold = hovered
@@ -658,6 +666,7 @@ final class EditorTextView: CaretTextView {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        hoverCode(at: nil)
         guard hoveredFold != nil else { return }
         hoveredFold = nil
         setNeedsDisplay(NSRect(x: 0, y: visibleRect.minY, width: textContainerOrigin.x, height: visibleRect.height))

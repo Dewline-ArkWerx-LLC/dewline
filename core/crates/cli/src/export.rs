@@ -1,4 +1,5 @@
-//! `dewline export`: HTML and DOCX here, through core's exporters; PDF through the app, which owns the paged layout.
+//! `dewline export`: HTML and DOCX here, through core's exporters; the other formats through the app, which owns the
+//! layout, the theme and the diagram and math renderers.
 
 use std::fs;
 use std::path::{self, Path};
@@ -8,11 +9,30 @@ use dewline_core::export::{self, ExportOptions};
 
 use crate::control::Socket;
 
+/// Each named by its extension, as the app names it on the socket.
 #[derive(Clone, Copy, ValueEnum)]
 pub enum Format {
-    Html,
     Pdf,
     Docx,
+    Html,
+    Rtf,
+    Odt,
+    Txt,
+    Png,
+}
+
+impl Format {
+    fn extension(self) -> &'static str {
+        match self {
+            Format::Pdf => "pdf",
+            Format::Docx => "docx",
+            Format::Html => "html",
+            Format::Rtf => "rtf",
+            Format::Odt => "odt",
+            Format::Txt => "txt",
+            Format::Png => "png",
+        }
+    }
 }
 
 fn utf8(path: &Path) -> Result<&str, String> {
@@ -36,11 +56,7 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
     let source = fs::canonicalize(file).map_err(|error| format!("{}: {error}", file.display()))?;
     let out = match out {
         Some(out) => path::absolute(out).map_err(|error| format!("{}: {error}", out.display()))?,
-        None => source.with_extension(match format {
-            Format::Html => "html",
-            Format::Pdf => "pdf",
-            Format::Docx => "docx",
-        }),
+        None => source.with_extension(format.extension()),
     };
     if fs::canonicalize(&out).is_ok_and(|out| out == source) {
         return Err(format!(
@@ -73,17 +89,18 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
                 .map_err(|error| format!("{}: {error}", source.display()))?;
             fs::write(&out, bytes).map_err(|error| format!("{}: {error}", out.display()))
         }
-        Format::Pdf => {
+        _ => {
+            let extension = format.extension();
             if out
                 .extension()
-                .is_none_or(|extension| !extension.eq_ignore_ascii_case("pdf"))
+                .is_none_or(|ending| !ending.eq_ignore_ascii_case(extension))
             {
                 return Err(format!(
-                    "{}: a PDF export has to end in .pdf",
+                    "{}: a .{extension} export has to end in .{extension}",
                     out.display()
                 ));
             }
-            Socket::find()?.export_pdf(utf8(&source)?, utf8(&out)?)
+            Socket::find()?.export(utf8(&source)?, utf8(&out)?, extension)
         }
     }
 }

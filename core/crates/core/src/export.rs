@@ -1,6 +1,7 @@
 //! Markdown to one standalone HTML page. Raw HTML in the source is shown as text, never passed through.
 
 pub mod docx;
+pub mod text;
 
 use std::collections::HashMap;
 use std::fmt::Write;

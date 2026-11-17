@@ -117,7 +117,7 @@ dewline 0.1.0</code></pre>
             <tr><td><a href="#notify"><code>notify</code></a></td><td>Tells Dewline which file an agent's tool is changing. Agent hooks run it.</td></tr>
             <tr><td><a href="#changes"><code>changes</code></a></td><td>Lists the agent changes you kept and reverted, oldest first.</td></tr>
             <tr><td><a href="#capture"><code>capture</code></a></td><td>Adds a dated entry to your inbox note.</td></tr>
-            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as HTML, PDF or DOCX.</td></tr>
+            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG.</td></tr>
             <tr><td><a href="#mcp"><code>mcp</code></a></td><td>Serves a folder's notes to an agent over MCP on stdio.</td></tr>
             <tr><td><a href="#doctor"><code>doctor</code></a></td><td>Checks the app's version, the agent hooks and the companion tools.</td></tr>
           </tbody>
@@ -225,16 +225,16 @@ dewline: /Users/you/Documents/Dewline/Inbox.md: there is nothing to capture</cod
 
       <h2 id="export"><code>dewline export</code></h2>
       <div class="code" data-lang="Usage">
-<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;html|pdf|docx&gt; [-o &lt;OUT&gt;]</code></pre>
+<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;pdf|docx|html|rtf|odt|txt|png&gt; [-o &lt;OUT&gt;]</code></pre>
       </div>
       <dl>
-        <dt><code>--to &lt;html|pdf|docx&gt;</code></dt>
-        <dd>The format. Required.</dd>
+        <dt><code>--to &lt;pdf|docx|html|rtf|odt|txt|png&gt;</code></dt>
+        <dd>The format, named by its extension. Required.</dd>
         <dt><code>-o &lt;OUT&gt;</code></dt>
         <dd>Where the export goes. By default it goes beside <code>FILE</code> with the format's extension. The folder must exist.</dd>
       </dl>
       <p>The command writes HTML and DOCX itself, with no window. <a href="/docs/export/#command-line">Export</a> says how that output differs from the app's.</p>
-      <p><code>--to pdf</code> hands the export to the app over the control socket, starting the app if it isn't running, and returns once the PDF is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in <code>.pdf</code>.</p>
+      <p>Every other format goes to the app over the control socket, starting the app if it isn't running, and the command returns once the file is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in the format's extension; the app writes that one file and nothing else.</p>
       <aside class="callout caution">
         <p class="callout-title">PDF from the command line fails in 0.1.0</p>
         <p>In 0.1.0 the command hands a PDF export over through a link that names the wrong field, so no PDF is written and the command still exits 0. Export PDF from the app instead.</p>
@@ -315,9 +315,9 @@ dewline: 1 broken link</code></pre>
         </table>
       </div>
       <div class="code" data-lang="Shell">
-<pre tabindex="0"><code><span class="p">$ </span>dewline export reading.md --to rtf
-error: invalid value 'rtf' for '--to &lt;TO&gt;'
-  [possible values: html, pdf, docx]
+<pre tabindex="0"><code><span class="p">$ </span>dewline export reading.md --to pages
+error: invalid value 'pages' for '--to &lt;TO&gt;'
+  [possible values: pdf, docx, html, rtf, odt, txt, png]
 
 For more information, try '--help'.
 <span class="p">$ </span>echo $?
@@ -346,7 +346,7 @@ For more information, try '--help'.
         <dt><code>…/dev.arkwerx.dewline/snapshots/decisions.jsonl</code></dt>
         <dd>The app appends one line per Keep or Revert of an agent's change, readable only by you. <code>changes</code> and the MCP <code>decisions</code> tool read it.</dd>
         <dt><code>…/dev.arkwerx.dewline/run/control.sock</code></dt>
-        <dd><code>open</code>, <code>export --to pdf</code> and <code>notify</code> talk to the app here. The command checks that the app on the other end runs as you.</dd>
+        <dd><code>open</code>, <code>export</code> (except HTML and DOCX) and <code>notify</code> talk to the app here. The command checks that the app on the other end runs as you.</dd>
         <dt><code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code></dt>
         <dd><code>doctor</code> reads them. <code>doctor --install-hooks</code> writes them after you agree, with a backup beside each.</dd>
       </dl>

@@ -85,16 +85,17 @@ impl Socket {
         }
     }
 
-    /// Asks the app to write `out`, a PDF of the Markdown file at `path`,
-    /// starting the app when nothing listens. Returns once it is written.
-    pub fn export_pdf(&self, path: &str, out: &str) -> Result<(), String> {
+    /// Asks the app to write `out`, the Markdown file at `path` in `format`
+    /// (its extension), starting the app when nothing listens. Returns once
+    /// it is written.
+    pub fn export(&self, path: &str, out: &str, format: &str) -> Result<(), String> {
         let stream = self.connect()?;
         let failed = |error: io::Error| format!("{path}: talking to Dewline: {error}");
         set_timeout(&stream, Some(EXPORT_TIMEOUT)).map_err(failed)?;
         let mut reader = BufReader::new(stream);
         reader
             .get_mut()
-            .write_all(&encode_export(path, out))
+            .write_all(&encode_export(path, out, format))
             .map_err(failed)?;
         match next_reply(&mut reader).map_err(|error| format!("{path}: {error}"))? {
             Some(Reply::Exported) => Ok(()),
@@ -284,14 +285,16 @@ struct ExportRequest<'a> {
     op: &'static str,
     path: &'a str,
     out: &'a str,
+    format: &'a str,
 }
 
-fn encode_export(path: &str, out: &str) -> Vec<u8> {
+fn encode_export(path: &str, out: &str, format: &str) -> Vec<u8> {
     let request = ExportRequest {
         v: VERSION,
         op: "export",
         path,
         out,
+        format,
     };
     let mut line = serde_json::to_vec(&request).expect("strings and numbers always serialize");
     line.push(b'\n');
@@ -472,18 +475,22 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(
-            socket.export_pdf("/Users/me/a b.md", "/Users/me/a b.pdf"),
+            socket.export("/Users/me/a b.md", "/Users/me/a b.pdf", "pdf"),
             Ok(())
         );
         assert_eq!(
-            socket.export_pdf("/Users/me/hosts.yml", "/tmp/x.pdf"),
+            socket.export("/Users/me/hosts.yml", "/tmp/x.pdf", "pdf"),
             Err("/Users/me/hosts.yml: Dewline didn't export it: not_markdown".into())
         );
-        assert!(socket.export_pdf("/Users/me/a.md", "/tmp/a.pdf").is_err());
+        assert!(
+            socket
+                .export("/Users/me/a.md", "/tmp/a.rtf", "rtf")
+                .is_err()
+        );
         let requests = server.join().unwrap();
         assert_eq!(
             requests[0],
-            br#"{"v":1,"op":"export","path":"/Users/me/a b.md","out":"/Users/me/a b.pdf"}"#
+            br#"{"v":1,"op":"export","path":"/Users/me/a b.md","out":"/Users/me/a b.pdf","format":"pdf"}"#
         );
     }
 

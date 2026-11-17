@@ -66,10 +66,12 @@ enum Command {
         /// The entry's text; without it, stdin is read
         text: Vec<String>,
     },
-    /// Export a markdown file as HTML, PDF or DOCX
-    #[command(long_about = "Export a markdown file as HTML, PDF or DOCX.\n\n\
+    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG
+    #[command(
+        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG.\n\n\
                       HTML and DOCX are written here, with images in the file's folder inlined; diagrams and math keep \
-                      their source. PDF needs the Dewline app: this command hands the file to it.")]
+                      their source. The other formats need the Dewline app: this command hands the file to it."
+    )]
     Export {
         file: PathBuf,
         #[arg(long, value_enum)]
@@ -298,7 +300,7 @@ mod tests {
             })
         ));
         assert!(command(&["dewline", "export", "a.md"]).is_err());
-        assert!(command(&["dewline", "export", "a.md", "--to", "rtf"]).is_err());
+        assert!(command(&["dewline", "export", "a.md", "--to", "exe"]).is_err());
         assert!(command(&["dewline", "mcp"]).is_err());
         assert!(matches!(
             command(&["dewline", "doctor", "--install-hooks"]),

@@ -76,6 +76,7 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
                     css: CSS,
                     diagram: &|_| None,
                     math: &|_, _| None,
+                    code: &|_, _| None,
                     folder: source.parent(),
                 },
             );

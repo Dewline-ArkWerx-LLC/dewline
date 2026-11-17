@@ -29,7 +29,7 @@ macOS 26+ · Free · No account, no telemetry
 
 **Your agent, beside the note.** A side panel talks to the coding agent you already use (Claude Code, Codex or Gemini) over the Agent Client Protocol. Its edits land as marked changes you keep or revert. Dewline ships no model and needs no account.
 
-**Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, EPUB, LaTeX, plain text or PNG. Quick Look previews .md files in Finder. Edit a file live with someone by invite link, peer to peer.
+**Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, EPUB, LaTeX, portable Markdown, plain text or PNG. Quick Look previews .md files in Finder. Edit a file live with someone by invite link, peer to peer.
 
 Every shortcut is in [docs/keyboard.md](docs/keyboard.md), and the full guide is at [dewline.arkwerx.com/docs](https://dewline.arkwerx.com/docs/).
 

@@ -442,6 +442,20 @@ pub fn export_latex(
     ))
 }
 
+/// `text`, a note in `folder`, as portable Markdown named `name`, with the images it copies beside it.
+#[uniffi::export]
+pub fn export_portable_markdown(
+    text: String,
+    name: String,
+    folder: Option<String>,
+) -> TextWithFiles {
+    TextWithFiles::new(export::portable::portable(
+        &text,
+        &name,
+        folder.as_deref().map(std::path::Path::new),
+    ))
+}
+
 /// `img` (an open tag without its source) showing `light`, or `dark` on a dark page.
 fn picture(light: &str, dark: Option<String>, img: &str) -> String {
     match dark {

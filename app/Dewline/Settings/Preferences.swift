@@ -72,6 +72,8 @@ final class Preferences {
     var sharedFolder: URL { didSet { save(sharedFolder.path, "DewlineSharedFolder") } }
     /// Cards and hover previews for web links, which ask each site for its title and picture.
     var linkPreviews: Bool { didSet { save(linkPreviews, "DewlineLinkPreviews") } }
+    /// Source and config files list in the sidebar and Quick Open and open as highlighted code (`CodeFile`).
+    var opensCodeFiles: Bool { didSet { save(opensCodeFiles, CodeFile.key) } }
     var dailyNote: DailyNote { didSet { save(dailyNote.rawValue, "DewlineDailyNote") } }
     /// The key that opens Capture from any app; none until the user sets one.
     var captureShortcut: Shortcut? {
@@ -100,6 +102,7 @@ final class Preferences {
         collaborationName = defaults.string(forKey: "DewlineCollaborationName").flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
         sharedFolder = path("DewlineSharedFolder") ?? documents.appending(path: "Dewline Shared", directoryHint: .isDirectory)
         linkPreviews = defaults.object(forKey: "DewlineLinkPreviews") as? Bool ?? true
+        opensCodeFiles = defaults.bool(forKey: CodeFile.key)
         dailyNote = defaults.string(forKey: "DewlineDailyNote").flatMap(DailyNote.init) ?? .off
         captureShortcut = (defaults.dictionary(forKey: "DewlineCaptureShortcut") as? [String: Int]).flatMap { saved in
             guard let key = saved["key"], let modifiers = saved["modifiers"] else { return nil }

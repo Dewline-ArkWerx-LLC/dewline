@@ -43,6 +43,15 @@ struct FolderEntry: Equatable {
     var isMarkdown: Bool {
         !isFolder && Self.markdownExtensions.contains(url.pathExtension.lowercased())
     }
+
+    var isCode: Bool {
+        !isFolder && CodeFile.language(of: url) != nil
+    }
+
+    /// A note, or a code file while Open code files is on: the files the sidebar and Quick Open open.
+    var opens: Bool {
+        isMarkdown || isCode && CodeFile.isOn
+    }
 }
 
 /// A folder opened in a window: lists its children the way the sidebar shows them.

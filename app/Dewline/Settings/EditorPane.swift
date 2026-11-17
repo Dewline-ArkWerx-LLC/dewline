@@ -14,6 +14,9 @@ struct EditorPane: View {
                 SettingsRow(label: "Vim mode") {
                     OnOff(label: "Vim mode", isOn: $store.vimMode)
                 }
+                SettingsRow(label: "Open code files", detail: "Source and config files open as highlighted code, with line numbers.") {
+                    OnOff(label: "Open code files", isOn: $preferences.opensCodeFiles)
+                }
             }
             SettingsSection(title: "Live rendering") {
                 SettingsRow(label: "Heading style", detail: "Editorial sets section heads in small caps.") {
@@ -42,6 +45,7 @@ struct EditorPane: View {
                 store.spellCheck = factory.spellCheck
                 store.smartPunctuation = factory.smartPunctuation
                 preferences.linkPreviews = Preferences.factory.linkPreviews
+                preferences.opensCodeFiles = Preferences.factory.opensCodeFiles
                 motion = .calm
             }
         }

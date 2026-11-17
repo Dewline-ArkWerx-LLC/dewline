@@ -1,7 +1,7 @@
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, LazyLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use dewline_core::export;
 use mermaid_rs_renderer::{LayoutConfig, RenderOptions, Theme};
@@ -373,6 +373,23 @@ pub fn export_html(
     )
 }
 
+/// `text` as an EPUB 3 book of the page `export_html` writes in `colors` alone, its images, diagrams and math as files
+/// in the book.
+#[uniffi::export]
+pub fn export_epub(
+    text: String,
+    title: String,
+    css: String,
+    folder: Option<String>,
+    colors: DiagramColors,
+    math_size: f32,
+) -> Result<Vec<u8>, docx::ExportError> {
+    let page = export_html(text, title.clone(), css, folder, colors, None, math_size);
+    export::epub::epub(&page, &title, SystemTime::now()).map_err(|error| docx::ExportError::Io {
+        message: error.to_string(),
+    })
+}
+
 /// `img` (an open tag without its source) showing `light`, or `dark` on a dark page.
 fn picture(light: &str, dark: Option<String>, img: &str) -> String {
     match dark {
@@ -498,6 +515,19 @@ mod tests {
             render_math("%\n".repeat(MAX_SOURCE), 17.0, 2.0, 0x000000ff),
             Err(RenderError::TooLarge)
         ));
+    }
+
+    #[test]
+    fn books_carry_their_math_and_diagrams_as_files() {
+        isolate();
+        let text = "# Notes\n\n$x^2$\n\n```mermaid\nflowchart LR\n  a[Start] --> b\n```\n";
+        let book =
+            export_epub(text.into(), "t".into(), String::new(), None, night(), 17.0).unwrap();
+        let book = String::from_utf8_lossy(&book);
+        assert!(
+            book.contains("OEBPS/images/image-1.png")
+                && book.contains("OEBPS/images/diagram-2.svg")
+        );
     }
 
     #[test]

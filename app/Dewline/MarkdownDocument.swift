@@ -436,7 +436,9 @@ struct SaveConflict: LocalizedError, RecoverableError {
 }
 
 /// Saves every note before a quit reviews them, and when the app goes to the background or the Mac sleeps, so a quit
-/// asks only about text that is neither in its file nor in a draft.
+/// asks only about text that is neither in its file nor in a draft. Notes recent documents only while the recent list
+/// keeps any: AppKit writes the system's Recent Items from `noteNewRecentDocumentURL` whatever `NSRecentDocumentsLimit`
+/// says, so a run with `-NSRecentDocumentsLimit 0`, as the scheme's tests are, records nothing.
 final class DocumentController: NSDocumentController {
     override init() {
         super.init()
@@ -446,6 +448,11 @@ final class DocumentController: NSDocumentController {
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+    }
+
+    override func noteNewRecentDocumentURL(_ url: URL) {
+        guard maximumRecentDocumentCount > 0 else { return }
+        super.noteNewRecentDocumentURL(url)
     }
 
     @objc private func flushAll() {

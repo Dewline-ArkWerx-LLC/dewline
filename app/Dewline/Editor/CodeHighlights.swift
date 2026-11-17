@@ -64,25 +64,7 @@ final class CodeHighlights {
                 let fence = NSRange(location: block.range.location + span.range.location, length: span.content.location - span.range.location)
                 let language = Self.language(text.substring(with: fence))
                 guard !language.isEmpty else { continue }
-                let code = text.substring(with: range)
-                let index = entries.firstIndex { NSIntersectionRange($0.range, range).length > 0 || $0.range.location == range.location }
-                if let index, entries[index].text == code, entries[index].language == language {
-                    entries[index].range = range
-                    seen.insert(entries[index].id)
-                    continue
-                }
-                var entry: Entry
-                if let index {
-                    entry = entries.remove(at: index)
-                    if entry.language != language { entry.spans = [] }
-                    (entry.range, entry.language, entry.text) = (range, language, code)
-                } else {
-                    Self.lastID += 1
-                    entry = Entry(id: Self.lastID, range: range, language: language, text: code, spans: [])
-                }
-                entries.insert(entry, at: entries.firstIndex { $0.range.location > range.location } ?? entries.endIndex)
-                seen.insert(entry.id)
-                request(entry)
+                seen.insert(want(range, language: language, code: text.substring(with: range)))
             }
         }
         entries.removeAll { entry in
@@ -90,6 +72,36 @@ final class CodeHighlights {
             if gone { forget(entry) }
             return gone
         }
+    }
+
+    /// Highlights all of `text` as one block in `language`, as for a code file.
+    func update(file language: String, text: NSString) {
+        let id = want(NSRange(location: 0, length: text.length), language: language, code: text as String)
+        entries.removeAll { entry in
+            if entry.id != id { forget(entry) }
+            return entry.id != id
+        }
+    }
+
+    /// The entry for the code at `range`, which asks for new spans when its code or language changed.
+    private func want(_ range: NSRange, language: String, code: String) -> UInt64 {
+        let index = entries.firstIndex { NSIntersectionRange($0.range, range).length > 0 || $0.range.location == range.location }
+        if let index, entries[index].text == code, entries[index].language == language {
+            entries[index].range = range
+            return entries[index].id
+        }
+        var entry: Entry
+        if let index {
+            entry = entries.remove(at: index)
+            if entry.language != language { entry.spans = [] }
+            (entry.range, entry.language, entry.text) = (range, language, code)
+        } else {
+            Self.lastID += 1
+            entry = Entry(id: Self.lastID, range: range, language: language, text: code, spans: [])
+        }
+        entries.insert(entry, at: entries.firstIndex { $0.range.location > range.location } ?? entries.endIndex)
+        request(entry)
+        return entry.id
     }
 
     /// Recolors every block, as after a theme change.

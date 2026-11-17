@@ -242,7 +242,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         let controller = target?.windowController as? MainWindowController
         folder = controller?.folder
         index = controller?.index
-        let isFile = { (url: URL) in FolderEntry(url: url, isFolder: false).isMarkdown && FileManager.default.fileExists(atPath: url.path) }
+        let isFile = { (url: URL) in FolderEntry(url: url, isFolder: false).opens && FileManager.default.fileExists(atPath: url.path) }
         let visits = Library.recents.filter { isFile($0.url) }
         recents = Dictionary(visits.map { ($0.url.path, $0.date) }) { first, _ in first }
         boosted = visits.map(\.url) + Library.pins.filter(isFile)
@@ -909,7 +909,8 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             let detail = line.map { "line \($0)" } ?? recents[result.file.url.path].map { relativeTime($0) } ?? (result.file.boost != nil ? "pinned" : "")
             let positions = result.positions.compactMap { $0 >= text.nameStart ? $0 - text.nameStart : nil }
             content.lead = writer.map { _ in .dot(Chrome.color(.accent)) } ?? .none
-            content.title = [.init(name, positions: positions, dimUnmatched: !positions.isEmpty)]
+            let style: PaletteCell.Segment.Style = FolderEntry(url: result.file.url, isFolder: false).isCode ? .code : .title
+            content.title = [.init(name, positions: positions, style: style, dimUnmatched: !positions.isEmpty)]
             let folderName = (folderPath as NSString).lastPathComponent
             content.subtitle = folderName
             content.trailing = .text(detail)
@@ -1028,9 +1029,10 @@ private final class PaletteCell: NSView, ChromeSelectable {
         case keys([String])
     }
 
-    /// A run of the title line: the title, or an aside after it in `ink3`, such as an alias or a command's menu.
+    /// A run of the title line: the title, a code file's name in `CodeFile.ink`, or an aside after it in `ink3`, such as
+    /// an alias or a command's menu.
     struct Segment {
-        enum Style { case title, aside }
+        enum Style { case title, code, aside }
         let text: String
         var positions: [Int]
         var style: Style
@@ -1194,7 +1196,7 @@ private final class PaletteCell: NSView, ChromeSelectable {
             let size: CGFloat = aside ? 13 : 14
             if result.length > 0 { result.append(NSAttributedString(string: "  ", attributes: [.font: Chrome.brand(size)])) }
             let start = result.length
-            let color = Chrome.color(aside ? .ink3 : segment.dimUnmatched ? .ink2 : .ink)
+            let color = segment.style == .code && !segment.dimUnmatched ? CodeFile.ink : Chrome.color(aside ? .ink3 : segment.dimUnmatched ? .ink2 : .ink)
             result.append(NSAttributedString(string: segment.text, attributes: [.font: Chrome.brand(size), .foregroundColor: color]))
             let length = (segment.text as NSString).length
             let strong: [NSAttributedString.Key: Any] = [.font: Chrome.brand(size, weight: 560), .foregroundColor: Chrome.color(aside ? .ink2 : .ink)]

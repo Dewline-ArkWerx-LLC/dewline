@@ -98,12 +98,12 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>Export</h1>
-      <p class="lead">Export a note as a PDF, a web page or a Word document. Export reads the text in the window and never changes the Markdown file.</p>
+      <p class="lead">Export a note as a PDF, a Word document, a web page, rich text, an OpenDocument file, plain text or a PNG image. Export reads the text in the window and never changes the Markdown file.</p>
 
       <h2 id="from-the-app">Export from the app</h2>
       <ol class="steps">
         <li><b>Choose File &gt; Export…</b> <span class="keys">(<kbd>⇧</kbd><kbd>⌘</kbd><kbd>E</kbd>)</span>. A save panel opens, named after the note.</li>
-        <li><b>Pick a format</b> in the panel's Format menu: PDF, HTML or Word.</li>
+        <li><b>Pick a format</b> in the panel's Format menu. The file's extension follows it, and the panel starts on the format you used last.</li>
         <li><b>Click Export.</b> The status bar says “Exported “Launch plan.pdf” · Show in Finder”.</li>
       </ol>
       <p>Unsaved edits are included. To print instead, choose File &gt; Print… <span class="keys">(<kbd>⌘</kbd><kbd>P</kbd>)</span>.</p>
@@ -114,6 +114,10 @@
             <tr><td id="pdf">PDF</td><td>Your theme's light version and fonts, on your default paper size, 0.75-inch margins</td><td>Diagrams as SVG, math as images</td></tr>
             <tr><td id="html">HTML</td><td>One standalone file in your theme, light and dark, following the reader's appearance</td><td>Diagrams as SVG, math as images</td></tr>
             <tr><td id="docx">Word (DOCX)</td><td>Plain document styles for headings, lists, quotes, tables, footnotes and code</td><td>Their source, as text</td></tr>
+            <tr><td id="rtf">Rich Text (RTF)</td><td>Your theme's fonts and sizes, with headings, lists, tables and links, and no colors, so it pastes into Pages, Mail and Notes. System fonts become Helvetica Neue, Georgia and Menlo</td><td>Their source, as text</td></tr>
+            <tr><td id="odt">OpenDocument (ODT)</td><td>As rich text. Lists and tables are real lists and tables; headings are larger bold paragraphs, not outline levels</td><td>Their source, as text</td></tr>
+            <tr><td id="txt">Plain Text</td><td>No markup. Bullets, numbers and task boxes stay, table columns line up with spaces, and code, quotes and display math are indented. A link is followed by its address</td><td>Their source</td></tr>
+            <tr><td id="png">PNG Image</td><td>The PDF's page as one tall image at twice its size, up to 16,384 pixels tall (about nine Letter pages). A longer note is refused with a message to export it as PDF</td><td>Diagrams as SVG, math as images</td></tr>
           </tbody>
         </table>
       </div>
@@ -122,6 +126,7 @@
       <ul>
         <li><strong>Images</strong> from inside the note's folder are embedded, up to 20 MB each. HTML takes PNG, JPEG, GIF, WebP and SVG; Word takes PNG, JPEG and GIF.</li>
         <li><strong>Other images</strong>, from the web or outside the folder, are not embedded. HTML keeps their address; Word keeps their alt text.</li>
+        <li><strong>Rich text, OpenDocument and plain text</strong> hold no images. Each image shows as its alt text, as <code>[image: ferry at dawn]</code>.</li>
         <li><strong>Wikilinks</strong> become links in HTML and PDF. In Word they stay as written.</li>
         <li><strong>Highlights, comments, tags and callouts</strong> appear as their source text, such as <code>==one bag==</code>.</li>
         <li><strong>Front matter</strong> is left out of HTML and PDF.</li>
@@ -131,7 +136,7 @@
         <summary>Page breaks, fonts and safety</summary>
         <p>PDF page breaks fall between top-level blocks where one fits. A paragraph, list or table splits only when it is taller than a page.</p>
         <p>HTML names your fonts without embedding them, so a reader without a font sees a fallback. The page carries a Content Security Policy that allows no scripts and loads nothing from the network.</p>
-        <p>PDF is laid out from the same page in a web view that runs no script and follows no link.</p>
+        <p>PDF and PNG are laid out from the same page in a web view that runs no script and follows no link.</p>
       </details>
 
       <h2 id="command-line">Export from the command line</h2>
@@ -141,9 +146,10 @@
 ferry.png
 notes.html
 notes.md
-<span class="p">$ </span>dewline export --to docx notes.md -o out/notes.docx</code></pre>
+<span class="p">$ </span>dewline export --to docx notes.md -o out/notes.docx
+<span class="p">$ </span>dewline export --to rtf notes.md</code></pre>
       </div>
-      <p><a href="/docs/cli/#export"><code>dewline export</code></a> writes HTML and Word without opening the app, and prints nothing on success. Its pages use system fonts and a plain stylesheet instead of your theme. Diagrams and math keep their source.</p>
+      <p><a href="/docs/cli/#export"><code>dewline export</code></a> writes HTML and Word without opening the app, and prints nothing on success. Its pages use system fonts and a plain stylesheet instead of your theme. Diagrams and math keep their source. Every other format is written by the app, as File &gt; Export… writes it.</p>
 
       <h2 id="quick-look">Preview in Finder</h2>
       <p>Select a <code>.md</code> file in Finder and press <kbd>Space</kbd>. Quick Look shows it as a page in your theme's colors. Like an HTML export, it runs no script and loads nothing from the network. Diagrams and math show their source.</p>

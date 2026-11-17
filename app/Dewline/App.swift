@@ -246,9 +246,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Writes the PDF `dewline export --to pdf` asks for, from the Markdown file on disk, through a descriptor that
-    /// must be a regular file whose path, as opened, has a Markdown extension.
-    func export(_ request: ControlSocket.PDFExport, for connection: ControlSocket.Connection) {
+    /// Writes the export `dewline export` asks for, from the Markdown file on disk, through a descriptor that must be a
+    /// regular file whose path, as opened, has a Markdown extension.
+    func export(_ request: ControlSocket.FileExport, for connection: ControlSocket.Connection) {
         resume(after: nil)
         let file = URL(fileURLWithPath: request.path)
         Task {
@@ -268,7 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
                 }
                 try await Export.write(
-                    text, title: file.deletingPathExtension().lastPathComponent, as: .pdf, to: URL(fileURLWithPath: request.out),
+                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: URL(fileURLWithPath: request.out),
                     folder: file.deletingLastPathComponent()
                 )
                 connection.reply(.exported)

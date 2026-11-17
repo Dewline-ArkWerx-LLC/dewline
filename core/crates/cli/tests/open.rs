@@ -269,7 +269,10 @@ fn help_and_version() {
         assert!(help.contains(&format!("\n  {command} ")), "{help}");
     }
     let export = String::from_utf8_lossy(&fixture.run(&["export", "--help"]).stdout).into_owned();
-    assert!(export.contains("PDF needs the Dewline app"), "{export}");
+    assert!(
+        export.contains("The other formats need the Dewline app"),
+        "{export}"
+    );
     let open = String::from_utf8_lossy(&fixture.run(&["open", "--help"]).stdout).into_owned();
     assert!(
         open.contains("FILE[:LINE[:COLUMN]]") && open.contains("--wait"),

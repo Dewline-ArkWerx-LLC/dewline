@@ -136,8 +136,9 @@ struct ControlSocketTests {
         #expect(await listening.received.requests.isEmpty)
     }
 
-    /// `dewline export --to pdf` names a Markdown file and a `.pdf`; nothing else reaches the export handler.
-    @Test func exportsOnlyAMarkdownFileToAPDF() async throws {
+    /// `dewline export` names a Markdown file, a format and an out path with the format's extension, PDF without a
+    /// format; nothing else reaches the export handler.
+    @Test func exportsOnlyAMarkdownFileToItsFormatsExtension() async throws {
         let listening = try await Listening()
         defer { listening.finish() }
         let folder = listening.folder.path
@@ -154,6 +155,8 @@ struct ControlSocketTests {
             #"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/Contract.html"}"#: "malformed",
             #"{"v":1,"op":"export","path":"\#(note)"}"#: "malformed",
             #"{"v":1,"op":"export","path":"\#(note)","out":"plan.pdf"}"#: "not_absolute",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"\#(out)","format":"rtf"}"#: "malformed",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/plan.sh","format":"sh"}"#: "malformed",
         ]
         for (request, error) in refusals {
             let client = try Client(listening.socket.path)
@@ -166,7 +169,12 @@ struct ControlSocketTests {
         client.send(#"{"v":1,"op":"export","path":"\#(note)","out":"\#(out)"}"# + "\n")
         #expect(client.line() == #"{"reply":"exported","v":1}"#)
         #expect(client.line() == nil)
-        #expect(await listening.received.exports == [ControlSocket.PDFExport(path: note, out: out)])
+        let rtf = try Client(listening.socket.path)
+        rtf.send(#"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/plan.rtf","format":"rtf"}"# + "\n")
+        #expect(rtf.line() == #"{"reply":"exported","v":1}"#)
+        #expect(await listening.received.exports == [
+            ControlSocket.FileExport(path: note, out: out, format: .pdf), ControlSocket.FileExport(path: note, out: folder + "/plan.rtf", format: .rtf),
+        ])
         #expect(await listening.received.requests.isEmpty)
     }
 
@@ -386,7 +394,7 @@ struct ControlSocketTests {
 @MainActor
 private final class Received {
     var requests: [ControlSocket.Open] = []
-    var exports: [ControlSocket.PDFExport] = []
+    var exports: [ControlSocket.FileExport] = []
     var claims: [ControlSocket.Claim] = []
     var connections: [ControlSocket.Connection] = []
     /// When set, waiting requests are answered when it closes.
@@ -445,7 +453,7 @@ private struct Listening {
         folder = FileManager.default.temporaryDirectory.appending(path: "dl-\(UUID().uuidString.prefix(8))")
         let received = await Received()
         let notify: @MainActor @Sendable (ControlSocket.Claim) -> Void = { received.claims.append($0) }
-        let export: @MainActor @Sendable (ControlSocket.PDFExport, ControlSocket.Connection) -> Void = {
+        let export: @MainActor @Sendable (ControlSocket.FileExport, ControlSocket.Connection) -> Void = {
             received.exports.append($0)
             $1.reply(.exported)
         }

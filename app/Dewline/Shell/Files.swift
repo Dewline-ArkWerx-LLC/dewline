@@ -37,8 +37,11 @@ struct FolderEntry: Equatable {
     /// Matched by the root's .gitignore, and listed only while the sidebar shows what it hides.
     var isIgnored = false
 
+    /// The extensions of net.daringfireball.markdown, as project.yml declares it.
+    static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
+
     var isMarkdown: Bool {
-        !isFolder && ["md", "markdown", "mdown", "mkd"].contains(url.pathExtension.lowercased())
+        !isFolder && Self.markdownExtensions.contains(url.pathExtension.lowercased())
     }
 }
 

@@ -50,11 +50,13 @@ struct TableRule: Equatable {
     var cells: [TableCell] = []
 }
 
-/// A cell drawn at `x`, wrapped to `width`, both in points from where its row's text starts.
+/// A cell drawn at `x`, wrapped to `width`, both in points from where its row's text starts. `source` is the cell's
+/// text in the row's paragraph, from the paragraph's start.
 struct TableCell: Equatable {
     let x: CGFloat
     let width: CGFloat
     let text: NSAttributedString
+    let source: NSRange
 }
 
 /// A task item's box over its hidden `[ ]`, which starts `at` characters into the line.
@@ -187,7 +189,7 @@ final class BlockFragment: NSTextLayoutFragment {
     }
 
     /// Where the first line's text starts, in this fragment's coordinates.
-    private var textStart: CGFloat {
+    var textStart: CGFloat {
         guard let line = textLineFragments.first else { return 0 }
         return line.typographicBounds.minX + line.locationForCharacter(at: line.characterRange.location).x
     }

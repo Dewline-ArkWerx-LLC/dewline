@@ -84,6 +84,11 @@ final class ThemeStore {
         tabWidth = [2, 4].contains(defaults.integer(forKey: "DewlineTabWidth")) ? defaults.integer(forKey: "DewlineTabWidth") : 0
     }
 
+    /// View > Zoom In and Zoom Out move the text size by `points` within its range; Actual Size (nil) restores the default.
+    func zoom(by points: Double?) {
+        bodySize = points.map { min(max(bodySize + $0, Self.bodySizes.lowerBound), Self.bodySizes.upperBound) } ?? Self.factory.bodySize
+    }
+
     private func save(_ value: Any, _ key: String) {
         defaults.set(value, forKey: "Dewline" + key)
         colors = [:]
@@ -268,6 +273,12 @@ extension NSAppearance {
     var isDark: Bool {
         bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
+
+    /// Increase Contrast is on.
+    var isHighContrast: Bool {
+        let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
+        return [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains(bestMatch(from: names))
+    }
 }
 
 /// Three faces chosen together in the Fonts pane (synthesis 2.8); one click sets all three slots, installing any
@@ -347,5 +358,31 @@ enum Faces {
         }
         let descriptor = NSFontDescriptor(fontAttributes: [.family: family, .traits: [NSFontDescriptor.TraitKey.weight: weight.rawValue]])
         return NSFont(descriptor: descriptor, size: size)!
+    }
+}
+
+/// View > Zoom In, Zoom Out and Actual Size: Settings > Appearance > Text size, so every window zooms together and the
+/// size persists.
+@MainActor
+final class TextZoom: NSObject {
+    @objc static func zoomIn(_ sender: Any?) {
+        ThemeStore.shared.zoom(by: 1)
+    }
+
+    @objc static func zoomOut(_ sender: Any?) {
+        ThemeStore.shared.zoom(by: -1)
+    }
+
+    @objc static func actualSize(_ sender: Any?) {
+        ThemeStore.shared.zoom(by: nil)
+    }
+
+    @objc static func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let size = ThemeStore.shared.bodySize
+        return switch menuItem.action {
+        case #selector(zoomIn(_:)): size < ThemeStore.bodySizes.upperBound
+        case #selector(zoomOut(_:)): size > ThemeStore.bodySizes.lowerBound
+        default: size != ThemeStore.factory.bodySize
+        }
     }
 }

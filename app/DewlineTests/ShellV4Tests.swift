@@ -58,8 +58,8 @@ struct ShellV4Tests {
         #expect(window.subtitle == "Field Notes")
         #expect(window.toolbar?.items.map(\.itemIdentifier).contains(WindowToolbar.tabs) == true)
         #expect(main.tabName == "Launch plan")
-        #expect(main.statusBar.stateText == "Saved")
-        #expect(main.statusBar.wordsText.hasSuffix("words"))
+        #expect(main.savedState?.hasPrefix("Saved") == true)
+        #expect(main.wordCount.hasSuffix("words"))
     }
 
     @Test func eachTabsTitleRowHoldsTheWindowsTabs() async throws {

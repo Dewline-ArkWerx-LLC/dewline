@@ -106,10 +106,11 @@ final class WindowState {
 }
 
 /// The tab strip in the title row: one 26 pt pill per tab, SF Pro 13, radius 6, at most 200 pt, its file name with the
-/// extension in `ink3`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
+/// extension in `ink2`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
 /// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
-/// and the selected tab always shows. Dragging a tab along the strip moves it.
+/// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
+/// window is key. A tab's tooltip says when its note was saved and how many words it has.
 final class TabStrip: NSView {
     private static let height: CGFloat = 26
     private static let padding: CGFloat = 16
@@ -136,6 +137,20 @@ final class TabStrip: NSView {
     private var hovered: MainWindowController?
     private var dragging: (tab: MainWindowController, offset: CGFloat)?
 
+    /// The opacity of everything but the selected tab; at 0 those tabs and "+N" take no clicks and leave VoiceOver.
+    @objc dynamic var othersAlpha: CGFloat = 1 {
+        didSet {
+            needsDisplay = true
+            guard (oldValue == 0) != (othersAlpha == 0) else { return }
+            updateAccessibility()
+            NSAccessibility.post(element: self, notification: .layoutChanged)
+        }
+    }
+
+    override class func defaultAnimation(forKey key: NSAnimatablePropertyKey) -> Any? {
+        key == "othersAlpha" ? CABasicAnimation() : super.defaultAnimation(forKey: key)
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         setAccessibilityElement(true)
@@ -143,10 +158,18 @@ final class TabStrip: NSView {
         setAccessibilityLabel("Tabs")
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect], owner: self))
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: ThemeStore.didChange, object: nil)
+        // A full-screen title row sits in a window of its own, so the strip hears every window's key state.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: nil)
+        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("TabStrip is built in code")
+    }
+
+    @objc private func keyChanged() {
+        needsDisplay = true
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
@@ -174,7 +197,7 @@ final class TabStrip: NSView {
         line.lineBreakMode = .byTruncatingMiddle
         let name = NSMutableAttributedString(
             string: file as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
-        name.addAttribute(.foregroundColor, value: Chrome.color(.ink3), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
+        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
         return name
     }
 
@@ -218,6 +241,8 @@ final class TabStrip: NSView {
         overflow = all.indices.filter { !shown.contains($0) }.map { all[$0] }
         more = overflow.isEmpty ? nil : NSRect(x: x, y: y, width: min(Self.moreWidth(overflow.count), max(bounds.width - x, 0)), height: Self.height)
         if let hovered, !slots.contains(where: { $0.tab === hovered }) { self.hovered = nil }
+        removeAllToolTips()
+        for slot in slots { addToolTip(slot.frame, owner: self, userData: nil) }
         updateAccessibility()
         needsDisplay = true
     }
@@ -229,25 +254,29 @@ final class TabStrip: NSView {
         return NSColor(name: nil) { $0.isDark ? ink.resolved(for: $0).withAlphaComponent(0.14) : paper.resolved(for: $0) }
     }
 
-    /// Ink at 10%: the dividers and the close x's tile.
+    /// Ink at 10%, 30% under Increase Contrast: the dividers and the close x's tile.
     private var faint: NSColor {
         let ink = Chrome.color(.ink)
-        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent(0.10) }
+        return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isHighContrast ? 0.30 : 0.10) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
         let selected = tabs?.selected
         for (index, slot) in slots.enumerated() where slot.tab !== dragging?.tab {
+            context.setAlpha(slot.tab === selected ? 1 : othersAlpha)
             draw(slot, selected: slot.tab === selected)
             guard index + 1 < slots.count else { continue }
             let next = slots[index + 1].tab
             let quiet = [slot.tab, next].allSatisfy { $0 !== selected && $0 !== hovered && $0 !== dragging?.tab }
             if quiet {
+                context.setAlpha(othersAlpha)
                 faint.setFill()
                 NSRect(x: slot.frame.maxX + Self.gap / 2 - 0.5, y: slot.frame.midY - 7, width: 1, height: 14).fill()
             }
         }
         if let more {
+            context.setAlpha(othersAlpha)
             let path = NSBezierPath(roundedRect: more.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
             Chrome.color(.rule).setStroke()
             path.stroke()
@@ -255,6 +284,7 @@ final class TabStrip: NSView {
             let size = label.size()
             label.draw(at: NSPoint(x: more.midX - size.width / 2, y: more.midY - size.height / 2))
         }
+        context.setAlpha(1)
         if let dragging, var slot = slots.first(where: { $0.tab === dragging.tab }) {
             slot.frame.origin.x += dragging.offset
             draw(slot, selected: slot.tab === selected)
@@ -288,7 +318,7 @@ final class TabStrip: NSView {
             cross.move(to: NSPoint(x: glyph.minX, y: glyph.maxY))
             cross.line(to: NSPoint(x: glyph.maxX, y: glyph.minY))
             cross.stroke()
-        } else if selected {
+        } else if selected, tabs?.selected?.window?.isKeyWindow == true {
             Chrome.color(.cursor).setFill()
             NSBezierPath(roundedRect: NSRect(x: frame.minX + 8, y: frame.midY - 6, width: 2, height: 12), xRadius: 1, yRadius: 1).fill()
         }
@@ -337,10 +367,10 @@ final class TabStrip: NSView {
     /// A click selects or closes a tab, or opens "+N"; a drag of more than 3 pt moves the tab along the strip.
     override func mouseDown(with event: NSEvent) {
         let start = convert(event.locationInWindow, from: nil)
-        if let more, more.contains(start) { return showMore() }
+        if let more, more.contains(start), othersAlpha > 0 { return showMore() }
         // The layout as the press found it; a tab that comes or goes mid-drag lays the strip out again.
         let frames = slots
-        guard let slot = slot(at: start), let window else { return }
+        guard let slot = slot(at: start), othersAlpha > 0 || slot.tab === tabs?.selected, let window else { return }
         if Self.close.insetBy(dx: -2, dy: -2).offsetBy(dx: slot.frame.minX, dy: slot.frame.minY).contains(start) {
             return close(slot.tab)
         }
@@ -383,15 +413,16 @@ final class TabStrip: NSView {
 
     private var elements: [NSAccessibilityElement] = []
 
-    /// Each shown tab as a radio button, "spec.md, tab 1 of 3, saved", with its close button; then "+N".
+    /// Each shown tab as a radio button, "spec.md, tab 1 of 3, saved 15:31", with its close button; then "+N". While
+    /// the others are faded out, only the selected tab.
     private func updateAccessibility() {
         let all = tabs?.tabs ?? []
-        elements = slots.flatMap { slot -> [NSAccessibilityElement] in
+        elements = slots.filter { othersAlpha > 0 || $0.tab === tabs?.selected }.flatMap { slot -> [NSAccessibilityElement] in
             let index = (all.firstIndex { $0 === slot.tab } ?? 0) + 1
-            let state = Self.edited(slot.tab) ? "edited" : "saved"
+            let state = slot.tab.savedState.map { ", " + $0 } ?? ""
             let tab = TabElement(slot.tab) { $0.showWindow(nil) }
             tab.setAccessibilityRole(.radioButton)
-            tab.setAccessibilityLabel("\(slot.tab.tabFileName), tab \(index) of \(all.count), \(state)")
+            tab.setAccessibilityLabel("\(slot.tab.tabFileName), tab \(index) of \(all.count)\(state)")
             tab.setAccessibilityValue(slot.tab === tabs?.selected)
             tab.setAccessibilityFrameInParentSpace(slot.frame)
             tab.setAccessibilityParent(self)
@@ -402,7 +433,7 @@ final class TabStrip: NSView {
             close.setAccessibilityParent(self)
             return [tab, close]
         }
-        if let more, let first = overflow.first {
+        if let more, let first = overflow.first, othersAlpha > 0 {
             let element = TabElement(first) { [weak self] _ in self?.showMore() }
             element.setAccessibilityRole(.popUpButton)
             element.setAccessibilityLabel("\(overflow.count) more \(overflow.count == 1 ? "tab" : "tabs")")
@@ -414,6 +445,13 @@ final class TabStrip: NSView {
 
     override func accessibilityChildren() -> [Any]? {
         elements
+    }
+}
+
+extension TabStrip: NSViewToolTipOwner {
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        guard let tab = slot(at: point)?.tab, othersAlpha > 0 || tab === tabs?.selected else { return "" }
+        return ([tab.tabFileName, tab.savedState, tab.wordCount] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }
 

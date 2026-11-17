@@ -1,8 +1,9 @@
 //! The app's control socket, as this command sees it. The app's side is
 //! app/Dewline/ControlSocket.swift. A connection carries one request, a JSON
 //! line; the app answers in JSON lines: `opened` or `error`, then `closed`
-//! once the document closes when the request waits. A `notify` request gets
-//! no answer unless it is refused.
+//! once the document closes when the request waits. An `export` request gets
+//! `exported` or `error`. A `notify` request gets no answer unless it is
+//! refused.
 
 use std::env;
 use std::fs;
@@ -28,6 +29,8 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(50);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the app has to show a file it was asked for.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the app has to lay out and write a PDF.
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Socket {
     path: PathBuf,
@@ -76,7 +79,30 @@ impl Socket {
                 target.path,
                 message.as_deref().unwrap_or(&error)
             )),
-            Some(Reply::Closed) | None => Err(format!("{}: Dewline didn't open it", target.path)),
+            Some(Reply::Closed | Reply::Exported) | None => {
+                Err(format!("{}: Dewline didn't open it", target.path))
+            }
+        }
+    }
+
+    /// Asks the app to write `out`, a PDF of the Markdown file at `path`,
+    /// starting the app when nothing listens. Returns once it is written.
+    pub fn export_pdf(&self, path: &str, out: &str) -> Result<(), String> {
+        let stream = self.connect()?;
+        let failed = |error: io::Error| format!("{path}: talking to Dewline: {error}");
+        set_timeout(&stream, Some(EXPORT_TIMEOUT)).map_err(failed)?;
+        let mut reader = BufReader::new(stream);
+        reader
+            .get_mut()
+            .write_all(&encode_export(path, out))
+            .map_err(failed)?;
+        match next_reply(&mut reader).map_err(|error| format!("{path}: {error}"))? {
+            Some(Reply::Exported) => Ok(()),
+            Some(Reply::Error { error, message }) => Err(format!(
+                "{path}: Dewline didn't export it: {}",
+                message.as_deref().unwrap_or(&error)
+            )),
+            Some(_) | None => Err(format!("{path}: Dewline didn't export it")),
         }
     }
 
@@ -252,10 +278,31 @@ fn encode_open(target: &Target, wait: bool) -> Vec<u8> {
     line
 }
 
+#[derive(Serialize)]
+struct ExportRequest<'a> {
+    v: u32,
+    op: &'static str,
+    path: &'a str,
+    out: &'a str,
+}
+
+fn encode_export(path: &str, out: &str) -> Vec<u8> {
+    let request = ExportRequest {
+        v: VERSION,
+        op: "export",
+        path,
+        out,
+    };
+    let mut line = serde_json::to_vec(&request).expect("strings and numbers always serialize");
+    line.push(b'\n');
+    line
+}
+
 #[derive(Debug, PartialEq)]
 enum Reply {
     Opened,
     Closed,
+    Exported,
     Error {
         error: String,
         message: Option<String>,
@@ -282,6 +329,7 @@ fn decode_reply(line: &[u8]) -> Result<Reply, String> {
     match (line.reply.as_str(), line.error) {
         ("opened", _) => Ok(Reply::Opened),
         ("closed", _) => Ok(Reply::Closed),
+        ("exported", _) => Ok(Reply::Exported),
         ("error", Some(error)) => Ok(Reply::Error {
             error,
             message: line.message,
@@ -395,6 +443,48 @@ mod tests {
                 String::from_utf8_lossy(refused)
             );
         }
+    }
+
+    #[test]
+    fn an_export_waits_for_the_apps_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("control.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let socket = Socket {
+            path,
+            launches: false,
+        };
+        let answers = [
+            "{\"v\":1,\"reply\":\"exported\"}\n",
+            "{\"v\":1,\"reply\":\"error\",\"error\":\"not_markdown\"}\n",
+            "",
+        ];
+        let server = thread::spawn(move || {
+            answers
+                .iter()
+                .map(|answer| {
+                    let (stream, _) = listener.accept().unwrap();
+                    let mut reader = BufReader::new(stream);
+                    let request = read_line(&mut reader).unwrap().unwrap();
+                    reader.get_mut().write_all(answer.as_bytes()).unwrap();
+                    request
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            socket.export_pdf("/Users/me/a b.md", "/Users/me/a b.pdf"),
+            Ok(())
+        );
+        assert_eq!(
+            socket.export_pdf("/Users/me/hosts.yml", "/tmp/x.pdf"),
+            Err("/Users/me/hosts.yml: Dewline didn't export it: not_markdown".into())
+        );
+        assert!(socket.export_pdf("/Users/me/a.md", "/tmp/a.pdf").is_err());
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests[0],
+            br#"{"v":1,"op":"export","path":"/Users/me/a b.md","out":"/Users/me/a b.pdf"}"#
+        );
     }
 
     #[test]

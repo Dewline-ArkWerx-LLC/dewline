@@ -223,7 +223,8 @@ pub enum SaveRefused {
     Conflict,
     /// The file changed since the base: land first.
     Changed,
-    /// A hook holds the file's autosave.
+    /// A hooked call on the file is open: its tool writes bytes it read
+    /// before the call.
     Held,
     Composing,
     WritingTools,
@@ -253,9 +254,8 @@ pub enum Update {
         change: ChangeId,
         origin: Origin,
     },
-    /// A hold on the file ended: run the refused autosave again.
-    Released(DocId),
-    /// A hooked call on the file ended: land again.
+    /// A hooked call on the file ended: land again, then run a refused
+    /// autosave again.
     Retry(DocId),
 }
 
@@ -880,7 +880,7 @@ impl Engine {
                 composing,
                 writing_tools,
             } = kind
-                && (composing || writing_tools || state.claims.held(&d.path, now))
+                && (composing || writing_tools || state.claims.open_call(&d.path, now))
             {
                 Some(if composing {
                     SaveRefused::Composing
@@ -913,7 +913,7 @@ impl Engine {
         };
         let bytes = text::encode(buffer, bom);
         if let Some(refused) = refused {
-            return Err(self.draft(doc, &path, private, &bytes, wall, refused));
+            return Err(self.put_draft(doc, &path, private, &bytes, wall, refused));
         }
         if let Some((base, origin)) = &kept {
             self.store
@@ -934,7 +934,7 @@ impl Engine {
                 })
         };
         if let Err(refused) = written {
-            return Err(self.draft(doc, &path, private, &bytes, wall, refused));
+            return Err(self.put_draft(doc, &path, private, &bytes, wall, refused));
         }
         let hash = blake3::hash(&bytes);
         let drafted = {
@@ -972,7 +972,7 @@ impl Engine {
 
     /// Puts a refused save's bytes in the draft slot, and returns the
     /// refusal, or the store's error when the draft can't be written.
-    fn draft(
+    fn put_draft(
         &self,
         doc: DocId,
         path: &Path,
@@ -1083,8 +1083,7 @@ impl Engine {
 
     /// Records a hook's claim. Then every change not yet named, the landing
     /// awaiting its commit included, asks the claims again, so a late claim
-    /// names a change already seen; and holds and open calls that ended are
-    /// reported.
+    /// names a change already seen; and open calls that ended are reported.
     pub fn claim(&self, claim: Claim) -> Result<Vec<Update>, Refused> {
         let (now, _) = (self.clock)();
         let mut updates = Vec::new();
@@ -1092,14 +1091,9 @@ impl Engine {
         {
             let mut state = self.state();
             let State { docs, claims, .. } = &mut *state;
-            let before: HashMap<DocId, (bool, bool)> = docs
+            let before: HashMap<DocId, bool> = docs
                 .iter()
-                .map(|(&id, d)| {
-                    (
-                        id,
-                        (claims.held(&d.path, now), claims.open_call(&d.path, now)),
-                    )
-                })
+                .map(|(&id, d)| (id, claims.open_call(&d.path, now)))
                 .collect();
             claims.record(claim, now)?;
             let mut ids: Vec<DocId> = docs.keys().copied().collect();
@@ -1172,11 +1166,7 @@ impl Engine {
                         });
                     }
                 }
-                let (held, open) = before[&id];
-                if held && !claims.held(&d.path, now) {
-                    updates.push(Update::Released(id));
-                }
-                if open && !claims.open_call(&d.path, now) {
+                if before[&id] && !claims.open_call(&d.path, now) {
                     updates.push(Update::Retry(id));
                 }
             }
@@ -1319,6 +1309,31 @@ impl Engine {
             .filter_map(|d| d.gitdir.clone())
             .collect();
         lock(&self.repos).retain(|gitdir, _| used.contains(gitdir));
+    }
+
+    /// The draft a refused save left for the document's file, while it
+    /// holds other bytes than the file: text the file never got. A save
+    /// clears only a draft written since the document opened; an older one
+    /// stays until `discard_draft`.
+    pub fn draft(&self, doc: DocId) -> io::Result<Option<Snapshot>> {
+        let (path, private, disk) = {
+            let state = self.state();
+            let d = state.docs.get(&doc).ok_or_else(closed)?;
+            (d.path.clone(), d.private, d.disk.hash())
+        };
+        if private {
+            return Ok(None);
+        }
+        Ok(self
+            .store
+            .draft(&path)?
+            .filter(|draft| disk != Some(draft.hash)))
+    }
+
+    /// Empties the draft slot of the document's file.
+    pub fn discard_draft(&self, doc: DocId) -> io::Result<()> {
+        let path = self.state().docs.get(&doc).ok_or_else(closed)?.path.clone();
+        self.store.clear_draft(&path)
     }
 
     /// The document's file's snapshots, newest first.
@@ -1783,6 +1798,83 @@ mod tests {
     }
 
     #[test]
+    fn only_an_open_write_call_holds_autosave() {
+        let fx = fixture();
+        let path = fx.file("CLAUDE.md", "a\n");
+        let (doc, _) = opened(&fx.engine, &path);
+        let real = path.to_str().unwrap();
+        let read = Claim::parse(Fields {
+            event: "PreToolUse",
+            vendor: "claude",
+            session: "s1",
+            tool_use_id: Some("t0"),
+            tool: Some("Read"),
+            path: Some(real),
+            ..Fields::default()
+        })
+        .unwrap();
+        let loaded = Claim::parse(Fields {
+            event: "InstructionsLoaded",
+            vendor: "claude",
+            session: "s1",
+            path: Some(real),
+            ..Fields::default()
+        })
+        .unwrap();
+        for claim in [read, loaded] {
+            assert_eq!(fx.engine.claim(claim).unwrap(), []);
+        }
+        fx.engine.save(doc, "b\n", 1, auto()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "b\n");
+
+        // An Edit holds while its call is open, and no longer than OPEN_CALL_WAIT.
+        let edit = claim("PreToolUse", "s1", "t1", &path, "b\n", Some("c\n"));
+        fx.engine.claim(edit).unwrap();
+        assert!(matches!(
+            fx.engine.save(doc, "d\n", 2, auto()),
+            Err(SaveRefused::Held)
+        ));
+        assert!(fx.engine.claim(stop("s1")).unwrap().is_empty());
+        fx.tick(10_001);
+        fx.engine.save(doc, "d\n", 3, auto()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "d\n");
+    }
+
+    #[test]
+    fn a_draft_is_offered_until_it_is_discarded() {
+        let fx = fixture();
+        let path = fx.file("notes.md", "a\n");
+        let (doc, _) = opened(&fx.engine, &path);
+        assert!(fx.engine.draft(doc).unwrap().is_none());
+        fx.engine
+            .claim(claim("PreToolUse", "s1", "t1", &path, "a\n", Some("x\n")))
+            .unwrap();
+        assert!(matches!(
+            fx.engine.save(doc, "typed\n", 1, auto()),
+            Err(SaveRefused::Held)
+        ));
+        fx.engine.close(doc);
+        // The agent's write lands after the note closed.
+        fx.replace(&path, "x\n");
+
+        let (doc, text) = opened(&fx.engine, &path);
+        let draft = fx.engine.draft(doc).unwrap().expect("offered");
+        assert_eq!(fx.engine.restore(doc, &draft, &text).unwrap(), "typed\n");
+        fx.engine.close(doc);
+        let (doc, _) = opened(&fx.engine, &path);
+        assert!(fx.engine.draft(doc).unwrap().is_some(), "until discarded");
+        fx.engine.discard_draft(doc).unwrap();
+        assert!(fx.engine.draft(doc).unwrap().is_none());
+
+        // A draft that holds the file's bytes is not offered.
+        fx.engine
+            .store
+            .set_draft(&path, b"x\n", YOU, UNIX_EPOCH)
+            .unwrap();
+        assert!(fx.engine.draft(doc).unwrap().is_none());
+    }
+
+    #[test]
     fn a_refused_autosave_writes_the_draft() {
         let fx = fixture();
         let path = fx.file("notes.md", "a\n");
@@ -1830,13 +1922,15 @@ mod tests {
         ));
         assert_eq!(fx.draft(&path).as_deref(), Some("held"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "a\n");
-        // Cmd-S overrides a hold, and Stop releases it.
+        // Cmd-S overrides a hold, and the call's PostToolUse releases it.
         fx.engine
             .save(doc, "mine\n", 3, SaveKind::Explicit)
             .unwrap();
         assert_eq!(
-            fx.engine.claim(stop("s1")).unwrap(),
-            [Update::Released(doc)]
+            fx.engine
+                .claim(claim("PostToolUse", "s1", "t1", &path, "mine\n", None))
+                .unwrap(),
+            [Update::Retry(doc)]
         );
         fx.engine.save(doc, "mine again\n", 4, auto()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "mine again\n");
@@ -2393,8 +2487,12 @@ mod tests {
         /// The document's own newest save. A file holding these bytes holds
         /// the document's save, whoever wrote them last (an A-B-A).
         saved: Option<Vec<u8>>,
-        holds: Vec<(u8, PathBuf)>,
-        queued: Vec<(u8, bool, PathBuf, Claim)>,
+        /// Open calls: a PreToolUse's id, file and arrival, until its
+        /// PostToolUse.
+        calls: Vec<(String, PathBuf, Instant)>,
+        /// Ids whose PostToolUse arrived.
+        posted: Vec<String>,
+        queued: Vec<(String, bool, PathBuf, Claim)>,
         /// Each session's own writes, from hash to hash, that its claims declared.
         honest: Vec<(u8, Hash, Hash)>,
         blobs: Vec<Hash>,
@@ -2479,7 +2577,8 @@ mod tests {
                 links: HashMap::new(),
                 live: Vec::new(),
                 floor: None,
-                holds: Vec::new(),
+                calls: Vec::new(),
+                posted: Vec::new(),
                 queued: Vec::new(),
                 honest: Vec::new(),
                 blobs: Vec::new(),
@@ -2511,7 +2610,11 @@ mod tests {
         }
 
         fn held(&self) -> bool {
-            self.holds.iter().any(|(_, path)| *path == self.path)
+            let now = self.fx.time.lock().unwrap().0;
+            self.calls.iter().any(|(_, path, at)| {
+                *path == self.path
+                    && now.saturating_duration_since(*at) <= crate::claims::OPEN_CALL_WAIT
+            })
         }
 
         /// Replaces the buffer's UTF-16 range, as the user or Swift does,
@@ -2866,9 +2969,9 @@ mod tests {
                             Some(declared),
                         );
                         if pre_late {
-                            self.queued.push((session, true, path.clone(), pre));
+                            self.queued.push((id.clone(), true, path.clone(), pre));
                         } else {
-                            self.deliver(session, true, path.clone(), pre)?;
+                            self.deliver(id.clone(), true, path.clone(), pre)?;
                         }
                         self.put(&new, how);
                         let after = if intrude {
@@ -2889,23 +2992,22 @@ mod tests {
                             None,
                         );
                         if post_late {
-                            self.queued.push((session, false, path, post));
+                            self.queued.push((id, false, path, post));
                         } else {
-                            self.deliver(session, false, path, post)?;
+                            self.deliver(id, false, path, post)?;
                         }
                     }
                 }
                 Op::Deliver { which } => {
                     if !self.queued.is_empty() {
-                        let (session, pre, path, claim) =
+                        let (id, pre, path, claim) =
                             self.queued.remove(which.index(self.queued.len()));
-                        self.deliver(session, pre, path, claim)?;
+                        self.deliver(id, pre, path, claim)?;
                     }
                 }
                 Op::Stop { session } => {
                     let held = self.held();
                     let updates = self.fx.engine.claim(stop(&format!("s{session}"))).unwrap();
-                    self.holds.retain(|(s, _)| *s != session);
                     self.updates(held, &updates)?;
                 }
                 Op::GitCommit => {
@@ -2973,15 +3075,19 @@ mod tests {
 
         fn deliver(
             &mut self,
-            session: u8,
+            id: String,
             pre: bool,
             path: PathBuf,
             claim: Claim,
         ) -> Result<(), TestCaseError> {
             let held = self.held();
             let result = self.fx.engine.claim(claim);
-            if pre && !self.holds.contains(&(session, path.clone())) {
-                self.holds.push((session, path));
+            if !pre {
+                self.calls.retain(|(open, ..)| *open != id);
+                self.posted.push(id);
+            } else if !self.posted.contains(&id) {
+                let now = self.fx.time.lock().unwrap().0;
+                self.calls.push((id, path, now));
             }
             match result {
                 Ok(updates) => self.updates(held, &updates),
@@ -3007,10 +3113,10 @@ mod tests {
                     }
                 }
             }
-            let released = updates
+            let retry = updates
                 .iter()
-                .any(|update| matches!(update, Update::Released(_)));
-            prop_assert_eq!(released, held && !self.held(), "{:?}", updates);
+                .any(|update| matches!(update, Update::Retry(_)));
+            prop_assert_eq!(retry, held && !self.held(), "{:?}", updates);
             Ok(())
         }
 

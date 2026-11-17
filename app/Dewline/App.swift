@@ -145,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { Capture.shared.register(Preferences.shared.captureShortcut) }
         }
         Export.publishPreviewStylesheet()
+        CodeHighlights.publishForPreview()
         NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Export.publishPreviewStylesheet() }
         }

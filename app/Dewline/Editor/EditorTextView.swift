@@ -371,7 +371,9 @@ final class EditorTextView: CaretTextView {
     }
 
     override func paste(_ sender: Any?) {
-        history.perform("Paste") { super.paste(sender) }
+        history.perform("Paste") {
+            if !pasteHTMLAsMarkdown(from: .general) { super.paste(sender) }
+        }
     }
 
     override func pasteAsPlainText(_ sender: Any?) {

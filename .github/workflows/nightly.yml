@@ -95,3 +95,33 @@ jobs:
             echo "::error::merge3 glued text from both sides together; the survey above lists the triples"
             exit 1
           fi
+
+  # A failure on main opens an issue, or comments on the one still open, with a link to the run. The run's logs hold
+  # the details; a fuzz crash's inputs stay on the runner as above.
+  report:
+    needs: [fuzz, proptest]
+    if: failure() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # opens the nightly issue or comments on it
+    steps:
+      - name: Open or update the nightly issue
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FUZZ: ${{ needs.fuzz.result }}
+          PROPTEST: ${{ needs.proptest.result }}
+          SHA: ${{ github.sha }}
+        run: |
+          title="Nightly fails on main"
+          body="$(date -u +%F): fuzz $FUZZ, proptest $PROPTEST at $SHA. $RUN"
+          number=$(gh issue list --state open --author app/github-actions --search "in:title \"$title\"" \
+            --json number,title --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [[ -n $number ]]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

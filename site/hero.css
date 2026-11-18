@@ -65,7 +65,8 @@
 .hz { position: relative; height: 0; pointer-events: none; }
 .hz-sky {
   position: absolute; left: -25%; bottom: 0; width: 150%; aspect-ratio: 2 / 1; overflow: hidden;
-  mask-image: linear-gradient(to top, #000 40%, transparent 92%);
+  mask-image: linear-gradient(to top, #000 22%, transparent 42%), linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+  mask-composite: intersect;
 }
 .hz-rise, .hz-dew { position: absolute; inset: 0; }
 .hz-dew { width: 100%; height: 40%; top: 10%; }

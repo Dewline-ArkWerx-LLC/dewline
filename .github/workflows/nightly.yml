@@ -117,7 +117,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the run tests the latest releases
           packages=()
           [[ -n $ANTHROPIC_API_KEY ]] && packages+=(@anthropic-ai/claude-code)
           [[ -n $OPENAI_API_KEY ]] && packages+=(@openai/codex)

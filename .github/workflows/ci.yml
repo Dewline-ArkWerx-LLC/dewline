@@ -14,7 +14,45 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
+  # Pull requests and merge groups that change only site/, docs/, .github/ISSUE_TEMPLATE/ or the Markdown at the root
+  # skip the rust and swift jobs. Pushes to main run every job, so each commit a release tags has passed them all.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - name: Check whether the app or the core changed
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          app=true
+          if [[ $EVENT != push ]]; then
+            compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD")
+            # The compare API lists at most 300 files; a longer list runs everything.
+            if (($(jq '.files | length' <<< "$compare") < 300)); then
+              app=false
+              while IFS= read -r path; do
+                case $path in
+                  # MainMenuTests checks the keyboard pages, and the app bundles these two.
+                  docs/keyboard.md | site/docs/keyboard/* | CHANGELOG.md | THIRD_PARTY_NOTICES.md) app=true ;;
+                  site/* | docs/* | .github/ISSUE_TEMPLATE/*) ;;
+                  */*) app=true ;;
+                  *.md) ;;
+                  *) app=true ;;
+                esac
+              done < <(jq -r '.files[] | .filename, (.previous_filename // empty)' <<< "$compare")
+            fi
+          fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: xcode-27
     timeout-minutes: 30
     defaults:
@@ -48,6 +86,8 @@ jobs:
       - run: cargo deny --manifest-path core/Cargo.toml check
 
   swift:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: xcode-27
     timeout-minutes: 30
     # One cached target dir for the FFI library and the dewline command that embed-cli.sh builds.
@@ -116,6 +156,15 @@ jobs:
       - name: Package it and sign a feed with a throwaway key
         run: scripts/release-dry.sh "$RUNNER_TEMP/release/Dewline.app" "$RUNNER_TEMP/dry"
 
+  landmines:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/landmines.sh
+
   zizmor:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -130,7 +179,7 @@ jobs:
 
   required:
     if: always()
-    needs: [rust, deny, swift, release-dry, zizmor]
+    needs: [changes, rust, deny, swift, release-dry, landmines, zizmor]
     runs-on: ubuntu-latest
     steps:
       - env:

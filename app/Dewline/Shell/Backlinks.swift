@@ -9,7 +9,7 @@ final class BacklinksPane: NSViewController, NSTableViewDataSource, NSTableViewD
 
     private let table = NSTableView()
     private let empty = NSTextField(wrappingLabelWithString: "")
-    private var links: [Backlink] = []
+    private(set) var links: [Backlink] = []
     private var folder: URL?
     private var listing: Task<Void, Never>?
 

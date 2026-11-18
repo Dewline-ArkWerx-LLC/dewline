@@ -459,6 +459,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    /// The folder a file outside every window's folder opens in: its git repository's, else the one that holds it. A
+    /// repository at the home folder counts as none.
+    static func folder(for file: URL) -> Folder {
+        let parent = file.standardizedFileURL.deletingLastPathComponent()
+        let home = URL(filePath: NSHomeDirectory()).standardizedFileURL.path
+        var directory = parent
+        while directory.path != home, directory.pathComponents.count > 1 {
+            if FileManager.default.fileExists(atPath: directory.appending(path: ".git").path) { return Folder(directory) }
+            directory = directory.deletingLastPathComponent()
+        }
+        return Folder(parent)
+    }
+
     private static func load(_ url: URL) -> MarkdownDocument? {
         let controller = NSDocumentController.shared
         do {
@@ -733,7 +746,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let files = FileManager.default
         for saved in session.windows {
             var isFolder: ObjCBool = false
-            let folder = saved.folder.flatMap { files.fileExists(atPath: $0, isDirectory: &isFolder) && isFolder.boolValue ? Folder(URL(filePath: $0, directoryHint: .isDirectory)) : nil }
+            // A window saved without a folder opens on its first note's.
+            let folder = if let path = saved.folder {
+                files.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue ? Folder(URL(filePath: path, directoryHint: .isDirectory)) : nil
+            } else {
+                saved.tabs.first { files.fileExists(atPath: $0.path) }.map { Self.folder(for: URL(filePath: $0.path)) }
+            }
             guard saved.folder == nil || folder != nil else { continue }
             var last: MainWindowController?
             var selected: MainWindowController?

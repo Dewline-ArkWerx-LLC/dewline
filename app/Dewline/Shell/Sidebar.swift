@@ -96,7 +96,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private let folder: Folder?
     private let header: SidebarHeader?
-    private let gitStates: GitStates?
+    private let index: FolderIndex?
     private let find: FindInFilesController?
     private let outlineView = SidebarOutlineView()
     private let pinned = SidebarNode(.section("Pinned"))
@@ -112,7 +112,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private(set) var showsOutline: Bool
     /// The location of the heading whose section is at the top of the page.
     private var section: Int?
-    private var watch: FolderWatch?
     private var showsIgnored: Bool
     /// Whether code files opened when the rows were listed.
     private var listsCode: Bool
@@ -133,18 +132,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         self.folder = folder
         find = folder.map(FindInFilesController.init)
         header = folder.map { _ in SidebarHeader() }
-        gitStates = folder.map { GitStates(folder: $0.url) }
+        index = folder.map(FolderIndex.of)
         showsIgnored = Preferences.shared.showsIgnored
         listsCode = CodeFile.isOn
         showsOutline = folder.map { UserDefaults.standard.bool(forKey: "Outline " + $0.url.path) } ?? false
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
-        gitStates?.changed = { [weak self] in self?.refreshRows() }
-        watch = folder.map { folder in
-            FolderWatch([folder.url]) { [weak self] folders in
-                self?.foldersChanged(Set(folders.map(\.standardizedFileURL.path)))
-            }
+        if let index {
+            NotificationCenter.default.addObserver(self, selector: #selector(refreshRows), name: GitStates.changed, object: index.git)
+            NotificationCenter.default.addObserver(self, selector: #selector(folderChanged(_:)), name: FolderIndex.foldersChanged, object: index)
         }
     }
 
@@ -452,9 +449,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return node
     }
 
+    @objc private func folderChanged(_ notification: Notification) {
+        foldersChanged(Set((notification.userInfo?["folders"] as? [URL] ?? []).map(\.standardizedFileURL.path)))
+    }
+
     /// Folders the watch saw change. They wait while a name is edited, since listing them again would end the edit.
     private func foldersChanged(_ paths: Set<String>) {
-        for path in paths { ClosedChanges.scan(URL(filePath: path), deep: false) }
         guard renaming == nil else {
             changedWhileRenaming.formUnion(paths)
             return
@@ -655,7 +655,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// Shows the badges and git words again on the rows on screen.
-    private func refreshRows() {
+    @objc private func refreshRows() {
         outlineView.enumerateAvailableRowViews { rowView, row in
             guard let node = outlineView.item(atRow: row) as? SidebarNode, let cell = rowView.view(atColumn: 0) as? SidebarFileCell else { return }
             show(node, in: cell)
@@ -668,7 +668,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let path = entry.url.standardizedFileURL.path
             let expanded = entry.isFolder && outlineView.isItemExpanded(node)
             let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : node === fileNode ? [] : waitingChanges[path] ?? []
-            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: gitStates?.state(of: entry.url))
+            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: index?.git.state(of: entry.url))
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,

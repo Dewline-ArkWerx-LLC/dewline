@@ -27,11 +27,7 @@ final class EditorTextView: CaretTextView {
     /// The foldable block under the pointer, by its location.
     private(set) var hoveredFold: Int?
     /// The hovered code block's language and Copy button.
-    private(set) lazy var codeBar: CodeBar = {
-        let bar = CodeBar()
-        addSubview(bar)
-        return bar
-    }()
+    let codeBar = CodeBar()
     private var centering = false
     private var dimmed = false
     /// Focus dims every block but the caret's.
@@ -116,6 +112,7 @@ final class EditorTextView: CaretTextView {
         marks.autoresizingMask = [.width, .height]
         marks.wantsLayer = true
         addSubview(marks, positioned: .below, relativeTo: nil)
+        addSubview(codeBar)
         applyTheme()
         // The product's own name is not a misspelling, in any document.
         for word in ["Dewline", "dewline"] {

@@ -264,6 +264,76 @@ struct PerfTests {
         editor.close()
     }
 
+    /// A folder window on a git repository with ten notes open, each in a tab of its own, then the 10 MB corpus opened
+    /// in one more tab, each opened as the app opens a file: how long the ten tabs take to open and style, how long the
+    /// 10 MB note takes from opening to styled, and what the window adds to the footprint once idle. release.yml runs
+    /// it in CI and judges it against perf/ci-budgets.jq.
+    @Test func folderWindow() async throws {
+        func until(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(60)
+            while !condition() && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(condition())
+        }
+        let root = URL(filePath: NSTemporaryDirectory()).resolvingSymlinksInPath().appending(path: "dewline-perf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let notes = root.appending(path: "notes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        let note = MarkdownCorpus.text(bytes: 16 << 10)
+        let urls = try (1...10).map { n in
+            let url = notes.appending(path: "Note \(n).md")
+            try note.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+        let large = notes.appending(path: "10MB.md")
+        try Self.documents[1].1.write(to: large, atomically: true, encoding: .utf8)
+        for arguments in [["init", "-q"], ["add", "-A"], ["commit", "-qm", "Notes"]] {
+            let git = Process()
+            git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            git.arguments = ["-C", notes.path, "-c", "user.name=Perf", "-c", "user.email=perf@example.invalid"] + arguments
+            git.environment = ["HOME": root.path, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "PATH": "/usr/bin:/bin"]
+            try git.run()
+            git.waitUntilExit()
+            try #require(git.terminationStatus == 0, "git \(arguments.joined(separator: " "))")
+        }
+        let engine = try ChangeEngine(store: root.appending(path: "store"))
+        var documents: [MarkdownDocument] = []
+        defer { documents.forEach { $0.close() } }
+        func open(_ url: URL) throws -> MarkdownDocument {
+            let document = MarkdownDocument()
+            document.engine = engine
+            try document.read(from: url, ofType: MarkdownDocument.type)
+            document.fileURL = url
+            document.makeWindowControllers()
+            document.showWindows()
+            documents.append(document)
+            return document
+        }
+        func styled(_ document: MarkdownDocument) -> Bool {
+            document.textView.map { !$0.styler.hasUnstyledText } ?? false
+        }
+        try await Task.sleep(for: .seconds(1))
+        let before = SourceModeMeasurements.footprint()
+
+        let clock = ContinuousClock()
+        var start = clock.now
+        for url in urls { _ = try open(url) }
+        try await until { documents.allSatisfy(styled) }
+        let tabs = (clock.now - start) / .milliseconds(1)
+        let controller = try #require(documents[0].windowControllers.first as? MainWindowController)
+        #expect(controller.tabs.tabs.count == urls.count, "the notes open as tabs of one folder window")
+
+        start = clock.now
+        let document = try open(large)
+        try await until { styled(document) }
+        let styledLarge = (clock.now - start) / .milliseconds(1)
+        #expect(controller.tabs.tabs.count == urls.count + 1)
+
+        try await Task.sleep(for: .seconds(3))
+        try record("folderWindow", ["tabs": Double(urls.count), "tabsMs": tabs, "styled10MBMs": styledLarge, "footprintMB": SourceModeMeasurements.footprint() - before])
+    }
+
     /// From text storage through the FFI to every record read, p50: a paragraph's window and the paragraph alone,
     /// looped, and the 1 MB document.
     @Test func parsing() throws {

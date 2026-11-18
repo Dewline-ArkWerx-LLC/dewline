@@ -67,6 +67,16 @@ public func exportEPUB(_ text: String, title: String, css: String, folder: URL?,
     }
 }
 
+/// `text` as a LaTeX article named `name`, and the files to write beside it, each at a path relative to the article's
+/// folder: diagrams drawn in `colors`, and PNG and JPEG images read from inside `folder`.
+public func exportLaTeX(_ text: String, name: String, folder: URL?, colors: DiagramColors) -> (tex: String, files: [(path: String, data: Data)]) {
+    let colors = DewlineFFIBindings.DiagramColors(
+        paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
+    )
+    let article = exportLatex(text: text, name: name, folder: folder?.path, colors: colors)
+    return (article.text, article.files.map { ($0.path, $0.bytes) })
+}
+
 /// `text` as a Word document, with relative images read from inside `folder`.
 public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure) -> Data {
     do {

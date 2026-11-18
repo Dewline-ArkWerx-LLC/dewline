@@ -803,7 +803,7 @@ mod tests {
         ));
         let refused = engine.claim(ClaimFields {
             event: "PreToolUse".into(),
-            vendor: "claude".into(),
+            vendor: "codex".into(),
             session: "s1".into(),
             tool_use_id: Some("t1".into()),
             tool: Some("Bash".into()),

@@ -17,6 +17,7 @@ mod engine;
 mod git;
 mod highlight;
 mod markdown;
+mod notelinks;
 mod save;
 mod search;
 mod sync;

@@ -190,6 +190,8 @@ enum MainMenu {
             item.isHidden = key == "="
             item.allowsKeyEquivalentWhenHidden = true
         }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Sidebar Outline", action: #selector(SidebarOutline.toggle(_:)), keyEquivalent: "").target = SidebarOutline.self
         return menu
     }
 

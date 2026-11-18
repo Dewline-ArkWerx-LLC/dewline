@@ -99,9 +99,11 @@
     for (const a of anims) a.currentTime = t;
     sync();
   }
+  // The dawn's breathing (hero.css) holds with the loop.
+  const dawn = () => root.querySelector(".hz")?.getAnimations({ subtree: true }).filter((a) => a.effect.getTiming().iterations === Infinity) ?? [];
   function sync() {
     const on = seen && !document.hidden && !root.closest(".hero-slot")?.classList.contains("is-paused");
-    for (const a of anims) on ? a.play() : a.pause();
+    for (const a of [...anims, ...dawn()]) on ? a.play() : a.pause();
   }
 
   new IntersectionObserver(([e]) => { seen = e.isIntersecting; sync(); }).observe(root);

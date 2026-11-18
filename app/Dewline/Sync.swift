@@ -1,6 +1,6 @@
 import AppKit
 
-/// Notes in iCloud Drive and File Provider folders: Dewline's writes take turns with the sync client's, and a note
+/// Notes in iCloud Drive and File Provider folders: a coordinated write takes turns with the sync client, and a note
 /// iCloud kept in two versions asks which one stays.
 extension MarkdownDocument {
     /// Runs `write` as a coordinated replacement of the file at `url`, so a sync client finishes what it is doing to

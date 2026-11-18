@@ -27,7 +27,7 @@ final class StationSplitController: NSSplitViewController {
     /// NSSplitViewController answers no for `toggleSidebar:` when no item has sidebar behavior, which would send the
     /// menu's Show Sidebar past this controller to the window, where it is disabled (B1).
     override func responds(to selector: Selector!) -> Bool {
-        selector == #selector(toggleSidebar(_:)) ? sidebarItem != nil : super.responds(to: selector)
+        selector == #selector(toggleSidebar(_:)) ? MainActor.assumeIsolated { sidebarItem != nil } : super.responds(to: selector)
     }
 
     override func toggleSidebar(_ sender: Any?) {

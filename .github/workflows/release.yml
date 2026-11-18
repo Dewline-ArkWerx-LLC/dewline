@@ -113,7 +113,7 @@ jobs:
         run: |
           out=$RUNNER_TEMP/perf-ci.json
           TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$out xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline \
-            -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO SWIFT_OPTIMIZATION_LEVEL=-O -quiet \
+            -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO -quiet \
             '-only-testing:DewlineTests/PerfTests/folderWindow()'
           jq .folderWindow "$out"
           scripts/perf-gate.sh "$out" "$TAG" perf/ci-budgets.jq

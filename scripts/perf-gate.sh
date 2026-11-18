@@ -26,9 +26,9 @@ verdict() { # message
 waiver=${result%.json}.waived
 if [[ ! -f $result && -s $waiver ]]; then
     reason=$(head -1 "$waiver")
-    echo "::warning title=Perf gate waived::No budget was checked: $result is missing and $waiver waives it. Reason: $reason"
+    echo "::warning title=Perf gate waived::No perf.sh budget was checked: $result is missing and $waiver waives it. Reason: $reason"
     if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
-        printf '### Perf gate waived\n\nNo budget was checked: %s is missing and %s waives it.\n\n> %s\n' \
+        printf '### Perf gate waived\n\nNo perf.sh budget was checked: %s is missing and %s waives it.\n\n> %s\n' \
             "$result" "$waiver" "$reason" >> "$GITHUB_STEP_SUMMARY"
     fi
     exit 0

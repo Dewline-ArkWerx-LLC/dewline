@@ -681,7 +681,7 @@ impl Objects {
             }
         };
         for delta in deltas.iter().rev() {
-            bytes = apply(&bytes, delta)?;
+            bytes = apply(&bytes, delta, limit)?;
         }
         Some((kind, bytes))
     }
@@ -826,8 +826,8 @@ fn inflate_at(file: &File, mut offset: u64, size: u64) -> Option<Vec<u8>> {
 }
 
 /// Applies a git delta: the base's size, the result's, then copies from the
-/// base and inserts.
-fn apply(base: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
+/// base and inserts. Nothing when the result would pass `limit` bytes.
+fn apply(base: &[u8], delta: &[u8], limit: u64) -> Option<Vec<u8>> {
     let mut delta = delta.iter().copied();
     let mut size = || {
         let mut value = 0u64;
@@ -844,7 +844,7 @@ fn apply(base: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let length = size()?;
-    if length > MAX_INDEX {
+    if length > limit.min(MAX_INDEX) {
         return None;
     }
     let mut bytes = Vec::with_capacity(length as usize);

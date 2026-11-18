@@ -66,9 +66,9 @@ enum Command {
         /// The entry's text; without it, stdin is read
         text: Vec<String>,
     },
-    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG
+    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, plain text or PNG
     #[command(
-        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG.\n\n\
+        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, plain text or PNG.\n\n\
                       HTML and DOCX are written here, with images in the file's folder inlined; diagrams and math keep \
                       their source. The other formats need the Dewline app: this command hands the file to it."
     )]

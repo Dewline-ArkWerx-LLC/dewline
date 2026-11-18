@@ -71,7 +71,7 @@ pub fn read(root: &Path, session: Option<&str>, since: Option<&str>) -> io::Resu
 }
 
 /// "2026-10-30T18:01:02Z".
-fn rfc3339(time: SystemTime) -> String {
+pub(crate) fn rfc3339(time: SystemTime) -> String {
     let seconds = time
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs()) as i64;

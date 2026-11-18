@@ -117,7 +117,7 @@ dewline 0.1.0</code></pre>
             <tr><td><a href="#notify"><code>notify</code></a></td><td>Tells Dewline which file an agent's tool is changing. Agent hooks run it.</td></tr>
             <tr><td><a href="#changes"><code>changes</code></a></td><td>Lists the agent changes you kept and reverted, oldest first.</td></tr>
             <tr><td><a href="#capture"><code>capture</code></a></td><td>Adds a dated entry to your inbox note.</td></tr>
-            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as PDF, DOCX, HTML, RTF, ODT, plain text or PNG.</td></tr>
+            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, plain text or PNG.</td></tr>
             <tr><td><a href="#mcp"><code>mcp</code></a></td><td>Serves a folder's notes to an agent over MCP on stdio.</td></tr>
             <tr><td><a href="#doctor"><code>doctor</code></a></td><td>Checks the app's version, the agent hooks and the companion tools.</td></tr>
           </tbody>
@@ -225,10 +225,10 @@ dewline: /Users/you/Documents/Dewline/Inbox.md: there is nothing to capture</cod
 
       <h2 id="export"><code>dewline export</code></h2>
       <div class="code" data-lang="Usage">
-<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;pdf|docx|html|rtf|odt|txt|png&gt; [-o &lt;OUT&gt;]</code></pre>
+<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;pdf|docx|html|rtf|odt|epub|txt|png&gt; [-o &lt;OUT&gt;]</code></pre>
       </div>
       <dl>
-        <dt><code>--to &lt;pdf|docx|html|rtf|odt|txt|png&gt;</code></dt>
+        <dt><code>--to &lt;pdf|docx|html|rtf|odt|epub|txt|png&gt;</code></dt>
         <dd>The format, named by its extension. Required.</dd>
         <dt><code>-o &lt;OUT&gt;</code></dt>
         <dd>Where the export goes. By default it goes beside <code>FILE</code> with the format's extension. The folder must exist.</dd>
@@ -317,7 +317,7 @@ dewline: 1 broken link</code></pre>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline export reading.md --to pages
 error: invalid value 'pages' for '--to &lt;TO&gt;'
-  [possible values: pdf, docx, html, rtf, odt, txt, png]
+  [possible values: pdf, docx, html, rtf, odt, epub, txt, png]
 
 For more information, try '--help'.
 <span class="p">$ </span>echo $?

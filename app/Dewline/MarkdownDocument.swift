@@ -455,6 +455,24 @@ final class DocumentController: NSDocumentController {
         super.noteNewRecentDocumentURL(url)
     }
 
+    /// Code files open from Finder, File > Open and Quick Open only while Open code files is on.
+    override func openDocument(
+        withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
+    ) {
+        if let refusal = CodeFile.refusal(url) { return completionHandler(nil, false, refusal) }
+        super.openDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+    }
+
+    /// A code file reads as text, whatever type Launch Services gives its extension (.ts is also MPEG-2 video).
+    override func typeForContents(of url: URL) throws -> String {
+        CodeFile.language(of: url) != nil ? MarkdownDocument.type : try super.typeForContents(of: url)
+    }
+
+    /// File > Open offers code files only while they open.
+    override func runModalOpenPanel(_ openPanel: NSOpenPanel, forTypes types: [String]?) -> Int {
+        super.runModalOpenPanel(openPanel, forTypes: CodeFile.isOn ? types : [MarkdownDocument.type])
+    }
+
     @objc private func flushAll() {
         Task { _ = await flush() }
     }

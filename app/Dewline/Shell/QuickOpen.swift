@@ -215,7 +215,7 @@ enum QuickOpen {
     }
 }
 
-/// The Markdown files under a folder by the folder that holds them, listed the way the sidebar lists them.
+/// The files under a folder that open, by the folder that holds them, listed the way the sidebar lists them.
 struct FileTree: Sendable {
     let folder: Folder
     private var listings: [String: (files: [QuickOpenFile], folders: [String])] = [:]
@@ -276,7 +276,7 @@ struct FileTree: Sendable {
     private func list(_ path: String) -> (files: [QuickOpenFile], folders: [String]) {
         let entries = folder.children(of: URL(filePath: path, directoryHint: .isDirectory)).entries
         return (
-            entries.filter(\.isMarkdown).map { QuickOpenFile($0.url, in: folder) },
+            entries.filter(\.opens).map { QuickOpenFile($0.url, in: folder) },
             entries.filter(\.isFolder).map(\.url.path)
         )
     }
@@ -296,11 +296,14 @@ final class FolderIndex {
         return index
     }
 
-    /// Every Markdown file, or nil until the first listing finishes.
+    /// Every file that opens, or nil until the first listing finishes.
     private(set) var files: [QuickOpenFile]?
     private var tree: FileTree
     private var watch: FolderWatch?
     private var update: Task<Void, Never>?
+    /// Whether code files opened at the last whole listing; turning them on or off lists the folder again.
+    private var listsCode = CodeFile.isOn
+    private var settings: (any NSObjectProtocol)?
 
     private init(_ folder: Folder) {
         tree = FileTree(folder)
@@ -308,6 +311,17 @@ final class FolderIndex {
             self?.relist(folders.map(\.standardizedFileURL.path))
         }
         relist(nil)
+        settings = NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.listsCode != CodeFile.isOn else { return }
+                self.listsCode = CodeFile.isOn
+                self.relist(nil)
+            }
+        }
+    }
+
+    isolated deinit {
+        if let settings { NotificationCenter.default.removeObserver(settings) }
     }
 
     /// Lists again off the main thread, one update after another.

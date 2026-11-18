@@ -244,6 +244,8 @@ final class SidebarFileCell: NSTableCellView {
     private let git = NSTextField(labelWithString: "")
     private var fullName = ""
     private var dimmed = false
+    /// A code file that opens, a little dimmer than a note.
+    private var isCode = false
     private var word: GitFileState?
     private var goneTip: String?
     private var editing = false
@@ -269,7 +271,8 @@ final class SidebarFileCell: NSTableCellView {
     /// dimmed. `waiting` is empty for the open note, whose changes show beside its text.
     func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?) {
         fullName = entry.url.lastPathComponent
-        dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.isMarkdown || isAgentFile(entry.url))
+        dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.opens || isAgentFile(entry.url))
+        isCode = entry.isCode
         self.word = word
         chevron.isHidden = !entry.isFolder
         setExpanded(expanded)
@@ -348,10 +351,10 @@ final class SidebarFileCell: NSTableCellView {
         }
     }
 
-    /// The name in `ink` (`ink2` when dimmed), its ".md" in `ink2`: 4.5:1 or more on the chrome, the selection and
-    /// the hover.
+    /// The name in `ink` (`ink2` when dimmed, `CodeFile.ink` for code), its ".md" in `ink2`: 4.5:1 or more on the
+    /// chrome, the selection and the hover.
     private func display(_ text: String) -> NSAttributedString {
-        let ink = Chrome.color(dimmed ? .ink2 : .ink)
+        let ink = dimmed ? Chrome.color(.ink2) : isCode ? CodeFile.ink : Chrome.color(.ink)
         let string = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: ink])
         if text.lowercased().hasSuffix(".md"), text.count > 3 {
             string.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: (text as NSString).length - 3, length: 3))

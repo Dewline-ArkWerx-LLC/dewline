@@ -1,0 +1,219 @@
+import AppKit
+import MdCore
+import Testing
+@testable import Dewline
+
+/// Settings > Editor > Open code files. Each test sets it and puts it back, so the suite runs one test at a time.
+@MainActor @Suite(.serialized)
+struct CodeFilesTests {
+    private static let python = "import os\n\n# Not a heading\ndef main(**kwargs):\n    if kwargs:\n        print(\"*a* _b_\")\n"
+        + "long = '\(String(repeating: "a", count: 400))'\n"
+
+    @Test func offCodeFilesStayHiddenAndAreRefused() async throws {
+        let folder = try Folder(Self.files(["notes.md": "# Notes\n", "main.py": Self.python, "Dockerfile": "FROM swift\n"]))
+        defer { try? FileManager.default.removeItem(at: folder.url) }
+        try await Self.setting(false) {
+            #expect(Self.quickOpenNames(folder) == ["notes.md"])
+            let entries = folder.children(of: folder.url).entries
+            #expect(entries.filter(\.opens).map(\.url.lastPathComponent) == ["notes.md"])
+            #expect(entries.filter(\.isCode).map(\.url.lastPathComponent) == ["Dockerfile", "main.py"])
+            let refusal = try #require(CodeFile.refusal(folder.url.appending(path: "main.py")))
+            #expect(refusal.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String == "Turn on Open code files in Settings to open py files.")
+            #expect(CodeFile.refusal(folder.url.appending(path: "notes.md")) == nil)
+        }
+        await Self.setting(false) {
+            let (document, error) = await Self.openDocument(folder.url.appending(path: "main.py"))
+            #expect(document == nil)
+            #expect((error as? CocoaError)?.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String
+                == "Turn on Open code files in Settings to open py files.")
+        }
+    }
+
+    @Test func onCodeFilesListAndOpenInCodeMode() async throws {
+        let folder = try Folder(Self.files(["notes.md": "# Notes\n", "main.py": Self.python, "Dockerfile": "FROM swift\n", "photo.png": ""]))
+        defer { try? FileManager.default.removeItem(at: folder.url) }
+        try await Self.setting(true) {
+            #expect(Self.quickOpenNames(folder) == ["Dockerfile", "main.py", "notes.md"])
+            #expect(folder.children(of: folder.url).entries.filter(\.opens).map(\.url.lastPathComponent) == ["Dockerfile", "main.py", "notes.md"])
+
+            let controller = MainWindowController(folder: folder)
+            defer { (controller.document as? NSDocument)?.close() }
+            controller.open(folder.url.appending(path: "main.py"), newTab: false)
+            let textView = try #require(controller.textView)
+            #expect(textView.string == Self.python)
+            #expect(textView.styler.code == "py")
+            // No Markdown: no blocks, so no heading, emphasis or hidden marker.
+            let whole = NSRange(location: 0, length: (textView.string as NSString).length)
+            #expect(textView.styler.map.blocks(in: whole).isEmpty)
+            let storage = try #require(textView.textStorage)
+            storage.enumerateAttribute(.font, in: whole) { value, _, _ in
+                let font = value as? NSFont
+                #expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
+                #expect(font?.familyName == NSFont.monospacedSystemFont(ofSize: 13, weight: .regular).familyName)
+            }
+            storage.enumerateAttribute(.foregroundColor, in: whole) { value, _, _ in
+                #expect(value as? NSColor != NSColor.clear)
+            }
+            // Lines don't wrap, the view scrolls sideways, and each line has a number.
+            #expect(textView.textContainer?.widthTracksTextView == false)
+            #expect(textView.isHorizontallyResizable)
+            #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
+            let numbers = try #require(textView.enclosingScrollView?.verticalRulerView as? LineNumbers)
+            #expect(textView.enclosingScrollView?.rulersVisible == true)
+            #expect(numbers.lineStarts() == [0, 10, 11, 27, 47, 62, 87, 497])
+            #expect(!textView.isAutomaticQuoteSubstitutionEnabled && !textView.isContinuousSpellCheckingEnabled)
+            // The whole file is highlighted: "import" takes the keyword color.
+            let layout = try #require(textView.textLayoutManager)
+            let keyword = ThemeStore.shared.color(.codeKeyword)
+            try await Self.until {
+                layout.ensureLayout(for: layout.documentRange)
+                var color: NSColor?
+                layout.enumerateRenderingAttributes(from: layout.documentRange.location, reverse: false) { _, attributes, _ in
+                    color = attributes[.foregroundColor] as? NSColor
+                    return false
+                }
+                return color == keyword
+            }
+            // The 400-character line widens the view past the clip view, and no further than the text.
+            let clip = try #require(textView.enclosingScrollView?.contentView.bounds.width)
+            #expect(textView.frame.width > clip)
+            #expect(textView.frame.width < 10_000)
+            // Tab inserts the file's four spaces.
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            textView.insertTab(nil)
+            #expect(textView.string.hasPrefix("    import os"))
+
+            // File > Open's way in takes a file Launch Services has no type for.
+            let dockerfile = folder.url.appending(path: "Dockerfile")
+            let (document, error) = await Self.openDocument(dockerfile)
+            defer { document?.close() }
+            #expect(error == nil)
+            #expect(document?.fileType == MarkdownDocument.type)
+            #expect(CodeFile.opened(dockerfile) == "dockerfile")
+        }
+    }
+
+    @Test func indentationFollowsTheFile() {
+        #expect(CodeFile.indentation(of: "func main() {\n\tif x {\n\t\ty()\n\t}\n}\n") == "\t")
+        #expect(CodeFile.indentation(of: "a:\n  b:\n    c: 1\n  d: 2\n") == "  ")
+        #expect(CodeFile.indentation(of: Self.python) == "    ")
+        #expect(CodeFile.indentation(of: "x = 1\n") == nil)
+    }
+
+    @Test func aCodeFileRoundTripsByteIdentical() async throws {
+        // A byte-order mark, CRLF and CR breaks, a tab, non-ASCII and no final line break.
+        let bytes = Data([0xEF, 0xBB, 0xBF]) + Data("fn main() {\r\n\tlet s = \"é 😀\";\r}\r\n// end".utf8)
+        let file = try EngineFile("main.rs", bytes)
+        defer { file.close() }
+        #expect(file.textView.styler.code == "rs")
+        let numbers = try #require(file.textView.enclosingScrollView?.verticalRulerView as? LineNumbers)
+        #expect(numbers.lineStarts() == [0, 13, 30, 33])
+        try await file.save()
+        #expect(try Data(contentsOf: file.url) == bytes)
+        file.textView.insertText("x", replacementRange: NSRange(location: 3, length: 0))
+        file.textView.insertText("", replacementRange: NSRange(location: 3, length: 1))
+        try await file.save()
+        #expect(try Data(contentsOf: file.url) == bytes)
+    }
+
+    @Test func anOutsideWriteToAnOpenPythonFileIsMarked() async throws {
+        let file = try EngineFile("main.py", Data(Self.python.utf8))
+        defer { file.close() }
+        #expect(file.textView.styler.code == "py")
+        let after = Self.python + "\nmain()\n"
+        try Data(after.utf8).write(to: file.url)
+        await file.live.refresh()
+        #expect(file.textView.string == after)
+        let (id, change) = try #require(file.live.changes.first { $0.value.marked })
+        #expect(change.origin == .external)
+        #expect((file.textView.string as NSString).substring(with: change.range).contains("main()"))
+        file.textView.marks.relayout()
+        #expect(file.textView.marks.painted[id] == change.range)
+        // Reviewed at the change: Keep clears the mark and leaves the text.
+        file.textView.setSelectedRange(NSRange(location: change.range.location + 1, length: 0))
+        file.textView.keepChange(nil)
+        #expect(file.live.changes[id] == nil)
+        #expect(file.textView.string == after)
+    }
+
+    // MARK: Helpers
+
+    private static func setting<T>(_ on: Bool, _ body: () async throws -> T) async rethrows -> T {
+        let was = UserDefaults.standard.object(forKey: CodeFile.key)
+        UserDefaults.standard.set(on, forKey: CodeFile.key)
+        defer { UserDefaults.standard.set(was, forKey: CodeFile.key) }
+        return try await body()
+    }
+
+    private static func until(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("timed out")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private static func files(_ files: [String: String]) throws -> URL {
+        let root = URL(filePath: NSTemporaryDirectory()).resolvingSymlinksInPath().appending(path: "dewline-code-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for (name, text) in files { try Data(text.utf8).write(to: root.appending(path: name)) }
+        return root
+    }
+
+    private static func quickOpenNames(_ folder: Folder) -> [String] {
+        var tree = FileTree(folder)
+        tree.relist(nil)
+        return tree.files.map(\.url.lastPathComponent).sorted()
+    }
+
+    /// File > Open's way in, through the app's document controller, without showing a window.
+    private static func openDocument(_ url: URL) async -> (MarkdownDocument?, (any Error)?) {
+        await withCheckedContinuation { continuation in
+            NSDocumentController.shared.openDocument(withContentsOf: url, display: false) { document, _, error in
+                continuation.resume(returning: (document as? MarkdownDocument, error))
+            }
+        }
+    }
+
+    /// A code file the change engine opens, in a window never shown, with the setting on while it opens.
+    @MainActor private struct EngineFile {
+        let folder: URL
+        let url: URL
+        let document: MarkdownDocument
+        let textView: EditorTextView
+        let live: LiveFile
+
+        init(_ name: String, _ bytes: Data) throws {
+            folder = URL(filePath: NSTemporaryDirectory()).resolvingSymlinksInPath().appending(path: "dewline-code-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder.appending(path: "files"), withIntermediateDirectories: true)
+            url = folder.appending(path: "files/\(name)")
+            try bytes.write(to: url)
+            document = MarkdownDocument()
+            document.engine = try ChangeEngine(store: folder.appending(path: "snapshots"))
+            try document.read(from: url, ofType: MarkdownDocument.type)
+            document.fileURL = url
+            let was = UserDefaults.standard.object(forKey: CodeFile.key)
+            UserDefaults.standard.set(true, forKey: CodeFile.key)
+            document.makeWindowControllers()
+            UserDefaults.standard.set(was, forKey: CodeFile.key)
+            textView = try #require(document.textView)
+            live = try #require(document.live)
+        }
+
+        /// Cmd-S.
+        func save() async throws {
+            let error: (any Error)? = await withCheckedContinuation { continuation in
+                document.save(to: url, ofType: MarkdownDocument.type, for: .saveOperation) { continuation.resume(returning: $0) }
+            }
+            if let error { throw error }
+        }
+
+        func close() {
+            document.close()
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+}

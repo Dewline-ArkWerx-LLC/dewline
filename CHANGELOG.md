@@ -20,7 +20,6 @@ Notes save themselves, undecided changes survive closing, and export gains seven
 - Agent setup skips agents you have not installed and says when Codex needs to trust Dewline's hooks. Edits made with curly quotes or in CRLF files are matched, so more agent edits carry the agent's name, and a failed edit no longer delays the next change. A nightly test runs Claude Code and Codex against these checks.
 - Removed: live collaboration is off for now, so Share, Join Shared Note and `dewline://join` are not in this build. The agent chat panel, Follow Changes, the Preview pane, the font catalog and installable fonts, the extra theme pack, and the daily note, Dock capture and capture shortcut are gone.
 - Security fixes in the URL scheme and in LaTeX and EPUB export.
-- Idle memory with a 10 MB note open drops from 215 MB to 169 MB.
 
 ## 0.1.1 (2 Nov 2026)
 

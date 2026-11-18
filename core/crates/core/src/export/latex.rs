@@ -125,12 +125,60 @@ pub fn latex(
     (tex, writer.files)
 }
 
+/// Primitives that read or write files, define macros or hide characters; math holding one is written as text.
+const MATH_UNSAFE: &[&str] = &[
+    "\\input",
+    "\\include",
+    "\\openin",
+    "\\openout",
+    "\\read",
+    "\\write",
+    "\\immediate",
+    "\\catcode",
+    "\\csname",
+    "\\def",
+    "\\let",
+    "\\newcommand",
+    "\\renewcommand",
+    "\\usepackage",
+    "\\special",
+    "^^",
+];
+
+fn safe_math(tex: &str) -> bool {
+    !MATH_UNSAFE.iter().any(|primitive| tex.contains(primitive))
+}
+
+/// A link target with the characters TeX reads as commands, groups or comments percent-encoded.
+fn href_target(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for c in url.chars() {
+        if c.is_whitespace() || "\\{}^~%#".contains(c) {
+            let mut bytes = [0; 4];
+            for byte in c.encode_utf8(&mut bytes).bytes() {
+                let _ = write!(out, "\\%{byte:02X}");
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn verbatim(out: &mut String, source: &str) {
-    let _ = write!(
-        out,
-        "\\begin{{verbatim}}\n{}\n\\end{{verbatim}}\n\n",
-        source.trim_end_matches('\n')
-    );
+    let source = source.trim_end_matches('\n');
+    if source.contains("\\end") {
+        out.push_str("{\\ttfamily\\noindent\n");
+        for (index, line) in source.split('\n').enumerate() {
+            if index > 0 {
+                out.push_str("\\\\\n");
+            }
+            out.push_str(&escape(line).replace(' ', "\\ "));
+        }
+        out.push_str("\\par}\n\n");
+        return;
+    }
+    let _ = write!(out, "\\begin{{verbatim}}\n{source}\n\\end{{verbatim}}\n\n");
 }
 
 /// `text` with LaTeX's special characters as commands that print them.
@@ -193,10 +241,18 @@ impl Writer {
                 let _ = write!(self.out, "\\texttt{{{}}}", escape(&text));
             }
             Event::InlineMath(tex) => {
-                let _ = write!(self.out, "${tex}$");
+                let _ = if safe_math(&tex) {
+                    write!(self.out, "${tex}$")
+                } else {
+                    write!(self.out, "{}", escape(&format!("${tex}$")))
+                };
             }
             Event::DisplayMath(tex) => {
-                let _ = write!(self.out, "\\[{}\\]", tex.trim());
+                let _ = if safe_math(&tex) {
+                    write!(self.out, "\\[{}\\]", tex.trim())
+                } else {
+                    write!(self.out, "{}", escape(&format!("$${tex}$$")))
+                };
             }
             Event::FootnoteReference(label) => {
                 let _ = write!(self.out, "\\footnote{{\u{0}{label}\u{0}}}");
@@ -293,11 +349,7 @@ impl Writer {
                     .any(|scheme| dest_url.starts_with(scheme));
                 let href = web && !matches!(link_type, LinkType::WikiLink { .. });
                 if href {
-                    let target = dest_url
-                        .replace('\\', "")
-                        .replace('%', "\\%")
-                        .replace('#', "\\#");
-                    let _ = write!(self.out, "\\href{{{target}}}{{");
+                    let _ = write!(self.out, "\\href{{{}}}{{", href_target(&dest_url));
                 }
                 self.links.push(href);
             }
@@ -381,6 +433,50 @@ mod tests {
     }
 
     #[test]
+    fn code_cannot_close_verbatim() {
+        for src in ["\\end{verbatim}", "\\end {verbatim}", "\\end{ verbatim }"] {
+            let out = tex(&format!("```\na {{b}}\n  {src}\\input{{x}}\n```\n"));
+            assert!(!out.contains("\\begin{verbatim}"), "{out}");
+            assert!(!out.contains("\\end{verbatim}"), "{out}");
+            assert!(!out.contains("\\end {"), "{out}");
+            assert!(
+                out.contains("a\\ \\{b\\}\\\\\n\\ \\ \\textbackslash{}end"),
+                "{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn link_targets_are_percent_encoded() {
+        let out = tex("[a](<https://x.dev/a b\\c{d}^~%#e>)");
+        assert!(
+            out.contains("\\href{https://x.dev/a\\%20b\\%5Cc\\%7Bd\\%7D\\%5E\\%7E\\%25\\%23e}{a}"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn math_with_file_or_definition_primitives_is_text() {
+        for bad in [
+            "\\input{/etc/passwd}",
+            "\\write18{x}",
+            "a^^5cb",
+            "\\csname x\\endcsname",
+        ] {
+            let out = tex(&format!("$${bad}$ and\n\n$$${bad}$$\n"));
+            assert!(!out.contains("\\input{"), "{out}");
+            assert!(!out.contains("\\write18"), "{out}");
+            assert!(!out.contains("\\csname x"), "{out}");
+            assert!(!out.contains("^^"), "{out}");
+            assert!(
+                out.contains("\\textbackslash{}") || out.contains("\\textasciicircum"),
+                "{out}"
+            );
+        }
+        assert!(tex("$\\frac{a}{b}$").contains("$\\frac{a}{b}$"));
+    }
+
+    #[test]
     fn tables_lists_links_and_footnotes() {
         let out = tex(
             "| a | b | c |\n|:-|:-:|-:|\n| 1 | 2 | 3 |\n\n3. three\n4. four\n\n- [x] done\n- plain\n\n\
@@ -400,7 +496,7 @@ mod tests {
         );
         assert!(
             out.contains(
-                "See \\href{https://x.dev/a\\#b}{docs}, note and this\\footnote{The \\emph{note}.}."
+                "See \\href{https://x.dev/a\\%23b}{docs}, note and this\\footnote{The \\emph{note}.}."
             ),
             "{out}"
         );

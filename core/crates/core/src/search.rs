@@ -1,11 +1,12 @@
-use std::fs::OpenOptions;
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use regex::{Regex, RegexBuilder};
 
 use crate::file;
+use crate::jail::{Jail, JailError};
 use crate::text::Opened;
 
 /// Files over this many bytes are skipped.
@@ -193,11 +194,33 @@ pub fn replace(text: &str, query: &Query, with: &str) -> (String, usize) {
     (out, count)
 }
 
+/// Why a replace in a file wrote nothing.
+#[derive(Debug)]
+pub enum ReplaceError {
+    /// The file resolves outside the folder.
+    Outside,
+    /// The file changed after it was read.
+    Conflict,
+    Io(io::Error),
+}
+
 /// Replaces each match of `query` in the file at `path` with `with`, as
-/// `replace` does, and returns how many there were. The file is written only
-/// while it still holds what was read; a file `search` skips is left alone.
-pub fn replace_in_file(path: &Path, query: &Query, with: &str) -> Result<usize, file::SaveError> {
-    let Some(bytes) = read(path) else {
+/// `replace` does, and returns how many there were. Only a file that resolves
+/// inside `root` is read and written, opened from the root with no symlink on
+/// the way, and it is written only while it still holds what was read. A file
+/// `search` skips is left alone.
+pub fn replace_in_file(
+    root: &Path,
+    path: &Path,
+    query: &Query,
+    with: &str,
+) -> Result<usize, ReplaceError> {
+    let jail = Jail::new(root).map_err(ReplaceError::Io)?;
+    let (opened, relative) = jail.open(path).map_err(|error| match error {
+        JailError::Io(error) => ReplaceError::Io(error),
+        JailError::Outside | JailError::Root(_) => ReplaceError::Outside,
+    })?;
+    let Some(bytes) = read_file(opened) else {
         return Ok(0);
     };
     let base = file::hash(&bytes);
@@ -206,7 +229,11 @@ pub fn replace_in_file(path: &Path, query: &Query, with: &str) -> Result<usize, 
     };
     let (text, count) = replace(&text, query, with);
     if count > 0 {
-        file::save(path, &base, &Opened::Utf8 { bom, text }.to_bytes())?;
+        let bytes = Opened::Utf8 { bom, text }.to_bytes();
+        file::save(&jail.root().join(relative), &base, &bytes).map_err(|error| match error {
+            file::SaveError::Conflict => ReplaceError::Conflict,
+            file::SaveError::Io(error) => ReplaceError::Io(error),
+        })?;
     }
     Ok(count)
 }
@@ -220,6 +247,10 @@ fn read(path: &Path) -> Option<Vec<u8>> {
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .ok()?;
+    read_file(file)
+}
+
+fn read_file(file: File) -> Option<Vec<u8>> {
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > MAX_FILE {
         return None;
@@ -557,13 +588,54 @@ mod tests {
 
     #[test]
     fn replacing_in_a_file_keeps_its_byte_order_mark() {
-        let (_dir, paths) = files(&[b"\xEF\xBB\xBFplan\nplan", b"\xFFplan"]);
+        let (dir, paths) = files(&[b"\xEF\xBB\xBFplan\nplan", b"\xFFplan"]);
         let query = Query::new("plan", ANY_CASE).unwrap();
-        assert_eq!(replace_in_file(&paths[0], &query, "note").unwrap(), 2);
+        assert_eq!(
+            replace_in_file(dir.path(), &paths[0], &query, "note").unwrap(),
+            2
+        );
         assert_eq!(fs::read(&paths[0]).unwrap(), b"\xEF\xBB\xBFnote\nnote");
         // Not UTF-8: left alone.
-        assert_eq!(replace_in_file(&paths[1], &query, "note").unwrap(), 0);
+        assert_eq!(
+            replace_in_file(dir.path(), &paths[1], &query, "note").unwrap(),
+            0
+        );
         assert_eq!(fs::read(&paths[1]).unwrap(), b"\xFFplan");
+    }
+
+    #[test]
+    fn replacing_never_writes_through_a_link_out_of_the_folder() {
+        let base = tempfile::tempdir().unwrap();
+        let (root, outside) = (base.path().join("root"), base.path().join("outside"));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.md"), "plan").unwrap();
+        fs::write(root.join("notes/plan.md"), "plan").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.md"), root.join("secret.md")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        std::os::unix::fs::symlink("notes/plan.md", root.join("alias.md")).unwrap();
+        let query = Query::new("plan", ANY_CASE).unwrap();
+        for path in ["secret.md", "out/secret.md", "../outside/secret.md"] {
+            assert!(
+                matches!(
+                    replace_in_file(&root, &root.join(path), &query, "note"),
+                    Err(ReplaceError::Outside)
+                ),
+                "{path}"
+            );
+        }
+        assert_eq!(fs::read(outside.join("secret.md")).unwrap(), b"plan");
+        // A link that stays inside writes the file it names, and leaves the link.
+        assert_eq!(
+            replace_in_file(&root, &root.join("alias.md"), &query, "note").unwrap(),
+            1
+        );
+        assert_eq!(fs::read(root.join("notes/plan.md")).unwrap(), b"note");
+        assert!(
+            fs::symlink_metadata(root.join("alias.md"))
+                .unwrap()
+                .is_symlink()
+        );
     }
 
     #[test]

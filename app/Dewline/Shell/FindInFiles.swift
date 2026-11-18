@@ -287,7 +287,14 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private func replace(_ query: String, with replacement: String, options: SearchOptions, in files: [URL]) {
         var closed: [URL] = []
         var skipped: [URL] = []
+        let root = folder.url
+        let realRoot = root.resolvingSymlinksInPath().path + "/"
         for url in files {
+            // A link out of the folder keeps its matches, open or not.
+            guard url.resolvingSymlinksInPath().path.hasPrefix(realRoot) else {
+                skipped.append(url)
+                continue
+            }
             guard let document = NSDocumentController.shared.document(for: url) else {
                 closed.append(url)
                 continue
@@ -302,7 +309,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         Task { [weak self, closed, skipped] in
             let failed = await Task.detached(priority: .userInitiated) {
-                closed.filter { url in (try? replaceMatches(of: query, inFile: url, with: replacement, options: options)) == nil }
+                closed.filter { url in (try? replaceMatches(of: query, inFile: url, under: root, with: replacement, options: options)) == nil }
             }.value
             guard let self else { return }
             self.run(after: .zero)
@@ -310,7 +317,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             guard !left.isEmpty, let window = self.view.window else { return }
             let alert = NSAlert()
             alert.messageText = "\(Self.count(left.count, "file")) kept \(left.count == 1 ? "its" : "their") matches"
-            alert.informativeText = "These changed while replacing, or couldn\u{2019}t be written:\n"
+            alert.informativeText = "These lead outside the folder, changed while replacing, or couldn\u{2019}t be written:\n"
                 + left.map { self.folder.relativePath(of: $0) ?? $0.path }.joined(separator: "\n")
             alert.beginSheetModal(for: window, completionHandler: nil)
         }

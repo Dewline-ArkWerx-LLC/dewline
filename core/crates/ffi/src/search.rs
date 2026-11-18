@@ -1,12 +1,14 @@
 use std::path::Path;
 
-use dewline_core::{file, search};
+use dewline_core::search;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SearchError {
     /// The pattern doesn't compile.
     #[error("{message}")]
     Pattern { message: String },
+    #[error("the file is outside the folder")]
+    Outside,
     #[error("the file changed after it was read")]
     Conflict,
     #[error("{message}")]
@@ -120,10 +122,11 @@ pub fn replace_text(
 }
 
 /// Replaces each match of `query` in the file at `path` as `replace_text`
-/// does, writing only while the file still holds what was read, and returns
-/// how many there were.
+/// does, and returns how many there were. Only a file that resolves inside
+/// `root` is written, and only while it still holds what was read.
 #[uniffi::export]
 pub fn replace_in_file(
+    root: String,
     path: String,
     query: String,
     with: String,
@@ -132,10 +135,11 @@ pub fn replace_in_file(
     regex: bool,
 ) -> Result<u32, SearchError> {
     let query = self::query(&query, match_case, whole_word, regex)?;
-    match search::replace_in_file(Path::new(&path), &query, &with) {
+    match search::replace_in_file(Path::new(&root), Path::new(&path), &query, &with) {
         Ok(count) => Ok(count as u32),
-        Err(file::SaveError::Conflict) => Err(SearchError::Conflict),
-        Err(file::SaveError::Io(error)) => Err(SearchError::Io {
+        Err(search::ReplaceError::Outside) => Err(SearchError::Outside),
+        Err(search::ReplaceError::Conflict) => Err(SearchError::Conflict),
+        Err(search::ReplaceError::Io(error)) => Err(SearchError::Io {
             message: error.to_string(),
         }),
     }

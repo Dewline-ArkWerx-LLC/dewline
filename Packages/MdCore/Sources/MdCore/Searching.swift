@@ -34,6 +34,8 @@ public struct SearchOptions: Sendable, Equatable {
 public enum SearchFailure: Error, Sendable, Equatable {
     /// The pattern doesn't compile, and the message says why.
     case pattern(String)
+    /// The file resolves outside the folder.
+    case outside
     /// The file no longer holds the bytes it was read with.
     case conflict
     case io(String)
@@ -41,6 +43,7 @@ public enum SearchFailure: Error, Sendable, Equatable {
     init(_ error: Error) {
         switch error {
         case SearchError.Pattern(let message): self = .pattern(message)
+        case SearchError.Outside: self = .outside
         case SearchError.Conflict: self = .conflict
         case SearchError.Io(let message): self = .io(message)
         default: self = .io("\(error)")
@@ -93,14 +96,14 @@ public func replacingMatches(of query: String, in text: String, with replacement
     }
 }
 
-/// Replaces each match of `query` in the file at `url` as `replacingMatches` does, writing only while the file still
-/// holds what was read, and returns how many there were.
-public func replaceMatches(of query: String, inFile url: URL, with replacement: String, options: SearchOptions)
-    throws(SearchFailure) -> Int
-{
+/// Replaces each match of `query` in the file at `url` as `replacingMatches` does, and returns how many there were. Only
+/// a file that resolves inside `folder` is written, and only while it still holds what was read.
+public func replaceMatches(
+    of query: String, inFile url: URL, under folder: URL, with replacement: String, options: SearchOptions
+) throws(SearchFailure) -> Int {
     do {
         return Int(try replaceInFile(
-            path: url.path, query: query, with: replacement, matchCase: options.matchCase, wholeWord: options.wholeWord,
+            root: folder.path, path: url.path, query: query, with: replacement, matchCase: options.matchCase, wholeWord: options.wholeWord,
             regex: options.regex
         ))
     } catch {

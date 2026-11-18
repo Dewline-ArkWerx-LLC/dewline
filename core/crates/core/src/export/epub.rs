@@ -280,6 +280,7 @@ mod tests {
                     ))
                 },
                 folder: None,
+                code: &|_, _| None,
             },
         );
         let bytes = epub(&page, "notes", SystemTime::UNIX_EPOCH).unwrap();

@@ -146,6 +146,7 @@ final class EditorTextView: CaretTextView {
             rail.labels.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
         ])
         rail.attach(textView)
+        textView.showLineNumbers(textView.styler.showsSource)
         let status = NSTextField(labelWithString: "")
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         status.textColor = ThemeStore.shared.color(.ink2)
@@ -176,13 +177,19 @@ final class EditorTextView: CaretTextView {
         isHorizontallyResizable = true
         textContainer?.widthTracksTextView = false
         textContainer?.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        if let scrollView = enclosingScrollView {
-            scrollView.hasHorizontalScroller = true
-            scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView)
-            scrollView.hasVerticalRuler = true
-            scrollView.rulersVisible = true
-        }
+        enclosingScrollView?.hasHorizontalScroller = true
+        showLineNumbers(true)
         applyTheme()
+    }
+
+    /// Line numbers left of the text, in a code file and in Source mode.
+    private func showLineNumbers(_ shown: Bool) {
+        guard let scrollView = enclosingScrollView, shown != scrollView.hasVerticalRuler else { return }
+        if shown { scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView) }
+        scrollView.hasVerticalRuler = shown
+        scrollView.rulersVisible = shown
+        // A ruler put away stops counting lines.
+        if !shown { scrollView.verticalRulerView = nil }
     }
 
     /// Paper, selection and typing attributes from the theme, and the column at its measure.
@@ -480,6 +487,8 @@ final class EditorTextView: CaretTextView {
             return
         }
         snapshot?.removeFromSuperview()
+        // The line numbers come and go before the picture, so the fade doesn't stretch it.
+        showLineNumbers(!styler.showsSource)
         let storage = textStorage!
         let visible = visibleRect
         // TextKit 2 answers a point in the top inset with an index near the end of the text, so probes stay below the inset.

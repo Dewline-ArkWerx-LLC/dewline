@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use dewline_core::export;
-use mermaid_rs_renderer::{LayoutConfig, RenderOptions, Theme};
+use mermaid_rs_renderer::{Layout, LayoutConfig, Theme, compute_layout};
 use ratex_layout::LayoutOptions;
 use ratex_types::color::Color;
 use resvg::{tiny_skia, usvg};
@@ -165,6 +165,12 @@ const LIGHT_ONLY: [&str; 11] = [
 const MAX_SOURCE: usize = 50 * 1024;
 const MAX_PIXELS: u32 = 16 << 20;
 const BUDGET: Duration = Duration::from_millis(250);
+// The editor narrows a diagram to its text column, about 590 pt at the default
+// measure. A flowchart that would draw its labels under 11 pt there folds into
+// bands at 3:2 when that makes it narrower (the renderer folds no subgraphs).
+const COLUMN: f32 = 590.0;
+const LEAST_LABEL: f32 = 11.0;
+const FOLD_RATIO: f32 = 1.5;
 
 static FONTS: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
     let mut fonts = usvg::fontdb::Database::new();
@@ -217,13 +223,27 @@ pub fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, R
     }
     LazyLock::force(&MERMAID_FONTS);
     let theme = colors.theme(&known);
+    let flowchart = matches!(known.as_str(), "flowchart" | "graph");
     within_budget(move || {
-        let options = RenderOptions {
-            theme,
-            layout: LayoutConfig::default(),
+        let graph = mermaid_rs_renderer::parse_mermaid_strict(&source)
+            .map_err(|error| error.to_string())?
+            .graph;
+        let width = |layout: &Layout, config: &LayoutConfig| {
+            mermaid_rs_renderer::measure_svg_dimensions(layout, config, None).width
         };
-        mermaid_rs_renderer::render_with_options(&source, options)
-            .map_err(|error| error.to_string())
+        let mut config = LayoutConfig::default();
+        let mut layout = compute_layout(&graph, &theme, &config);
+        if flowchart && width(&layout, &config) > COLUMN * theme.font_size / LEAST_LABEL {
+            let folded_config = LayoutConfig {
+                preferred_aspect_ratio: Some(FOLD_RATIO),
+                ..LayoutConfig::default()
+            };
+            let folded = compute_layout(&graph, &theme, &folded_config);
+            if width(&folded, &folded_config) < width(&layout, &config) {
+                (layout, config) = (folded, folded_config);
+            }
+        }
+        Ok(mermaid_rs_renderer::render_svg(&layout, &theme, &config))
     })
 }
 
@@ -503,6 +523,18 @@ mod tests {
         isolate();
         let svg = render_mermaid("flowchart LR\n  a[Start] --> b[Stop]".into(), night()).unwrap();
         assert!(svg.starts_with("<svg") && svg.contains("Start"));
+    }
+
+    #[test]
+    fn mermaid_folds_a_long_flow_into_the_column() {
+        isolate();
+        let svg = render_mermaid(
+            "flowchart LR\n  a[Write the draft] --> b[Agent edits] --> c[Review changes] --> d[Keep or revert] --> e[Save]".into(),
+            night(),
+        )
+        .unwrap();
+        let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
+        assert!(tree.size().width() <= COLUMN * Theme::modern().font_size / LEAST_LABEL);
     }
 
     #[test]

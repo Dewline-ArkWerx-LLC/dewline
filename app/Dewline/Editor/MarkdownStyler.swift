@@ -65,8 +65,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     ].map { $0.rawValue as NSString }
     /// The text a long restyle styles at once, which covers the view: several screens.
     private static let chunk = BlockMap.screen
-    /// The most text one later pass styles while more waits, so a pass fits in a 120 Hz frame.
+    /// The text a later pass styles at a time, and how long it goes on styling while more waits: a pass fits in a
+    /// 120 Hz frame with the layout and display after it, and the storage processes and the view lays out once a pass.
     private static let pass = chunk / 2
+    private static let passTime = Duration.milliseconds(4)
     private static var base: [NSAttributedString.Key: Any] {
         [
             .font: bodyFont,
@@ -357,9 +359,17 @@ extension MarkdownStyler {
             let anchor = min(line ?? top, storage.length - 1)
             held = textView.baseline(at: anchor).map { (anchor, $0 - visible.minY) }
         }
-        let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, Self.pass, map.parsed - first)
+        let selection = textView.selectedRanges.map(\.rangeValue)
+        let deadline = ContinuousClock.now + Self.passTime
         storage.beginEditing()
-        restyle(NSRange(location: first, length: length), in: storage, selection: textView.selectedRanges.map(\.rangeValue))
+        if past {
+            restyle(NSRange(location: first, length: map.parsed - first), in: storage, selection: selection)
+        } else {
+            repeat {
+                let first = unstyled.first!
+                restyle(NSRange(location: first, length: min(unstyled.rangeView.first!.count, Self.pass, map.parsed - first)), in: storage, selection: selection)
+            } while ContinuousClock.now < deadline && unstyled.first.map { $0 < map.parsed } == true
+        }
         storage.endEditing()
         if let held { textView.hold(held.anchor, at: held.offset) }
         if unstyled.isEmpty { restored = nil } else { schedule() }

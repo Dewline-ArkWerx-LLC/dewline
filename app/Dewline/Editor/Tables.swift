@@ -79,13 +79,13 @@ final class Tables {
             delimiter = NSRange(location: delimiter.location + 1, length: delimiter.length - 1)
         }
         let alignments = Self.alignments(text.substring(with: delimiter))
-        func cells(_ block: BlockMap.Block) -> [SyntaxSpan] {
-            block.spans.filter { $0.kind == .tableCell }.map { $0.shifted(by: block.range.location - offset) }
+        func spans(_ kind: SyntaxSpan.Kind, of block: BlockMap.Block) -> [SyntaxSpan] {
+            block.spans.filter { $0.kind == kind }.map { $0.shifted(by: block.range.location - offset) }
         }
-        var lines = [(range: header, token: headToken.range, cells: cells(table.head))]
+        var lines = [(range: header, token: headToken.range, cells: spans(.tableCell, of: table.head), code: spans(.inlineCode, of: table.head))]
         for row in table.rows {
             guard let token = row.spans.first(where: { $0.kind == .tableRow })?.shifted(by: row.range.location - offset) else { continue }
-            lines.append((token.range, token.range, cells(row)))
+            lines.append((token.range, token.range, spans(.tableCell, of: row), spans(.inlineCode, of: row)))
         }
         let count = lines[0].cells.count
         guard count > 0 else { return }
@@ -110,7 +110,12 @@ final class Tables {
         let room = available - gap * CGFloat(count - 1)
         let wraps = available > 0 && widths.reduce(0, +) > room
         if wraps {
-            let words = lines.map { line in line.cells.prefix(count).map { Self.longestWord(styled.attributedSubstring(from: $0.content)) } }
+            let words = lines.map { line in
+                line.cells.prefix(count).map { cell in
+                    let code = line.code.filter { NSIntersectionRange($0.range, cell.content) == $0.range }
+                    return Self.longestWord(styled.attributedSubstring(from: cell.content), code: code.map { NSRange(location: $0.range.location - cell.content.location, length: $0.range.length) })
+                }
+            }
             let least = (0..<count).map { column in min(words.map { $0.count > column ? $0[column] : 0 }.max() ?? 0, room / CGFloat(count)) }
             widths = Self.fit(widths, least: least, into: room)
         }
@@ -187,9 +192,9 @@ final class Tables {
         return zip(least, spare).map { ($0 + $1 * min(share, 1)).rounded(.down) }
     }
 
-    /// The width of a cell's longest word.
-    private static func longestWord(_ cell: NSAttributedString) -> CGFloat {
-        var widest: CGFloat = 0
+    /// The width of a cell's longest word, each code span in it counting as one: a path in code breaks at no slash.
+    private static func longestWord(_ cell: NSAttributedString, code: [NSRange]) -> CGFloat {
+        var widest = code.map { cell.attributedSubstring(from: $0).size().width }.max() ?? 0
         (cell.string as NSString).enumerateSubstrings(in: NSRange(location: 0, length: cell.length), options: .byWords) { _, word, _, _ in
             widest = max(widest, cell.attributedSubstring(from: word).size().width)
         }

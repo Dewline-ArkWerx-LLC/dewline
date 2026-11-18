@@ -116,7 +116,7 @@ impl Book {
                     let close = rest.find("</svg>").map_or(rest.len(), |close| close + 6);
                     let name = format!("images/diagram-{}.svg", self.files.len() + 1);
                     let _ = write!(out, "<img src=\"{name}\" alt=\"diagram\"/>");
-                    self.files.push((name, rest[..close].as_bytes().to_vec()));
+                    self.files.push((name, rest.as_bytes()[..close].to_vec()));
                     rest = &rest[close..];
                     continue;
                 }

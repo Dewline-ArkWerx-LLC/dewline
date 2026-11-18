@@ -18,6 +18,8 @@ final class LiveFile {
         var theirs = ""
         /// Landed unnamed while Claude Code ran a shell command.
         var shell = false
+        /// Revert was refused for text typed inside it, until you edit it again.
+        var refused = false
     }
 
     let engine: ChangeEngine
@@ -553,6 +555,7 @@ final class LiveFile {
         }
         changes = changes.mapValues { change in
             var change = change
+            if range.location <= NSMaxRange(change.range), oldEnd >= change.range.location { change.refused = false }
             let start = min(moved(change.range.location), change.range.location)
             change.range = NSRange(location: start, length: moved(NSMaxRange(change.range)) - start)
             return change
@@ -566,9 +569,10 @@ final class LiveFile {
         guard let textView = document?.textView, let pending = changes[change] else { return }
         let current = (textView.string as NSString).substring(with: pending.range)
         let replacement = engine.decide(doc, change: change, decision: decision, current: current)
-        // A revert that would drop text typed inside the change leaves it pending.
+        // A revert that would drop text typed inside the change leaves it pending, and its stamp says why.
         if replacement == nil, decision == .other, !pending.conflict {
             NSSound.beep()
+            changes[change]?.refused = true
             return
         }
         changes[change] = nil

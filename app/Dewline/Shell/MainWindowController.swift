@@ -797,13 +797,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     /// Counts the note's words, and the selection's, for the tab's tooltip 250 ms after the text or the selection last
-    /// changed, once the map has the whole text. It counts on the main thread from the storage itself, a
-    /// piece between events, and starts over when the text changes.
+    /// changed, once the map has the whole text and the styler has styled it. It counts on the main thread from the
+    /// storage itself, a piece between events, and starts over when the text changes.
     @objc private func countWords() {
         countUpdate?.cancel()
         countUpdate = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
-            while let map = self?.textView?.styler.map, map.parsed < (self?.textView?.textStorage?.length ?? 0), !Task.isCancelled {
+            while let styler = self?.textView?.styler, styler.map.parsed < (self?.textView?.textStorage?.length ?? 0) || styler.hasUnstyledText, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             var count = (total: 0, selected: 0)

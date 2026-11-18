@@ -99,6 +99,7 @@ jobs:
 
   # Each agent runs only when its API key secret is set; the script skips one without it.
   agents:
+    if: github.ref == 'refs/heads/main'
     runs-on: xcode-27
     timeout-minutes: 30
     permissions:
@@ -112,19 +113,19 @@ jobs:
           toolchain: 1.99.1
       - name: Build the dewline command
         run: cargo build -p dewline-cli --locked
+      # No secrets in this step's environment: the install scripts of the latest releases and everything they pull in run here.
+      - name: Install the latest Claude Code and Codex without install scripts
+        working-directory: .
+        run: | # zizmor: ignore[adhoc-packages] the run tests the latest releases
+          npm install --global --ignore-scripts @anthropic-ai/claude-code @openai/codex
+          # Claude Code needs its own postinstall to place the native binary; nothing else's script runs.
+          node "$(npm root --global)/@anthropic-ai/claude-code/install.cjs"
       - name: Run Claude Code and Codex over the conformance notes
         working-directory: .
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: | # zizmor: ignore[adhoc-packages] the run tests the latest releases
-          packages=()
-          [[ -n $ANTHROPIC_API_KEY ]] && packages+=(@anthropic-ai/claude-code)
-          [[ -n $OPENAI_API_KEY ]] && packages+=(@openai/codex)
-          if ((${#packages[@]} > 0)); then
-            npm install --global "${packages[@]}"
-          fi
-          scripts/agent-conformance.sh core/target/debug/dewline
+        run: scripts/agent-conformance.sh core/target/debug/dewline
 
   # A failure on main opens an issue, or comments on the one still open, with a link to the run. The run's logs hold
   # the details; a fuzz crash's inputs stay on the runner as above.

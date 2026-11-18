@@ -70,6 +70,8 @@ final class EditorTextView: CaretTextView {
         }
     }
     private var meta: NSTextField?
+    /// What Tab inserts in a code file, its own indentation; nil in a note, or a code file that indents nothing yet.
+    private var codeIndent: String?
     /// The room the meta line takes over the text.
     private static let metaRoom: CGFloat = 36
 
@@ -159,6 +161,25 @@ final class EditorTextView: CaretTextView {
         return scrollView
     }
 
+    /// Shows a code file in `language`, before its text arrives: no Markdown, every line on one line with a number,
+    /// the view scrolling sideways, and no smart punctuation or spelling. Tab inserts `indent` when given.
+    func showCode(_ language: String, indent: String?) {
+        styler.code = language
+        codeIndent = indent
+        smartInsertDeleteEnabled = false
+        isAutomaticSpellingCorrectionEnabled = false
+        isHorizontallyResizable = true
+        textContainer?.widthTracksTextView = false
+        textContainer?.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        if let scrollView = enclosingScrollView {
+            scrollView.hasHorizontalScroller = true
+            scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView)
+            scrollView.hasVerticalRuler = true
+            scrollView.rulersVisible = true
+        }
+        applyTheme()
+    }
+
     /// Paper, selection and typing attributes from the theme, and the column at its measure.
     private func applyTheme() {
         let store = ThemeStore.shared
@@ -168,9 +189,10 @@ final class EditorTextView: CaretTextView {
         typingAttributes = styler.baseAttributes
         vimStatus?.textColor = store.color(.ink2)
         meta?.textColor = store.color(.ink3)
-        isAutomaticQuoteSubstitutionEnabled = store.smartPunctuation
-        isAutomaticDashSubstitutionEnabled = store.smartPunctuation
-        if isContinuousSpellCheckingEnabled != store.spellCheck { isContinuousSpellCheckingEnabled = store.spellCheck }
+        let prose = styler.code == nil
+        isAutomaticQuoteSubstitutionEnabled = prose && store.smartPunctuation
+        isAutomaticDashSubstitutionEnabled = prose && store.smartPunctuation
+        if isContinuousSpellCheckingEnabled != (prose && store.spellCheck) { isContinuousSpellCheckingEnabled = prose && store.spellCheck }
         fitColumn(to: frame.width)
         if store.vimMode != (vim != nil) { vim = store.vimMode ? VimEngine() : nil }
         updateFocus()
@@ -197,6 +219,11 @@ final class EditorTextView: CaretTextView {
     /// Centers the column at the measure, with margins of at least 32 pt; a narrower view fills. Typewriter lets the
     /// first and last lines scroll to the middle.
     private func fitColumn(to width: CGFloat) {
+        // Code starts at the line numbers, room left for the margin rules of changes.
+        if styler.code != nil {
+            if textContainerInset != NSSize(width: 24, height: 16) { textContainerInset = NSSize(width: 24, height: 16) }
+            return
+        }
         let padding = textContainer?.lineFragmentPadding ?? 0
         let margin = max(32, ((width - ThemeStore.shared.measure) / 2 - padding).rounded(.down))
         let top: CGFloat = metaLine == nil ? 24 : 24 + Self.metaRoom
@@ -371,7 +398,9 @@ final class EditorTextView: CaretTextView {
     }
 
     override func paste(_ sender: Any?) {
-        history.perform("Paste") { super.paste(sender) }
+        history.perform("Paste") {
+            if styler.code != nil || !pasteHTMLAsMarkdown(from: .general) { super.paste(sender) }
+        }
     }
 
     override func pasteAsPlainText(_ sender: Any?) {
@@ -383,19 +412,20 @@ final class EditorTextView: CaretTextView {
         marks.layoutIfDirty()
     }
 
-    /// The change Keep Change and Revert Change decide: the one under the caret, else the one the stamp shows.
+    /// The change Keep Change and Revert Change decide, with the rest of its writer's (`ChangeMarks.group`): the one
+    /// under the caret, else the one the stamp shows.
     var changeToDecide: UInt64? {
         marks.changeAtCaret ?? marks.stamped
     }
 
     /// Cmd-Return.
     @objc func keepChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.keep(id) }
+        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: true) }
     }
 
     /// Option-Cmd-Delete.
     @objc func revertChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.revert(id) }
+        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: false) }
     }
 
     /// Shift-Cmd-Return: keeps every marked change in this file.
@@ -437,6 +467,8 @@ final class EditorTextView: CaretTextView {
 
     /// Switches between the rendered document and its source, holding the caret's line (or the first visible line) in place.
     @objc func toggleSource(_ sender: Any?) {
+        // A code file has no rendering to switch from.
+        guard styler.code == nil else { return }
         guard !defersStyling else {
             toggleWaits.toggle()
             return
@@ -558,7 +590,8 @@ final class EditorTextView: CaretTextView {
     }
 
     override func insertTab(_ sender: Any?) {
-        guard hasMarkedText() || !indentItems(outdent: false) else { return }
+        if let codeIndent, !hasMarkedText() { return insertText(codeIndent, replacementRange: selectedRange()) }
+        guard hasMarkedText() || !(editTable(.nextCell) || indentItems(outdent: false)) else { return }
         let width = ThemeStore.shared.tabWidth
         if width > 0, !hasMarkedText() {
             insertText(String(repeating: " ", count: width), replacementRange: selectedRange())
@@ -568,7 +601,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override func insertBacktab(_ sender: Any?) {
-        guard hasMarkedText() || !indentItems(outdent: true) else { return }
+        guard hasMarkedText() || !(editTable(.previousCell) || indentItems(outdent: true)) else { return }
         super.insertBacktab(sender)
     }
 
@@ -661,7 +694,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
-        super.readablePasteboardTypes + [.png, .tiff, .fileURL].filter { !super.readablePasteboardTypes.contains($0) }
+        super.readablePasteboardTypes + (Self.kept.map { NSPasteboard.PasteboardType($0.identifier) } + [.tiff, .fileURL]).filter { !super.readablePasteboardTypes.contains($0) }
     }
 
     override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
@@ -702,8 +735,37 @@ final class EditorTextView: CaretTextView {
         }
     }
 
+    /// Runs `command` in the table holding the caret, moving to a cell or editing as one undoable edit named for it.
+    /// False outside a table.
+    func editTable(_ command: TableEditing) -> Bool {
+        let selection = selectedRange()
+        guard let table = styler.tables.range(at: selection.location),
+            let edit = command.edit(in: textStorage!.mutableString, table: table, selection: selection)
+        else { return false }
+        if edit.range.length == 0, edit.replacement.isEmpty {
+            setSelectedRange(edit.selection)
+            scrollRangeToVisible(edit.selection)
+            return true
+        }
+        history.perform(command.name) {
+            guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+            textStorage!.replaceCharacters(in: edit.range, with: edit.replacement)
+            setSelectedRange(edit.selection)
+            didChangeText()
+        }
+        return true
+    }
+
+    /// Format > Insert Row Above, Row Below, Column Left and Column Right, by the `TableEditing` in the sender's tag.
+    @objc func editTableItem(_ sender: Any?) {
+        guard !hasMarkedText(), let command = (sender as? NSMenuItem).flatMap({ TableEditing(rawValue: $0.tag) }), editTable(command) else {
+            return NSSound.beep()
+        }
+    }
+
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(format(_:)) { return isEditable }
+        if menuItem.action == #selector(editTableItem(_:)) { return isEditable && styler.tables.range(at: selectedRange().location) != nil }
         if menuItem.action == #selector(keepChange(_:)) || menuItem.action == #selector(revertChange(_:)) {
             return changeToDecide != nil
         }

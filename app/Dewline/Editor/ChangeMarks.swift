@@ -52,7 +52,13 @@ struct MarkWriter: Equatable {
 /// below it. The marks sit under the text; ghosts and cards sit over it.
 @MainActor
 final class ChangeMarks: NSView, NSViewToolTipOwner {
-    weak var textView: EditorTextView?
+    weak var textView: EditorTextView? {
+        didSet {
+            NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification, object: nil)
+            guard let storage = textView?.textStorage else { return }
+            NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: storage)
+        }
+    }
     /// Keep, Revert and the card's choices go through the engine here.
     weak var live: LiveFile?
     private var changes: [UInt64: LiveFile.Change] = [:]
@@ -132,6 +138,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         for id in marked.keys where landed[id] == nil { landed[id] = .now }
         self.changes = marked
         updateHangers()
+        dirty = true
+        textView?.needsLayout = true
+    }
+
+    /// Any edit, typing or styling, moves the lines the marks sit on: they lay out again on the text's next layout
+    /// pass, from the fragments that pass makes.
+    @objc private func storageEdited() {
+        guard !changes.isEmpty else { return }
         dirty = true
         textView?.needsLayout = true
     }
@@ -260,6 +274,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let motion = Motion.current != .off
         let storage = textView.textStorage!
         var hung: [UInt64: CGFloat] = [:]
+        var ruled: [(key: String, rules: [NSRect], color: NSColor)] = []
         // Hangers under one paragraph stack in change order; each change in it anchors at its own offset.
         func paragraph(_ anchor: Int) -> NSRange {
             storage.mutableString.paragraphRange(for: NSRange(location: min(anchor, storage.length), length: 0))
@@ -294,7 +309,16 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             guard !rows.isEmpty else { continue }
             if !change.conflict {
                 painted[id] = change.range
-                for line in lines where line.frame.width >= 0.5 {
+                // A table row that draws its cells hides its source, so the wash goes on the drawn cells instead.
+                let drawn = drawnCells(change.range)
+                for cell in drawn.cells {
+                    let fill = CALayer()
+                    fill.frame = cell
+                    fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
+                    group.addSublayer(fill)
+                    tips.append((cell, id))
+                }
+                for line in lines where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
                     let fill = CALayer()
                     fill.frame = line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
@@ -315,6 +339,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             // A rule per row; a 1 pt line at 35% joins the rows across what lies between them.
             let x = max(left - Self.ruleInset, 4)
             let rules = rows.map { NSRect(x: x, y: $0.minY + 2, width: ruleWidth, height: max($0.height - 4, 4)) }
+            if !change.conflict { ruled.append((Review.key(change.origin), rules, color)) }
             for (above, below) in zip(rules, rules.dropFirst()) where below.minY > above.maxY {
                 let join = CALayer()
                 join.frame = NSRect(x: x + (ruleWidth - 1) / 2, y: above.maxY, width: 1, height: below.minY - above.maxY)
@@ -348,6 +373,20 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             }
             layer.addSublayer(group)
         }
+        // One writer's changes read as one: the same 1 pt line joins a change's last rule to the next change's first
+        // when only a few lines lie between them.
+        let near = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight * 3
+        for writer in Dictionary(grouping: ruled, by: \.key).values {
+            let spans = writer.filter { !$0.rules.isEmpty }.sorted { $0.rules[0].minY < $1.rules[0].minY }
+            for (above, below) in zip(spans, spans.dropFirst()) {
+                let (top, bottom) = (above.rules.last!.maxY, below.rules[0].minY)
+                guard bottom > top, bottom - top <= near else { continue }
+                let join = CALayer()
+                join.frame = NSRect(x: below.rules[0].minX + (ruleWidth - 1) / 2, y: top, width: 1, height: bottom - top)
+                join.backgroundColor = above.color.withAlphaComponent(0.35).cgColor
+                layer.addSublayer(join)
+            }
+        }
         CATransaction.commit()
         for tip in tips { addToolTip(tip.rect, owner: self, userData: nil) }
         placeStamp(left: left, hung: hung)
@@ -372,6 +411,46 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             }
         }
         return rows.map(\.rect)
+    }
+
+    /// The drawn cells `range` changes in table rows that draw their cells, in this view's coordinates, and those rows'
+    /// paragraphs.
+    private func drawnCells(_ range: NSRange) -> (cells: [NSRect], rows: [NSRange]) {
+        guard let textView, range.length > 0 else { return ([], []) }
+        let storage = textView.textStorage!
+        let text = storage.mutableString
+        var cells: [NSRect] = []
+        var rows: [NSRange] = []
+        var at = range.location
+        while at < min(NSMaxRange(range), storage.length) {
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+            defer { at = NSMaxRange(paragraph) }
+            guard let line = storage.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) as? BlockLine,
+                case .table(let rule) = line.role, !rule.cells.isEmpty,
+                let fragment = fragment(at: paragraph.location) as? BlockFragment
+            else { continue }
+            rows.append(paragraph)
+            let frame = fragment.layoutFragmentFrame.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+            for cell in rule.cells where NSIntersectionRange(NSRange(location: paragraph.location + cell.source.location, length: cell.source.length), range).length > 0 {
+                cells.append(NSRect(x: frame.minX + fragment.textStart + cell.x, y: frame.minY, width: cell.width, height: frame.height))
+            }
+        }
+        return (cells, rows)
+    }
+
+    /// The first baseline of a table row that draws its cells, and its line height: its hidden source sits on the
+    /// row's last line.
+    private func drawnBaseline(at index: Int) -> (first: CGFloat, line: CGFloat)? {
+        guard let textView, index < textView.textStorage!.length,
+            let block = textView.textStorage!.attribute(.dewlineBlock, at: index, effectiveRange: nil) as? BlockLine,
+            case .table(let rule) = block.role, let cell = rule.cells.first, cell.text.length > 0,
+            let fragment = fragment(at: index) as? BlockFragment
+        else { return nil }
+        let font = cell.text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont ?? ThemeStore.shared.bodyFont
+        let style = cell.text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let line = max(style?.minimumLineHeight ?? 0, ceil(font.ascender - font.descender + font.leading))
+        // A line taller than its font puts the extra space above the glyphs.
+        return (textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + line + font.descender, line)
     }
 
     /// The range's line segments in this view's coordinates.
@@ -463,6 +542,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return changes.filter { !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
     }
 
+    /// The changes Keep and Revert decide with `id`: every waiting change from the same writer's session in the note,
+    /// which the stamp counts; a conflict alone.
+    func group(of id: UInt64) -> [UInt64] {
+        guard let change = changes[id], !change.conflict else { return [id] }
+        let key = Review.key(change.origin)
+        return changes.filter { !$0.value.conflict && Review.key($0.value.origin) == key }.map(\.key)
+    }
+
     private var changeHoldingCaret: UInt64? {
         guard let caret = textView?.selectedRanges.first?.rangeValue.location else { return nil }
         return changes.filter { !$0.value.conflict && (NSLocationInRange(caret, $0.value.range) || caret == NSMaxRange($0.value.range)) }.keys.min()
@@ -497,8 +584,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             self.stamp = stamp
             return stamp
         }()
-        let key = Review.key(change.origin)
-        let count = changes.values.count { !$0.conflict && Review.key($0.origin) == key }
+        let count = group(of: id).count
         stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: change.origin == .external)
         if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
@@ -509,9 +595,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             let lines = segments(probe).sorted { $0.frame.minY < $1.frame.minY }
             guard let first = lines.first else { return stamp.isHidden = true }
             stamp.isHidden = false
+            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
+            if let row = drawnBaseline(at: first.location) {
+                return stamp.placeInMargin(right: left - ChangeStamp.inset, first: row.first, second: row.first + row.line)
+            }
             let top = first.frame.minY + first.baseline
             let next = lines.first { $0.frame.minY >= first.frame.maxY - 0.5 }
-            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
             stamp.placeInMargin(right: left - ChangeStamp.inset, first: top, second: next.map { $0.frame.minY + $0.baseline } ?? top + line)
         } else {
             let fold = fold(for: id, change)
@@ -575,7 +664,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     private func decideStamped(keep: Bool) {
         guard let id = stamped else { return }
-        if keep { live?.keep(id) } else { live?.revert(id) }
+        live?.decide(group(of: id), keep: keep)
     }
 
     /// One announcement per marked landing.

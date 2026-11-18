@@ -29,7 +29,7 @@ macOS 26+ · Free · No account, no telemetry
 
 **Your agent, beside the note.** A side panel talks to the coding agent you already use (Claude Code, Codex or Gemini) over the Agent Client Protocol. Its edits land as marked changes you keep or revert. Dewline ships no model and needs no account.
 
-**Sharing.** Export to HTML, PDF or DOCX. Quick Look previews .md files in Finder. Edit a file live with someone by invite link, peer to peer.
+**Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, plain text or PNG. Quick Look previews .md files in Finder. Edit a file live with someone by invite link, peer to peer.
 
 Every shortcut is in [docs/keyboard.md](docs/keyboard.md), and the full guide is at [dewline.arkwerx.com/docs](https://dewline.arkwerx.com/docs/).
 
@@ -60,7 +60,7 @@ The app carries a `dewline` command in `Dewline.app/Contents/Helpers`; the Homeb
 
 - `dewline open notes.md:12 --wait` opens a file at a line and returns when its window closes, so `EDITOR="dewline open --wait"` works for git and your shell.
 - `dewline mcp <folder>` serves a folder's notes to an agent over MCP: read, search, backlinks, decisions and an inbox append.
-- `dewline notify` runs from Claude Code, Codex and Cursor hooks and tells Dewline which agent changed a file, so the change carries its name. `dewline doctor --install-hooks` installs them; [docs/hooks.md](docs/hooks.md) has them by hand.
+- `dewline notify` runs from Claude Code and Codex hooks and tells Dewline which agent changed a file, so the change carries its name. `dewline doctor --install-hooks` installs them; [docs/hooks.md](docs/hooks.md) has them by hand. Cursor's hooks don't say what an edit wrote, so Cursor's edits show as from another app.
 - `dewline export` writes HTML, PDF or DOCX, `dewline capture` adds a dated line to `~/Documents/Dewline/Inbox.md`, and `dewline changes` lists the agent changes you kept or reverted.
 
 ## Install

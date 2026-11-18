@@ -348,9 +348,9 @@ struct JourneyTests {
         .replacingOccurrences(of: "Delta line.", with: "Delta line, revised.")
 
     /// Claude Code rewrites the open file and two closed ones. The open file's four changes land marked with Claude's
-    /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and Keep,
-    /// Revert and Keep All decide them: Keep and Revert act on the stamp's change when the caret is elsewhere, the
-    /// file's bytes follow each decision, the decisions log holds one line per decision without the text, and nothing
+    /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and a row's
+    /// Revert and the stamp's Keep decide them: the stamp's Keep acts on every change it counts, the file's bytes
+    /// follow each decision, the decisions log holds one line per decision without the text, and nothing
     /// is left to review. The closed files are listed as changed while closed, and one opens with Claude's write
     /// marked.
     @Test func j3AnAgentsChangesAreReviewedKeptAndReverted() async throws {
@@ -390,20 +390,17 @@ struct JourneyTests {
         }
         #expect(weight(at: (line.string as NSString).range(of: ", revised").location) > weight(at: 0))
 
-        // The stamp names the writer and counts its changes. Keep with the caret outside every change keeps the
-        // stamp's change; then the stamp's Revert takes out the change holding the caret.
+        // The stamp names the writer and counts its changes. A row's Revert takes one out; the stamp's Keep keeps the
+        // rest it counts.
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
         let stamp = try #require(Self.stamp(in: tab))
         #expect(stamp.accessibilityLabel()?.hasPrefix("Claude, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 4 changes") == true)
         #expect(tab.textView.changeToDecide == changes[0].id)
-        tab.textView.keepChange(nil)
-        #expect(tab.marked.map(\.id) == [changes[1].id, changes[2].id, changes[3].id])
+        tab.live.revert(changes[1].id)
+        #expect(tab.marked.map(\.id) == [changes[0].id, changes[2].id, changes[3].id])
         #expect(Self.stamp(in: tab)?.accessibilityLabel()?.hasSuffix(", 3 changes") == true)
-        tab.textView.setSelectedRange(NSRange(location: changes[1].change.range.location + 1, length: 0))
-        try Self.press("Revert Claude's change", on: try #require(Self.stamp(in: tab)))
-        #expect(tab.marked.map(\.id) == [changes[2].id, changes[3].id])
-        tab.textView.keepAllChanges(nil)
+        try Self.press("Keep Claude's 3 changes", on: try #require(Self.stamp(in: tab)))
         #expect(tab.marked.isEmpty)
         #expect(Self.stamp(in: tab) == nil)
         let expected = Self.agentPlan.replacingOccurrences(of: "Bravo line, revised.", with: "Bravo line.")
@@ -419,7 +416,7 @@ struct JourneyTests {
 
         let log = try String(contentsOf: vault.store.appending(path: "decisions.jsonl"), encoding: .utf8)
         let lines = log.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
-        #expect(lines.map { $0["decision"] as? String } == ["kept", "reverted", "kept", "kept"])
+        #expect(lines.map { $0["decision"] as? String } == ["reverted", "kept", "kept", "kept"])
         #expect(lines.allSatisfy { $0["vendor"] as? String == "claude" && $0["session"] as? String == "s1" })
         #expect(lines.allSatisfy { $0["file"] as? String == Self.realpath(vault.url("plan.md")) })
         #expect(lines.allSatisfy { ($0["excerpt_hash"] as? String)?.count == 64 })
@@ -674,8 +671,8 @@ struct JourneyTests {
         #expect(word.starts(with: Data([0x50, 0x4B, 0x03, 0x04])))
         #expect(word.range(of: Data("word/document.xml".utf8)) != nil)
         #expect(vault.listing() == listing)
-        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["html", "pdf", "docx"])
-        #expect(Export.Format.allCases.map(\.name) == ["HTML", "PDF", "Word"])
+        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "txt", "png"])
+        #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "Plain Text", "PNG Image"])
 
         // One File > Export… on ⇧⌘E, starting on PDF, and Print on ⌘P; a written export is what the status bar names.
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)
@@ -849,7 +846,7 @@ struct JourneyTests {
         #expect(Self.enabled(#selector(EditorTextView.keepChange(_:)), in: chain) == false)
     }
 
-    /// The keys follow the stamp when the caret is in no change: the last change the caret was in is the one decided.
+    /// The keys act as the stamp's buttons do: on every change the stamp counts, wherever the caret is.
     @Test func theChangeKeysFollowTheStamp() async throws {
         let vault = try Vault(["plan.md": Self.plan])
         defer { vault.remove() }
@@ -858,14 +855,10 @@ struct JourneyTests {
         try await Self.agentWrite(Self.agentPlan, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
         try await Self.until { tab.marked.count == 4 }
         let changes = tab.marked
-        tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
-        tab.textView.revertChange(nil)
-        #expect(tab.marked.map(\.id) == changes.dropFirst().map(\.id))
-        #expect(tab.textView.string.contains("Alpha line.\n"))
         tab.textView.setSelectedRange(NSRange(location: changes[2].change.range.location, length: 0))
-        tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
-        tab.textView.keepChange(nil)
-        #expect(tab.marked.map(\.id) == [changes[1].id, changes[3].id])
+        tab.textView.revertChange(nil)
+        #expect(tab.marked.isEmpty)
+        #expect(tab.textView.string == Self.plan)
     }
 
     /// The responders a menu command looks through, in AppKit's order, for a window that is never key.

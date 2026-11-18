@@ -381,6 +381,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         // Rendered blocks fit the column, so the text arrives once the view has its width.
         window?.layoutIfNeeded()
         let textView = scrollView.documentView as! EditorTextView
+        if let language = document.fileURL.flatMap(CodeFile.opened) { textView.showCode(language, indent: CodeFile.indentation(of: text)) }
         textView.documentFolder = document.fileURL?.deletingLastPathComponent()
         textView.noteFolder = folder?.url ?? textView.documentFolder
         textView.openNote = { [weak self] url, heading in self?.follow(url, heading: heading) }

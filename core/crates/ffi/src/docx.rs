@@ -16,3 +16,9 @@ pub fn export_docx(markdown: String, folder: String) -> Result<Vec<u8>, ExportEr
         message: error.to_string(),
     })
 }
+
+/// `markdown` as plain text.
+#[uniffi::export]
+pub fn export_text(markdown: String) -> String {
+    export::text::text(&markdown)
+}

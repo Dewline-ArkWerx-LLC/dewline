@@ -62,12 +62,9 @@ for pin in resolved["pins"]:
     if not folder.is_dir():
         sys.exit(f"notices.sh: no checkout at {folder}; run scripts/build-release.sh first")
     add(folder.name, version, "MIT and the notices in its LICENSE", pin["location"], license_files(folder))
-syntaxes = root / "scripts/syntaxes/sources"
-add("Sublime Text syntaxes (C, C++, CSS, Go, HTML, Java, JavaScript, JSON, Python, Rust, Shell, SQL, YAML)", "fa6b8629c950",
-    "see the license text", "https://github.com/sublimehq/Packages", [syntaxes / "Packages-LICENSE"])
-add("TOML syntax", "bat 0.26.1", "MIT", "https://github.com/jasonwilliams/sublime_toml_highlighting", [syntaxes / "bat/TOML-LICENSE"])
-add("TypeScript syntax", "bat 0.26.1", "Apache-2.0", "https://github.com/microsoft/TypeScript-Sublime-Plugin", [syntaxes / "bat/TypeScript-LICENSE"])
-add("Swift syntax", "bat 0.26.1", "MIT", "https://github.com/quiqueg/Swift-Sublime-Package", [syntaxes / "bat/Swift-LICENSE"])
+syntaxes = root / "scripts/syntaxes"
+add("Code syntaxes (the list in LICENSES.md)", "bat 0.26.1 via two-face 0.5.2", "MIT, Apache-2.0, BSD and Sublime's; see the texts",
+    "https://github.com/sharkdp/bat", [syntaxes / "Packages-LICENSE", syntaxes / "LICENSES.md"])
 add("JetBrains Mono", "2.304", "OFL-1.1", "https://github.com/JetBrains/JetBrainsMono", [root / "app/Dewline/Fonts/JetBrainsMono-OFL.txt"])
 add("Bricolage Grotesque", "1.001", "OFL-1.1", "https://github.com/ateliertriay/bricolage", [root / "app/Dewline/Fonts/BricolageGrotesque-OFL.txt"])
 add("OpenAI Codex apply-patch (ported)", "970111f6", "Apache-2.0", "https://github.com/openai/codex", [root / "docs/licenses/Codex-LICENSE"])

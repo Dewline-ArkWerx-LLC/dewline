@@ -1,4 +1,5 @@
 import AppKit
+import MdCore
 import Testing
 @testable import Dewline
 
@@ -133,6 +134,62 @@ struct ControlSocketTests {
             #expect(client.line() == nil)
         }
         #expect(await listening.received.requests.isEmpty)
+    }
+
+    /// `dewline export` names a Markdown file, a format and an out path with the format's extension, PDF without a
+    /// format; nothing else reaches the export handler.
+    @Test func exportsOnlyAMarkdownFileToItsFormatsExtension() async throws {
+        let listening = try await Listening()
+        defer { listening.finish() }
+        let folder = listening.folder.path
+        let note = try listening.file("plan.md").path
+        let notMarkdown = try listening.file("hosts.yml").path
+        #expect(symlink(notMarkdown, folder + "/hosts.md") == 0)
+        #expect(mkfifo(folder + "/pipe.md", 0o600) == 0)
+        let out = folder + "/plan.pdf"
+        let refusals = [
+            #"{"v":1,"op":"export","path":"\#(notMarkdown)","out":"\#(out)"}"#: "not_markdown",
+            #"{"v":1,"op":"export","path":"\#(folder)/hosts.md","out":"\#(out)"}"#: "not_markdown",
+            #"{"v":1,"op":"export","path":"\#(folder)/pipe.md","out":"\#(out)"}"#: "not_a_file",
+            #"{"v":1,"op":"export","path":"\#(folder)/missing.md","out":"\#(out)"}"#: "not_found",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/Contract.html"}"#: "malformed",
+            #"{"v":1,"op":"export","path":"\#(note)"}"#: "malformed",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"plan.pdf"}"#: "not_absolute",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"\#(out)","format":"rtf"}"#: "malformed",
+            #"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/plan.sh","format":"sh"}"#: "malformed",
+        ]
+        for (request, error) in refusals {
+            let client = try Client(listening.socket.path)
+            client.send(request + "\n")
+            #expect(client.line() == #"{"error":"\#(error)","reply":"error","v":1}"#, "\(request)")
+            #expect(client.line() == nil)
+        }
+        #expect(await listening.received.exports.isEmpty)
+        let client = try Client(listening.socket.path)
+        client.send(#"{"v":1,"op":"export","path":"\#(note)","out":"\#(out)"}"# + "\n")
+        #expect(client.line() == #"{"reply":"exported","v":1}"#)
+        #expect(client.line() == nil)
+        let rtf = try Client(listening.socket.path)
+        rtf.send(#"{"v":1,"op":"export","path":"\#(note)","out":"\#(folder)/plan.rtf","format":"rtf"}"# + "\n")
+        #expect(rtf.line() == #"{"reply":"exported","v":1}"#)
+        #expect(await listening.received.exports == [
+            ControlSocket.FileExport(path: note, out: out, format: .pdf), ControlSocket.FileExport(path: note, out: folder + "/plan.rtf", format: .rtf),
+        ])
+        #expect(await listening.received.requests.isEmpty)
+    }
+
+    /// A `dewline://` link exports nothing and opens only Markdown.
+    @MainActor @Test func linksNeitherExportNorOpenOtherFiles() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        for link in [
+            "dewline://export?to=pdf&path=\(home)/.config/gh/hosts.yml&out=\(home)/x.pdf",
+            "dewline://export?to=html&path=\(home)/a.md&out=\(home)/a.html",
+            "dewline://open?path=\(home)/.zsh_history",
+            "dewline://open?path=~/.gitconfig",
+        ] {
+            let url = try #require(URL(string: link))
+            #expect(throws: Refused.self, "\(link)") { try SchemeLinks.run(url) }
+        }
     }
 
     @Test func notifyLinesReachTheHandlerAsClaims() async throws {
@@ -337,6 +394,7 @@ struct ControlSocketTests {
 @MainActor
 private final class Received {
     var requests: [ControlSocket.Open] = []
+    var exports: [ControlSocket.FileExport] = []
     var claims: [ControlSocket.Claim] = []
     var connections: [ControlSocket.Connection] = []
     /// When set, waiting requests are answered when it closes.
@@ -384,7 +442,7 @@ private final class Restart {
     }
 }
 
-/// A started socket in a new folder whose handler records each request and answers `opened`.
+/// A started socket in a new folder whose handlers record each request and answer `opened` or `exported`.
 private struct Listening {
     let folder: URL
     let socket: ControlSocket
@@ -395,7 +453,11 @@ private struct Listening {
         folder = FileManager.default.temporaryDirectory.appending(path: "dl-\(UUID().uuidString.prefix(8))")
         let received = await Received()
         let notify: @MainActor @Sendable (ControlSocket.Claim) -> Void = { received.claims.append($0) }
-        socket = ControlSocket(path: folder.appending(path: "run/control.sock").path, uid: uid, notify: notify) { request, connection in
+        let export: @MainActor @Sendable (ControlSocket.FileExport, ControlSocket.Connection) -> Void = {
+            received.exports.append($0)
+            $1.reply(.exported)
+        }
+        socket = ControlSocket(path: folder.appending(path: "run/control.sock").path, uid: uid, notify: notify, export: export) { request, connection in
             received.requests.append(request)
             received.connections.append(connection)
             if request.wait { received.document?.answerWhenClosed(connection) }

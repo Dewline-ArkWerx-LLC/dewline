@@ -50,3 +50,52 @@ jobs:
               CODE_SIGNING_ALLOWED=NO -quiet '-only-testing:DewlineTests/KeystrokeLatency/parts()' || true
             jq -c -s -f perf/keystroke-parts.jq "$lat" | sed 's/^/PARTS /' | tee -a "$GITHUB_STEP_SUMMARY"
           done
+
+  sample:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CARGO_TARGET_DIR: ${{ github.workspace }}/core/target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+      - run: scripts/build-xcframework.sh
+      - run: xcodegen generate --spec app/project.yml
+      - name: Build
+        run: |
+          xcodebuild build-for-testing -project app/Dewline.xcodeproj -scheme Dewline -configuration Test \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO -quiet
+      - name: Sample the test host
+        run: |
+          mkdir -p "$RUNNER_TEMP/samples"
+          for test in folderWindow typing; do
+            TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$RUNNER_TEMP/s.json xcodebuild test-without-building -project app/Dewline.xcodeproj \
+              -scheme Dewline -configuration Test -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/dd" \
+              CODE_SIGNING_ALLOWED=NO -quiet "-only-testing:DewlineTests/PerfTests/$test()" &
+            xc=$!
+            pid=
+            for _ in $(seq 1 600); do pid=$(pgrep -n -x Dewline) && break; sleep 0.1; done
+            echo "test $test host pid $pid"
+            sleep 4
+            sudo sample "$pid" 40 1 -mayDie -file "$RUNNER_TEMP/samples/$test.txt" || true
+            wait $xc || true
+            jq -c . "$RUNNER_TEMP/s.json" || true
+            sudo chmod a+r "$RUNNER_TEMP/samples/$test.txt" || true
+            filtercalltree "$RUNNER_TEMP/samples/$test.txt" -invertCallTree -pruneCount 40 > "$RUNNER_TEMP/samples/$test-inverted.txt" 2>&1 || true
+            head -c 60000 "$RUNNER_TEMP/samples/$test-inverted.txt"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: samples
+          path: ${{ runner.temp }}/samples

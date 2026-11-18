@@ -20,17 +20,6 @@ enum DewlineApp {
     }
 }
 
-/// Notes recent documents only while the recent list keeps any. AppKit writes the system's Recent Items (the
-/// RecentDocuments shared file list) from `noteNewRecentDocumentURL` whatever `NSRecentDocumentsLimit` says; the
-/// limit only caps the app's own list. Opening, Save As and Dewline's own calls all come through here, so a run with
-/// `-NSRecentDocumentsLimit 0`, as the scheme's tests are, records nothing.
-final class DocumentController: NSDocumentController {
-    override func noteNewRecentDocumentURL(_ url: URL) {
-        guard maximumRecentDocumentCount > 0 else { return }
-        super.noteNewRecentDocumentURL(url)
-    }
-}
-
 /// What a launch shows when no file asked to open.
 @MainActor
 enum Launch {

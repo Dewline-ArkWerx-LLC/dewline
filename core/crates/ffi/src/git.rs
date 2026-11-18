@@ -1,6 +1,7 @@
 use std::path::Path;
+use std::sync::Mutex;
 
-use dewline_core::git::status::{self, Status};
+use dewline_core::git::status::{self, Ignores, Status};
 
 #[derive(uniffi::Enum)]
 pub enum GitState {
@@ -49,4 +50,38 @@ pub fn git_status(folder: String) -> Option<GitStatus> {
             })
             .collect(),
     })
+}
+
+/// What git ignores under a folder: its repository's ignore files and
+/// `core.excludesFile`, or the folder's own .gitignore files when no
+/// repository holds it. One for the sidebar and `git_status`.
+#[derive(uniffi::Object)]
+pub struct GitIgnores {
+    ignores: Mutex<Ignores>,
+    /// The folder's path from the work tree's top.
+    prefix: Vec<u8>,
+}
+
+#[uniffi::export]
+impl GitIgnores {
+    #[uniffi::constructor]
+    pub fn new(folder: String) -> Self {
+        let folder = Path::new(&folder);
+        let (ignores, prefix) = Ignores::of(&folder.canonicalize().unwrap_or(folder.to_path_buf()));
+        Self {
+            ignores: Mutex::new(ignores),
+            prefix,
+        }
+    }
+
+    /// Whether git ignores `path`, "/"-separated from the folder: it or a
+    /// folder above it matches.
+    pub fn ignores(&self, path: String, is_folder: bool) -> bool {
+        let path = if self.prefix.is_empty() {
+            path.into_bytes()
+        } else {
+            [&self.prefix, b"/".as_slice(), path.as_bytes()].concat()
+        };
+        self.ignores.lock().unwrap().ignored(&path, is_folder)
+    }
 }

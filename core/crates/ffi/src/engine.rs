@@ -172,12 +172,33 @@ impl From<Origin> for core::Origin {
     }
 }
 
-/// A file an agent wrote while no document had it open.
+/// A file no document has open that differs from the version Dewline last
+/// saw: who wrote it, how many places changed, and when it was noticed.
 #[derive(Debug, uniffi::Record)]
 pub struct ClosedChange {
     pub path: String,
     pub origin: Origin,
+    pub count: u32,
     pub time: SystemTime,
+}
+
+/// A change left undecided when its file last closed: its UTF-16 range in
+/// the text the file opens with, and the text it replaced.
+#[derive(Debug, uniffi::Record)]
+pub struct Mark {
+    pub change: u64,
+    pub origin: Origin,
+    pub start: u32,
+    pub end: u32,
+    pub removed: String,
+}
+
+/// An undecided change's UTF-16 range in the buffer.
+#[derive(Debug, uniffi::Record)]
+pub struct MarkRange {
+    pub change: u64,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// Replaces the UTF-16 range `start..end` with `text`.
@@ -209,9 +230,11 @@ pub enum Contents {
 #[derive(Debug, uniffi::Record)]
 pub struct Opened {
     pub doc: u64,
-    /// An agent wrote the file while it was closed: the text is what the
-    /// write replaced, and the next landing brings the write in, marked.
+    /// The file changed since Dewline last saw it: the text is what it saw,
+    /// and the next landing brings the change in, marked.
     pub closed: bool,
+    /// The changes left undecided when the file last closed.
+    pub marks: Vec<Mark>,
     pub contents: Contents,
     /// The realpath the engine keys the file by.
     pub path: String,
@@ -390,6 +413,17 @@ impl Engine {
         Ok(Opened {
             doc: opened.doc.0,
             closed: opened.closed,
+            marks: opened
+                .marks
+                .into_iter()
+                .map(|mark| Mark {
+                    change: mark.change.0,
+                    origin: mark.origin.into(),
+                    start: mark.start,
+                    end: mark.end,
+                    removed: mark.removed,
+                })
+                .collect(),
             contents: match opened.contents {
                 text::Opened::Utf8 { bom, .. } => Contents::Text { bom },
                 text::Opened::Other(bytes) => Contents::Bytes { bytes },
@@ -402,21 +436,34 @@ impl Engine {
         })
     }
 
-    /// `origin` is about to write the file at `path`, which holds `before`.
-    /// Unless the file is open, it is listed in `closed_changes` until it
-    /// opens, and opening it lands the write as marked changes.
+    /// `origin` is about to write the file at `path`, which holds `before`,
+    /// making bytes whose BLAKE3 hex is `declared`. Unless the file is open,
+    /// it is listed in `closed_changes` until it opens, and opening it lands
+    /// the write as marked changes, named only if the file holds `declared`.
     pub fn closed_write(
         &self,
         path: String,
         origin: Origin,
         before: Vec<u8>,
+        declared: String,
     ) -> Result<(), EngineError> {
+        let declared = file::Hash::from_hex(&declared).map_err(|_| EngineError::Invalid {
+            message: "a declared hash is 64 hex digits".into(),
+        })?;
         Ok(self
             .0
-            .closed_write(Path::new(&path), origin.into(), &before)?)
+            .closed_write(Path::new(&path), origin.into(), &before, declared)?)
     }
 
-    /// Files written while closed, oldest first.
+    /// Notes the Markdown files in `folder`, and its subfolders when `deep`,
+    /// so a change to one while it is closed, or while the app is quit, is in
+    /// `closed_changes`. Off the main thread.
+    pub fn scan(&self, folder: String, deep: bool) -> Result<(), EngineError> {
+        Ok(self.0.scan(Path::new(&folder), deep)?)
+    }
+
+    /// Files no document has open that changed since Dewline last saw
+    /// them, oldest first.
     pub fn closed_changes(&self) -> Vec<ClosedChange> {
         self.0
             .closed_changes()
@@ -424,6 +471,7 @@ impl Engine {
             .map(|change| ClosedChange {
                 path: change.path.to_string_lossy().into_owned(),
                 origin: change.origin.into(),
+                count: change.count,
                 time: change.time,
             })
             .collect()
@@ -589,6 +637,21 @@ impl Engine {
     pub fn moved(&self, doc: u64, to: String) -> Result<Option<String>, EngineError> {
         let gitdir = self.0.moved(DocId(doc), Path::new(&to))?;
         Ok(gitdir.map(|gitdir| gitdir.to_string_lossy().into_owned()))
+    }
+
+    /// Keeps the document's undecided changes, at `marks` in `buffer`, for
+    /// the next time its file opens. Before `close`.
+    pub fn keep_marks(
+        &self,
+        doc: u64,
+        buffer: String,
+        marks: Vec<MarkRange>,
+    ) -> Result<(), EngineError> {
+        let ranges: Vec<(ChangeId, u32, u32)> = marks
+            .into_iter()
+            .map(|mark| (ChangeId(mark.change), mark.start, mark.end))
+            .collect();
+        Ok(self.0.keep_marks(DocId(doc), &buffer, &ranges)?)
     }
 
     pub fn close(&self, doc: u64) {

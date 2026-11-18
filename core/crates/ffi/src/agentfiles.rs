@@ -6,6 +6,8 @@ use dewline_core::{divergence, links, loads};
 
 use crate::markdown::Text;
 
+use crate::{Panicked, contained};
+
 /// One file an agent loads in a folder.
 #[derive(uniffi::Record)]
 pub struct LoadedFile {
@@ -19,16 +21,18 @@ pub struct LoadedFile {
 
 /// What Claude Code, Codex and Cursor load for a session started in `folder`.
 #[uniffi::export]
-pub fn what_loads(folder: String, home: Option<String>) -> Vec<LoadedFile> {
-    loads::what_loads(Path::new(&folder), home.as_deref().map(Path::new))
-        .into_iter()
-        .map(|loaded| LoadedFile {
-            agent: loaded.vendor.title().into(),
-            path: loaded.path.to_string_lossy().into_owned(),
-            how: loaded.how,
-            tokens: loaded.tokens,
-        })
-        .collect()
+pub fn what_loads(folder: String, home: Option<String>) -> Result<Vec<LoadedFile>, Panicked> {
+    contained(|| {
+        loads::what_loads(Path::new(&folder), home.as_deref().map(Path::new))
+            .into_iter()
+            .map(|loaded| LoadedFile {
+                agent: loaded.vendor.title().into(),
+                path: loaded.path.to_string_lossy().into_owned(),
+                how: loaded.how,
+                tokens: loaded.tokens,
+            })
+            .collect()
+    })
 }
 
 /// A sibling instruction file whose sections differ from another's.
@@ -40,15 +44,17 @@ pub struct SiblingDivergence {
 }
 
 #[uniffi::export]
-pub fn sibling_divergence(folder: String) -> Vec<SiblingDivergence> {
-    divergence::divergence(Path::new(&folder))
-        .into_iter()
-        .map(|found| SiblingDivergence {
-            path: found.path.to_string_lossy().into_owned(),
-            other: found.other.to_string_lossy().into_owned(),
-            sections: found.sections,
-        })
-        .collect()
+pub fn sibling_divergence(folder: String) -> Result<Vec<SiblingDivergence>, Panicked> {
+    contained(|| {
+        divergence::divergence(Path::new(&folder))
+            .into_iter()
+            .map(|found| SiblingDivergence {
+                path: found.path.to_string_lossy().into_owned(),
+                other: found.other.to_string_lossy().into_owned(),
+                sections: found.sections,
+            })
+            .collect()
+    })
 }
 
 /// A memory or plan file an agent writes, with when it last changed in seconds since 1970.
@@ -59,19 +65,24 @@ pub struct ReviewFile {
 }
 
 #[uniffi::export]
-pub fn review_files(home: Option<String>, folder: Option<String>) -> Vec<ReviewFile> {
-    loads::review_files(
-        home.as_deref().map(Path::new),
-        folder.as_deref().map(Path::new),
-    )
-    .into_iter()
-    .map(|(path, modified)| ReviewFile {
-        path: path.to_string_lossy().into_owned(),
-        modified: modified
-            .duration_since(UNIX_EPOCH)
-            .map_or(0.0, |since| since.as_secs_f64()),
+pub fn review_files(
+    home: Option<String>,
+    folder: Option<String>,
+) -> Result<Vec<ReviewFile>, Panicked> {
+    contained(|| {
+        loads::review_files(
+            home.as_deref().map(Path::new),
+            folder.as_deref().map(Path::new),
+        )
+        .into_iter()
+        .map(|(path, modified)| ReviewFile {
+            path: path.to_string_lossy().into_owned(),
+            modified: modified
+                .duration_since(UNIX_EPOCH)
+                .map_or(0.0, |since| since.as_secs_f64()),
+        })
+        .collect()
     })
-    .collect()
 }
 
 /// A broken link or import in a file's text, in UTF-16 offsets.
@@ -85,21 +96,27 @@ pub struct BrokenLink {
 
 /// The broken links and imports of `text`, the file at `path`.
 #[uniffi::export]
-pub fn broken_links(path: String, text: Arc<Text>, home: Option<String>) -> Vec<BrokenLink> {
-    let file = Path::new(&path);
-    let text = text.lock();
-    let utf16 = |byte: usize| text[..byte].encode_utf16().count() as u64;
-    links::broken(file, &text, home.as_deref().map(Path::new))
-        .into_iter()
-        .filter(|broken| broken.file == file)
-        .map(|broken| {
-            let start = utf16(broken.target.range.start);
-            BrokenLink {
-                location: start,
-                length: utf16(broken.target.range.end) - start,
-                target: broken.target.text,
-                problem: broken.problem.describe().into(),
-            }
-        })
-        .collect()
+pub fn broken_links(
+    path: String,
+    text: Arc<Text>,
+    home: Option<String>,
+) -> Result<Vec<BrokenLink>, Panicked> {
+    contained(|| {
+        let file = Path::new(&path);
+        let text = text.lock();
+        let utf16 = |byte: usize| text[..byte].encode_utf16().count() as u64;
+        links::broken(file, &text, home.as_deref().map(Path::new))
+            .into_iter()
+            .filter(|broken| broken.file == file)
+            .map(|broken| {
+                let start = utf16(broken.target.range.start);
+                BrokenLink {
+                    location: start,
+                    length: utf16(broken.target.range.end) - start,
+                    target: broken.target.text,
+                    problem: broken.problem.describe().into(),
+                }
+            })
+            .collect()
+    })
 }

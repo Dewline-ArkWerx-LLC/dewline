@@ -17,7 +17,7 @@ public struct FolderGitStatus: Sendable, Equatable {
 /// The git state of the files under `folder`, or nil when the folder is in no repository or the repository can't be
 /// read. It reads the index, HEAD's tree and the working tree, so call it off the main thread.
 public func gitStatus(of folder: URL) -> FolderGitStatus? {
-    gitStatus(folder: folder.path).map { status in
+    (try? gitStatus(folder: folder.path)).map { status in
         FolderGitStatus(
             gitdir: URL(filePath: status.gitdir, directoryHint: .isDirectory),
             files: Dictionary(uniqueKeysWithValues: status.files.map { file in
@@ -46,6 +46,6 @@ public final class GitIgnores: Sendable {
     /// Whether git ignores `path`, "/"-separated from the folder: it or a folder above it matches. A folder's .gitignore
     /// is read the first time a path under it is asked about.
     public func ignores(_ path: String, isFolder: Bool) -> Bool {
-        rules.ignores(path: path, isFolder: isFolder)
+        (try? rules.ignores(path: path, isFolder: isFolder)) ?? false
     }
 }

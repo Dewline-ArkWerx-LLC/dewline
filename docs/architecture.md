@@ -41,7 +41,7 @@ A pure-Rust UI was ruled out: no Rust GUI framework offers VoiceOver for text, W
 ## Security
 
 - Note content never reaches a web view with scripts enabled, and no JavaScript runs on it anywhere: diagrams and math render natively, off the main thread, with size caps. A failed render shows the source.
-- One fuzzed path jail guards every file the CLI, the MCP server, attachments and export touch.
+- One property-tested path jail (`core/src/jail.rs`) guards every file the MCP server, find-and-replace, export attachments and `dewline://` links touch.
 - The MCP server runs over stdio, refuses roots at or above your home folder, serves markdown only and appends only to one inbox file.
 - Agent hooks can label a change the app already saw. They cannot write.
 - A collaboration invite link joins once, and only after the host approves. Removing someone rotates the document key.

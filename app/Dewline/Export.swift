@@ -88,7 +88,7 @@ enum Export {
             // Without a folder, relative images resolve in an empty one and keep their alt text.
             data = try exportWordDocument(text, folder: folder ?? URL(filePath: "/var/empty", directoryHint: .isDirectory))
         case .text:
-            data = Data(exportPlainText(text).utf8)
+            data = Data(try exportPlainText(text).utf8)
         case .rtf, .odt:
             data = try richText(text, title: title, as: format == .rtf ? .rtf : .openDocument)
         case .epub:
@@ -97,17 +97,17 @@ enum Export {
                 text, title: title, css: stylesheet(light: light, dark: nil), folder: folder, colors: light.colors, mathSize: ThemeStore.shared.bodySize
             )
         case .latex:
-            let article = exportLaTeX(text, name: url.deletingPathExtension().lastPathComponent, folder: folder, colors: Palette(.aqua).colors)
+            let article = try exportLaTeX(text, name: url.deletingPathExtension().lastPathComponent, folder: folder, colors: Palette(.aqua).colors)
             try write(article.files, beside: url)
             data = Data(article.tex.utf8)
         case .markdown:
-            let copy = exportPortableMarkdown(text, name: url.deletingPathExtension().lastPathComponent, folder: folder)
+            let copy = try exportPortableMarkdown(text, name: url.deletingPathExtension().lastPathComponent, folder: folder)
             try write(copy.files, beside: url)
             data = Data(copy.text.utf8)
         case .html, .pdf, .png:
             let light = Palette(.aqua)
             let dark = format == .html ? Palette(.darkAqua) : nil
-            let page = exportPage(
+            let page = try exportPage(
                 text, title: title, css: stylesheet(light: light, dark: dark), folder: folder, colors: light.colors, dark: dark?.colors,
                 mathSize: ThemeStore.shared.bodySize, syntaxes: syntaxes
             )
@@ -149,7 +149,7 @@ enum Export {
         h1, h2, h3, h4, h5, h6 { font-family: \(face(store.headingFace, "serif")); }
         code, pre { font-family: \(face(store.codeFace, "monospace")); }
         """
-        let page = previewPage(text, title: title, css: css, syntaxes: syntaxes)
+        let page = try previewPage(text, title: title, css: css, syntaxes: syntaxes)
             .replacing("<input type=\"checkbox\" disabled checked>", with: "\u{2611}")
             .replacing("<input type=\"checkbox\" disabled>", with: "\u{2610}")
             .replacing(/<img [^>]*?alt="([^"]*)"[^>]*>/) { $0.1.isEmpty ? "[image]" : "[image: \($0.1)]" }
@@ -163,10 +163,10 @@ enum Export {
     /// `text` as the body of an HTML page, for the pasteboard: diagrams and math in the light palette, images at their
     /// paths.
     static func fragment(_ text: String) -> String {
-        let page = exportPage(
+        let page = (try? exportPage(
             text, title: "", css: "", folder: nil, colors: Palette(.aqua).colors, dark: nil, mathSize: ThemeStore.shared.bodySize,
             syntaxes: nil
-        )
+        )) ?? ""
         guard let start = page.range(of: "<body>\n"), let end = page.range(of: "</body>", options: .backwards) else { return page }
         return String(page[start.upperBound..<end.lowerBound])
     }

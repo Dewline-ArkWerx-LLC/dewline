@@ -141,7 +141,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let engine = MarkdownDocument.sharedEngine
         let control = ControlSocket(path: ControlSocket.standardPath, notify: { claim in
-            Updates.shared.checkBundleOnDisk()
             if let engine { LiveFile.claim(claim, engine: engine) }
         }, export: { [weak self] request, connection in
             self?.export(request, for: connection)

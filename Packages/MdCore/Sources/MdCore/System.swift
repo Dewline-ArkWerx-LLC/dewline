@@ -12,8 +12,8 @@ public struct Refused: LocalizedError, Sendable {
 
 /// `text` as the Quick Look page: the page export writes with `css` inlined, diagrams and math as their source, no image
 /// inlined, and fenced code colored in the `syntaxes` dump when it loads.
-public func previewPage(_ text: String, title: String, css: String, syntaxes: URL?) -> String {
-    previewHtml(text: text, title: title, css: css, syntaxes: syntaxes?.path)
+public func previewPage(_ text: String, title: String, css: String, syntaxes: URL?) throws(Refused) -> String {
+    try refusing { try previewHtml(text: text, title: title, css: css, syntaxes: syntaxes?.path) }
 }
 
 /// Appends `text` to the inbox at `path`, or at ~/Documents/Dewline/Inbox.md, as one entry dated and labeled `source`.

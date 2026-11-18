@@ -46,14 +46,16 @@ public func mermaidImage(_ source: String, colors: DiagramColors, scale: Double,
 public func exportPage(
     _ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, dark: DiagramColors?, mathSize: Double,
     syntaxes: URL?
-) -> String {
-    func engine(_ colors: DiagramColors) -> DewlineFFIBindings.DiagramColors {
+) throws(RenderFailure) -> String {
+    func ffi(_ colors: DiagramColors) -> DewlineFFIBindings.DiagramColors {
         .init(paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill)
     }
-    return exportHtml(
-        text: text, title: title, css: css, folder: folder?.path, colors: engine(colors), dark: dark.map(engine), mathSize: Float(mathSize),
-        syntaxes: syntaxes?.path
-    )
+    return try engine {
+        try exportHtml(
+            text: text, title: title, css: css, folder: folder?.path, colors: ffi(colors), dark: dark.map(ffi), mathSize: Float(mathSize),
+            syntaxes: syntaxes?.path
+        )
+    }
 }
 
 /// `text` as an EPUB 3 book of the page `exportPage` writes in `colors`, its images, diagrams and math as files in it.
@@ -72,18 +74,18 @@ public func exportEPUB(_ text: String, title: String, css: String, folder: URL?,
 
 /// `text` as a LaTeX article named `name`, and the files to write beside it, each at a path relative to the article's
 /// folder: diagrams drawn in `colors`, and PNG and JPEG images read from inside `folder`.
-public func exportLaTeX(_ text: String, name: String, folder: URL?, colors: DiagramColors) -> (tex: String, files: [(path: String, data: Data)]) {
+public func exportLaTeX(_ text: String, name: String, folder: URL?, colors: DiagramColors) throws(RenderFailure) -> (tex: String, files: [(path: String, data: Data)]) {
     let colors = DewlineFFIBindings.DiagramColors(
         paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
     )
-    let article = exportLatex(text: text, name: name, folder: folder?.path, colors: colors)
+    let article = try engine { try exportLatex(text: text, name: name, folder: folder?.path, colors: colors) }
     return (article.text, article.files.map { ($0.path, $0.bytes) })
 }
 
 /// `text` as Markdown any renderer shows, and the images to write beside it, each at a path relative to the export's
 /// folder: wikilinks as relative links to the notes found in `folder`, highlights as `<mark>`, comments left out.
-public func exportPortableMarkdown(_ text: String, name: String, folder: URL?) -> (text: String, files: [(path: String, data: Data)]) {
-    let export = DewlineFFIBindings.exportPortableMarkdown(text: text, name: name, folder: folder?.path)
+public func exportPortableMarkdown(_ text: String, name: String, folder: URL?) throws(RenderFailure) -> (text: String, files: [(path: String, data: Data)]) {
+    let export = try engine { try DewlineFFIBindings.exportPortableMarkdown(text: text, name: name, folder: folder?.path) }
     return (export.text, export.files.map { ($0.path, $0.bytes) })
 }
 
@@ -99,8 +101,8 @@ public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure
 }
 
 /// `text` as plain text: markers dropped, bullets, numbers and table columns kept.
-public func exportPlainText(_ text: String) -> String {
-    exportText(markdown: text)
+public func exportPlainText(_ text: String) throws(RenderFailure) -> String {
+    try engine { try exportText(markdown: text) }
 }
 
 /// Display math typeset by RaTeX at `size` points and `scale` pixels per point, in `color` (0xRRGGBBAA).

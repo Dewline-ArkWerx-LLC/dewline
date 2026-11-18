@@ -4,8 +4,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use dewline_core::jail::Jail;
-use dewline_core::{export, highlight, inbox};
+use dewline_core::{export, highlight, inbox, jail};
+
+use crate::{Panicked, contained};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum Refusal {
@@ -22,19 +23,26 @@ fn refused(message: impl ToString) -> Refusal {
 /// A Quick Look page of `text`: the page export writes, with diagrams and math as their source, no image inlined, and
 /// fenced code colored in the syntaxes at `syntaxes` (the app's `Syntaxes.packdump`) when they load.
 #[uniffi::export]
-pub fn preview_html(text: String, title: String, css: String, syntaxes: Option<String>) -> String {
-    let syntaxes = syntaxes.and_then(|dump| highlight::Syntaxes::load(Path::new(&dump)));
-    export::html(
-        &text,
-        &export::ExportOptions {
-            title: &title,
-            css: &css,
-            diagram: &|_| None,
-            math: &|_, _| None,
-            code: &|language, code| syntaxes.as_ref()?.html(language, code),
-            folder: None,
-        },
-    )
+pub fn preview_html(
+    text: String,
+    title: String,
+    css: String,
+    syntaxes: Option<String>,
+) -> Result<String, Panicked> {
+    contained(|| {
+        let syntaxes = syntaxes.and_then(|dump| highlight::Syntaxes::load(Path::new(&dump)));
+        export::html(
+            &text,
+            &export::ExportOptions {
+                title: &title,
+                css: &css,
+                diagram: &|_| None,
+                math: &|_, _| None,
+                code: &|language, code| syntaxes.as_ref()?.html(language, code),
+                folder: None,
+            },
+        )
+    })
 }
 
 /// Appends `text` to the inbox at `path`, or at the default inbox in the home folder, as one entry from `source`.
@@ -52,37 +60,11 @@ pub fn inbox_append(path: Option<String>, source: String, text: String) -> Resul
 /// folder. A file not there yet is checked through its folder.
 #[uniffi::export]
 pub fn jailed_path(path: String) -> Result<String, Refusal> {
-    let shown = path.clone();
-    let path = Path::new(&path);
-    if !path.is_absolute() {
-        return Err(refused(format!("{shown}: the path is not absolute")));
-    }
-    let (folder, name) = if path.exists() {
-        (path, None)
-    } else {
-        match (path.parent(), path.file_name()) {
-            (Some(folder), Some(name)) => (folder, Some(name)),
-            _ => return Err(refused(format!("{shown}: no such file"))),
-        }
-    };
-    let jail = Jail::new(&home()?).map_err(refused)?;
-    let relative = jail
-        .resolve(folder)
-        .map_err(|error| refused(format!("{shown}: {error}")))?
-        .join(name.unwrap_or_default());
-    // Case-folded, so a differently cased name on a case-insensitive volume is refused too.
-    let folded = PathBuf::from(relative.to_string_lossy().to_lowercase());
-    if folded.starts_with("library") {
-        return Err(refused(format!("{shown}: it is inside ~/Library")));
-    }
-    if folded.iter().any(|part| part == ".ssh") {
-        return Err(refused(format!("{shown}: it is inside .ssh")));
-    }
-    jail.root()
-        .join(relative)
+    jail::in_home(Path::new(&path), &home()?)
+        .map_err(|error| refused(format!("{path}: {error}")))?
         .into_os_string()
         .into_string()
-        .map_err(|_| refused(format!("{shown}: the path is not UTF-8")))
+        .map_err(|_| refused(format!("{path}: the path is not UTF-8")))
 }
 
 fn home() -> Result<PathBuf, Refusal> {

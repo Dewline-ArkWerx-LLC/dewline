@@ -185,7 +185,7 @@ public final class ChangeEngine: Sendable {
 
     /// Files no document has open that changed since Dewline last saw them, oldest first.
     public func closedChanges() -> [ClosedChange] {
-        engine.closedChanges().map {
+        ((try? engine.closedChanges()) ?? []).map {
             ClosedChange(url: URL(fileURLWithPath: $0.path), origin: Origin($0.origin), count: Int($0.count), time: $0.time)
         }
     }
@@ -270,7 +270,7 @@ public final class ChangeEngine: Sendable {
         case .other: .other
         case .both: .both
         }
-        return engine.decide(doc: doc, change: change, decision: decision, current: current)
+        return try? engine.decide(doc: doc, change: change, decision: decision, current: current)
     }
 
     /// A `dewline notify` line's fields, which only label changes. A refused claim changes nothing.
@@ -292,7 +292,7 @@ public final class ChangeEngine: Sendable {
 
     /// The documents in the gitdir's repository, to land again.
     public func gitChanged(_ gitdir: URL) -> [UInt64] {
-        engine.gitChanged(gitdir: gitdir.path)
+        (try? engine.gitChanged(gitdir: gitdir.path)) ?? []
     }
 
     /// Newest first.
@@ -335,7 +335,7 @@ public final class ChangeEngine: Sendable {
     }
 
     public func close(_ doc: UInt64) {
-        engine.close(doc: doc)
+        try? engine.close(doc: doc)
     }
 
     /// Maps `offset` through `edits`, in order and not overlapping.

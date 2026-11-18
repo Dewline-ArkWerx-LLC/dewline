@@ -19,7 +19,7 @@ pub struct Jail {
 pub enum JailError {
     /// The path lies outside the root, or something on its way changed while it was opened.
     Outside,
-    /// A root an agent is never given, and why.
+    /// A root or path that is never given out, and why.
     Root(&'static str),
     Io(io::Error),
 }
@@ -51,23 +51,19 @@ impl Jail {
     pub fn for_agents(root: &Path, home: &Path) -> Result<Jail, JailError> {
         let jail = Jail::new(root)?;
         let home = fs::canonicalize(home)?;
-        // Case-folded, so a differently cased name on a case-insensitive volume is refused too.
-        let fold = |path: &Path| PathBuf::from(path.to_string_lossy().to_lowercase());
-        let (root, home) = (fold(&jail.root), fold(&home));
-        if home.starts_with(&root) {
+        if fold(&home).starts_with(fold(&jail.root)) {
             return Err(JailError::Root(
                 "the folder is your home folder or holds it",
             ));
         }
-        if root.starts_with(home.join("library")) {
-            return Err(JailError::Root("the folder is inside ~/Library"));
+        match private(&jail.root, &home) {
+            Some(Private::Library) => Err(JailError::Root("the folder is inside ~/Library")),
+            Some(Private::Ssh) => Err(JailError::Root("the folder holds .ssh")),
+            None if fs::symlink_metadata(jail.root.join(".ssh")).is_ok() => {
+                Err(JailError::Root("the folder holds .ssh"))
+            }
+            None => Ok(jail),
         }
-        if root.iter().any(|part| part == ".ssh")
-            || fs::symlink_metadata(jail.root.join(".ssh")).is_ok()
-        {
-            return Err(JailError::Root("the folder holds .ssh"));
-        }
-        Ok(jail)
     }
 
     pub fn root(&self) -> &Path {
@@ -108,6 +104,53 @@ impl Jail {
             .map(Path::to_path_buf)
             .map_err(|_| JailError::Outside)
     }
+}
+
+/// `path`, absolute, with every link resolved, if it lies inside `home` but not inside `~/Library` or a `.ssh`
+/// folder. A file not there yet is checked through its folder.
+pub fn in_home(path: &Path, home: &Path) -> Result<PathBuf, JailError> {
+    if !path.is_absolute() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "the path is not absolute").into());
+    }
+    let (folder, name) = if path.exists() {
+        (path, None)
+    } else {
+        match (path.parent(), path.file_name()) {
+            (Some(folder), Some(name)) => (folder, Some(name)),
+            _ => return Err(io::Error::new(io::ErrorKind::NotFound, "no such file").into()),
+        }
+    };
+    let jail = Jail::new(home)?;
+    let real = jail
+        .root
+        .join(jail.resolve(folder)?.join(name.unwrap_or_default()));
+    match private(&real, &jail.root) {
+        Some(Private::Library) => Err(JailError::Root("it is inside ~/Library")),
+        Some(Private::Ssh) => Err(JailError::Root("it is inside .ssh")),
+        None => Ok(real),
+    }
+}
+
+enum Private {
+    Library,
+    Ssh,
+}
+
+/// Whether `real`, a resolved path, lies inside `home`'s Library folder or a `.ssh` folder.
+fn private(real: &Path, home: &Path) -> Option<Private> {
+    let real = fold(real);
+    if real.starts_with(fold(home).join("library")) {
+        Some(Private::Library)
+    } else if real.iter().any(|part| part == ".ssh") {
+        Some(Private::Ssh)
+    } else {
+        None
+    }
+}
+
+/// `path` case-folded, so a differently cased name on a case-insensitive volume is refused too.
+fn fold(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().to_lowercase())
 }
 
 fn open_at(dir: libc::c_int, path: &Path, flags: libc::c_int) -> io::Result<File> {
@@ -253,6 +296,46 @@ mod tests {
         assert!(refused(&home.join("notes/..")));
         assert!(Jail::for_agents(&home.join("notes"), &home).is_ok());
         assert!(Jail::for_agents(&home.join("notes/deep"), &home).is_ok());
+    }
+
+    #[test]
+    fn home_paths_never_reach_library_or_ssh() {
+        let base = tempfile::tempdir().unwrap();
+        let home = base.path().join("home");
+        for folder in ["notes", "Library/Notes", "keys/.ssh"] {
+            fs::create_dir_all(home.join(folder)).unwrap();
+        }
+        fs::write(home.join("notes/a.md"), "").unwrap();
+        fs::write(base.path().join("outside.md"), "").unwrap();
+        symlink(home.join("Library/Notes"), home.join("notes/linked")).unwrap();
+        let home = fs::canonicalize(&home).unwrap();
+        assert_eq!(
+            in_home(&home.join("notes/a.md"), &home).unwrap(),
+            home.join("notes/a.md")
+        );
+        assert_eq!(
+            in_home(&home.join("notes/new.md"), &home).unwrap(),
+            home.join("notes/new.md")
+        );
+        for path in [
+            "Library/Notes/a.md",
+            "library/notes/a.md",
+            "notes/linked/a.md",
+            "keys/.ssh/id",
+        ] {
+            assert!(
+                matches!(in_home(&home.join(path), &home), Err(JailError::Root(_))),
+                "{path}"
+            );
+        }
+        assert!(matches!(
+            in_home(&base.path().join("outside.md"), &home),
+            Err(JailError::Outside)
+        ));
+        assert!(matches!(
+            in_home(Path::new("notes/a.md"), &home),
+            Err(JailError::Io(_))
+        ));
     }
 
     proptest! {

@@ -833,15 +833,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
-        looking != nil
+        MainActor.assumeIsolated { looking != nil }
     }
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = self
+        MainActor.assumeIsolated { panel.dataSource = self }
     }
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = nil
+        MainActor.assumeIsolated { panel.dataSource = nil }
     }
 
     nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {

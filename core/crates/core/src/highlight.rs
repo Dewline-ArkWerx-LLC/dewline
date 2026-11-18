@@ -1,16 +1,19 @@
-//! Code highlighting for fenced blocks (record 0008). One worker thread owns syntect's syntaxes and each block's
-//! per-line parse states, so an edit reparses a block from its first changed line. Diff and markdown blocks are
-//! highlighted here without syntect. Spans come back as token classes in UTF-16 offsets; the app picks the colors.
+//! Code highlighting for fenced blocks and whole files (record 0008). One worker thread owns syntect's syntaxes and
+//! each block's per-line parse states, so an edit reparses a block from its first changed line until the parser is back
+//! in the state it had there. Diff and markdown are highlighted here without syntect. Spans come back as token classes
+//! in UTF-16 offsets; the app picks the colors. `Syntaxes::html` colors a whole block at once for pages.
 
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
+use crate::export::escape;
 use crate::md::{self, TokenKind};
 
 /// What a span of code is. The app maps each class to a theme color.
@@ -52,11 +55,17 @@ pub const LINE_TIME: Duration = Duration::from_millis(if cfg!(test) { 1_000 } el
 /// The blocks whose line states the worker keeps.
 const CACHED_BLOCKS: usize = 256;
 
+/// What a request colors: a fenced block by its info string's first word, or a whole file by its path.
+enum Source {
+    Fence(String),
+    File(String),
+}
+
 enum Job {
     Highlight {
         block: u64,
         generation: u64,
-        language: String,
+        source: Source,
         text: String,
         reply: Sender<Option<Vec<Span>>>,
     },
@@ -91,6 +100,16 @@ impl Highlighter {
     /// newer request for `block` or a `forget` overtook this one. `block` is any id the caller keeps for the block:
     /// the worker reuses its line states for the lines that did not change since the last request with that id.
     pub fn highlight(&self, block: u64, language: &str, text: &str) -> Option<Vec<Span>> {
+        self.request(block, Source::Fence(language.to_string()), text)
+    }
+
+    /// `highlight` for a whole file, `text`, in the syntax its `path` names: by its file name (Makefile), its
+    /// extension, or its first line (a `#!` line). Empty for a file without a syntax.
+    pub fn highlight_file(&self, block: u64, path: &str, text: &str) -> Option<Vec<Span>> {
+        self.request(block, Source::File(path.to_string()), text)
+    }
+
+    fn request(&self, block: u64, source: Source, text: &str) -> Option<Vec<Span>> {
         let generation = {
             let mut latest = self.latest.lock().unwrap();
             let next = latest.get(&block).map_or(1, |generation| generation + 1);
@@ -104,7 +123,7 @@ impl Highlighter {
             .send(Job::Highlight {
                 block,
                 generation,
-                language: language.to_string(),
+                source,
                 text: text.to_string(),
                 reply,
             })
@@ -117,6 +136,137 @@ impl Highlighter {
         self.latest.lock().unwrap().remove(&block);
         let _ = self.jobs.lock().unwrap().send(Job::Forget(block));
     }
+}
+
+/// The syntaxes in a dump with the scope rules, for coloring whole blocks where no worker is wanted: the Quick Look
+/// page and exports.
+pub struct Syntaxes {
+    set: SyntaxSet,
+    rules: Rules,
+}
+
+impl Syntaxes {
+    /// The syntaxes at `dump`, an uncompressed newline dump such as the app's `Syntaxes.packdump`.
+    pub fn load(dump: &Path) -> Option<Self> {
+        Some(Self {
+            set: syntect::dumps::from_uncompressed_dump_file(dump).ok()?,
+            rules: rules(),
+        })
+    }
+
+    /// `code`, a fenced block's content in `language` (its info string's first word), as the HTML inside its
+    /// `<pre><code>`: escaped, each span in a `<span>` with an inline color for a light and a dark page, or `None` for
+    /// a language without a syntax. A span's color is the stylesheet's `--codeKeyword` and the like when it sets them,
+    /// else the default themes' code colors through `light-dark()`, which follow the page's `color-scheme`.
+    pub fn html(&self, language: &str, code: &str) -> Option<String> {
+        let spans = match native(language) {
+            Some(native) => native(code),
+            None => self.spans(find(&self.set, language)?, code),
+        };
+        // The byte offset of each UTF-16 offset, and of the end.
+        let mut bytes: Vec<usize> = code
+            .char_indices()
+            .flat_map(|(at, c)| std::iter::repeat_n(at, c.len_utf16()))
+            .collect();
+        bytes.push(code.len());
+        let mut out = String::with_capacity(code.len() * 2);
+        let mut at = 0;
+        for span in spans {
+            let (start, end) = (bytes[span.start as usize], bytes[span.end as usize]);
+            out.push_str(&escape(&code[at..start]));
+            let text = escape(&code[start..end]);
+            match color(span.class) {
+                Some(color) => {
+                    let _ = write!(out, "<span style=\"color:{color}\">{text}</span>");
+                }
+                None => out.push_str(&text),
+            }
+            at = end;
+        }
+        out.push_str(&escape(&code[at..]));
+        Some(out)
+    }
+
+    /// The spans of `code` in `syntax`, parsed from its first line.
+    fn spans(&self, syntax: &SyntaxReference, code: &str) -> Vec<Span> {
+        let (mut state, mut scopes) = (ParseState::new(syntax), ScopeStack::new());
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for text in code.split_inclusive('\n') {
+            let (line, slow) = self.line(text, &mut state, &mut scopes);
+            if slow {
+                break;
+            }
+            spans.extend(line.into_iter().map(|span| Span {
+                start: span.start + at,
+                end: span.end + at,
+                class: span.class,
+            }));
+            at += text.encode_utf16().count() as u32;
+        }
+        spans
+    }
+
+    /// One line's spans in UTF-16 offsets from its start, parsed on from `state` and `scopes`, and whether it took
+    /// longer than `LINE_TIME`, which leaves it plain. A line over `LINE_BYTES` is not parsed.
+    fn line(
+        &self,
+        text: &str,
+        state: &mut ParseState,
+        scopes: &mut ScopeStack,
+    ) -> (Vec<Span>, bool) {
+        if text.len() > LINE_BYTES {
+            return (Vec::new(), false);
+        }
+        let started = Instant::now();
+        // The syntaxes are built for lines that end in a line break.
+        let owned;
+        let parsed = if text.ends_with('\n') {
+            text
+        } else {
+            owned = format!("{text}\n");
+            &owned
+        };
+        let mut spans = match state.parse_line(parsed, &self.set) {
+            Ok(ops) => classes(&self.rules, text, &ops, scopes),
+            Err(_) => Vec::new(),
+        };
+        let slow = started.elapsed() > LINE_TIME;
+        if slow {
+            spans.clear();
+        }
+        (spans, slow)
+    }
+
+    /// The syntax for a file: by its name, as for a Makefile, then its extension, then its first line.
+    fn for_file(&self, path: &str, text: &str) -> Option<&SyntaxReference> {
+        let name = Path::new(path).file_name()?.to_str()?;
+        self.set
+            .find_syntax_by_extension(name)
+            .or_else(|| find(&self.set, extension(path)))
+            .or_else(|| self.set.find_syntax_by_first_line(text.lines().next()?))
+            .filter(|syntax| visible(syntax))
+    }
+}
+
+/// The colors a span's class takes on a page, light then dark: the code colors Tidewater and Nightwatch, the default
+/// themes, derive in the app (`Theme.coded`). Operators keep the text's color.
+fn color(class: Class) -> Option<&'static str> {
+    Some(match class {
+        Class::Comment => "var(--codeComment,light-dark(#555f5a,#a3a89f))",
+        Class::String => "var(--codeString,light-dark(#3b0e00,#fdcffd))",
+        Class::Escape | Class::Number | Class::Constant => {
+            "var(--codeNumber,light-dark(#00243c,#bff0c1))"
+        }
+        Class::Keyword => "var(--codeKeyword,light-dark(#002b1c,#a7f3df))",
+        Class::Type => "var(--codeType,light-dark(#2e0f37,#adeaff))",
+        Class::Function => "var(--codeFunction,light-dark(#0f2600,#ffd2b1))",
+        Class::Tag | Class::Attribute => "var(--codeTag,light-dark(#1a211e,#e6e0d3))",
+        Class::Inserted => "var(--codeInserted,light-dark(#002907,#bbf0c5))",
+        Class::Deleted => "var(--codeDeleted,light-dark(#3d090a,#ffcdc6))",
+        Class::Heading => "var(--heading,light-dark(#1a211e,#e6e0d3))",
+        Class::Operator => return None,
+    })
 }
 
 struct Line {
@@ -136,8 +286,7 @@ struct Cache {
 
 struct Worker {
     dump: PathBuf,
-    set: Option<Option<SyntaxSet>>,
-    rules: Rules,
+    syntaxes: Option<Option<Syntaxes>>,
     latest: Arc<Mutex<HashMap<u64, u64>>>,
     blocks: HashMap<u64, Cache>,
     clock: u64,
@@ -147,8 +296,7 @@ impl Worker {
     fn new(dump: PathBuf, latest: Arc<Mutex<HashMap<u64, u64>>>) -> Self {
         Self {
             dump,
-            set: None,
-            rules: Rules::default(),
+            syntaxes: None,
             latest,
             blocks: HashMap::new(),
             clock: 0,
@@ -164,12 +312,12 @@ impl Worker {
                 Job::Highlight {
                     block,
                     generation,
-                    language,
+                    source,
                     text,
                     reply,
                 } => {
                     let spans = panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.highlight(block, generation, &language, &text)
+                        self.highlight(block, generation, &source, &text)
                     }))
                     .unwrap_or_else(|_| {
                         self.blocks.remove(&block);
@@ -189,25 +337,30 @@ impl Worker {
         &mut self,
         block: u64,
         generation: u64,
-        language: &str,
+        source: &Source,
         text: &str,
     ) -> Option<Vec<Span>> {
         if !self.current(block, generation) {
             return None;
         }
-        match language.to_ascii_lowercase().as_str() {
-            "diff" | "patch" => return Some(diff(text)),
-            "md" | "markdown" => return Some(markdown(text)),
-            _ => {}
+        let word = match source {
+            Source::Fence(language) => language.as_str(),
+            Source::File(path) => extension(path),
+        };
+        if let Some(native) = native(word) {
+            return Some(native(text));
         }
-        if self.set.is_none() {
-            self.set = Some(syntect::dumps::from_uncompressed_dump_file(&self.dump).ok());
-            self.rules = rules();
+        if self.syntaxes.is_none() {
+            self.syntaxes = Some(Syntaxes::load(&self.dump));
         }
-        let Some(set) = self.set.as_ref().unwrap() else {
+        let Some(syntaxes) = self.syntaxes.as_ref().unwrap() else {
             return Some(Vec::new());
         };
-        let Some(syntax) = find(set, language) else {
+        let syntax = match source {
+            Source::Fence(language) => find(&syntaxes.set, language),
+            Source::File(path) => syntaxes.for_file(path, text),
+        };
+        let Some(syntax) = syntax else {
             return Some(Vec::new());
         };
         self.clock += 1;
@@ -222,15 +375,27 @@ impl Worker {
             });
         cache.used = self.clock;
         let new: Vec<&str> = text.split_inclusive('\n').collect();
-        let kept = cache
-            .lines
+        let mut old = std::mem::take(&mut cache.lines);
+        let kept = old
             .iter()
             .zip(&new)
             .take_while(|(line, text)| line.text == **text)
             .count();
-        cache.lines.truncate(kept);
+        // The lines after the edit, which the old text ends with too, and the state the old text entered them in.
+        let same = old[kept..]
+            .iter()
+            .rev()
+            .zip(new[kept..].iter().rev())
+            .take_while(|(line, text)| line.text == **text)
+            .count();
+        let mut tail = old.split_off(old.len() - same);
+        let entered = old
+            .last()
+            .map(|line| (line.state.clone(), line.scopes.clone()));
+        old.truncate(kept);
+        cache.lines = old;
         let mut stalled = false;
-        for text in &new[kept..] {
+        for (at, text) in new.iter().enumerate().skip(kept) {
             if !self.current(block, generation) {
                 return None;
             }
@@ -238,24 +403,26 @@ impl Worker {
                 || (ParseState::new(syntax), ScopeStack::new()),
                 |line| (line.state.clone(), line.scopes.clone()),
             );
-            let mut spans = Vec::new();
-            if !stalled && text.len() <= LINE_BYTES {
-                let started = Instant::now();
-                // The syntaxes are built for lines that end in a line break.
-                let owned;
-                let parsed = if text.ends_with('\n') {
-                    *text
-                } else {
-                    owned = format!("{text}\n");
-                    &owned
+            if let Some(index) = at.checked_sub(new.len() - same)
+                && !stalled
+            {
+                let before = match index {
+                    0 => entered.as_ref().map(|(state, scopes)| (state, scopes)),
+                    _ => Some((&tail[index - 1].state, &tail[index - 1].scopes)),
                 };
-                if let Ok(ops) = state.parse_line(parsed, set) {
-                    spans = classes(&self.rules, text, &ops, &mut scopes);
+                let back = match before {
+                    Some((before, outer)) => *before == state && *outer == scopes,
+                    None => cache.lines.is_empty(),
+                };
+                if back {
+                    // The parser is back where the old text had it, so the old lines from here still hold.
+                    cache.lines.extend(tail.drain(index..));
+                    break;
                 }
-                stalled = started.elapsed() > LINE_TIME;
-                if stalled {
-                    spans.clear();
-                }
+            }
+            let mut spans = Vec::new();
+            if !stalled {
+                (spans, stalled) = syntaxes.line(text, &mut state, &mut scopes);
             }
             cache.lines.push(Line {
                 text: text.to_string(),
@@ -289,6 +456,27 @@ impl Worker {
         self.blocks.insert(block, cache);
         Some(spans)
     }
+}
+
+/// The highlighter for diff and markdown, which need no syntax, by a fence's word or a file's extension.
+fn native(word: &str) -> Option<fn(&str) -> Vec<Span>> {
+    match word.to_ascii_lowercase().as_str() {
+        "diff" | "patch" | "udiff" => Some(diff),
+        "md" | "markdown" | "mdown" | "mkd" | "pandoc" => Some(markdown),
+        _ => None,
+    }
+}
+
+/// A path's extension, or "" without one.
+fn extension(path: &str) -> &str {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+}
+
+fn visible(syntax: &SyntaxReference) -> bool {
+    !syntax.hidden && syntax.name != "Unnamed"
 }
 
 /// The syntax for a fence's language as GitHub reads it: a Linguist name or alias, then a syntax's extension or name.
@@ -334,12 +522,11 @@ fn find<'a>(set: &'a SyntaxSet, language: &str) -> Option<&'a SyntaxReference> {
         return None;
     }
     set.find_syntax_by_token(token)
-        .filter(|syntax| !syntax.hidden && syntax.name != "Unnamed")
+        .filter(|syntax| visible(syntax))
 }
 
 /// Scope prefixes and their classes, most specific first; a token's class is the first match for its innermost scope
 /// that has one. A string inside a mapping's key reads as an attribute.
-#[derive(Default)]
 struct Rules {
     classes: Vec<(Scope, Class)>,
     keys: Vec<Scope>,
@@ -946,6 +1133,101 @@ mod tests {
             .filter(|(_, name, found)| *found != Some(name))
             .collect();
         assert!(wrong.is_empty(), "{wrong:?}");
+    }
+
+    #[test]
+    fn an_edit_stops_reparsing_once_the_parser_is_back() {
+        let highlighter = highlighter();
+        let body: String = (0..2_000).map(|n| format!("x{n} = {n}\n")).collect();
+        let before = format!("a = 1\n{body}");
+        highlighter.highlight(9, "py", &before).unwrap();
+        let after = format!("a = 2\n{body}");
+        let started = Instant::now();
+        let spans = read(&after, &highlighter.highlight(9, "py", &after).unwrap());
+        let reused = started.elapsed();
+        let started = Instant::now();
+        let fresh = read(&after, &highlighter.highlight(10, "py", &after).unwrap());
+        let parsed = started.elapsed();
+        assert_eq!(spans, fresh);
+        assert!(reused * 4 < parsed, "{reused:?} against {parsed:?}");
+        // An edit that opens a string changes every line after it, and closing it changes them back.
+        let opened = format!("a = \"\"\"\n{body}");
+        let spans = read(&opened, &highlighter.highlight(9, "py", &opened).unwrap());
+        assert!(
+            has(&spans, "x1999 = 1999", Class::String),
+            "{:?}",
+            &spans[spans.len() - 1..]
+        );
+        let spans = read(&after, &highlighter.highlight(9, "py", &after).unwrap());
+        assert_eq!(spans, fresh);
+    }
+
+    #[test]
+    fn inserted_and_deleted_lines_keep_the_lines_after_them() {
+        let highlighter = highlighter();
+        let text = "fn a() {}\n// note\nfn b() {}\n";
+        highlighter.highlight(11, "rust", text).unwrap();
+        for edited in [
+            "fn a() {}\nlet s = \"x\";\n// note\nfn b() {}\n",
+            "// note\nfn b() {}\n",
+            "/* open\n// note\nfn b() {}\n",
+            "fn b() {}\n",
+        ] {
+            let found = read(edited, &highlighter.highlight(11, "rust", edited).unwrap());
+            assert_eq!(
+                found,
+                read(edited, &highlighter.highlight(12, "rust", edited).unwrap()),
+                "{edited}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_finds_its_syntax_by_its_path() {
+        let highlighter = highlighter();
+        let found = |path: &str, text: &str| {
+            read(text, &highlighter.highlight_file(1, path, text).unwrap())
+        };
+        assert!(has(
+            &found("/x/main.rs", "fn main() {}\n"),
+            "fn",
+            Class::Keyword
+        ));
+        assert!(has(
+            &found("/x/Makefile", "all:\n\techo hi # c\n"),
+            "# c",
+            Class::Comment
+        ));
+        assert!(has(
+            &found("/x/Dockerfile", "FROM alpine\n"),
+            "FROM",
+            Class::Keyword
+        ));
+        assert!(has(
+            &found("/x/run", "#!/bin/bash\necho \"hi\"\n"),
+            "\"hi\"",
+            Class::String
+        ));
+        assert!(has(&found("/x/a.patch", "+new\n"), "+new", Class::Inserted));
+        assert!(found("/x/notes.txt", "plain\n").is_empty());
+    }
+
+    #[test]
+    fn html_colors_spans_inline_for_light_and_dark() {
+        let syntaxes = Syntaxes::load(Path::new(DUMP)).unwrap();
+        let html = syntaxes.html("rust", "// é <b>\nlet s = \"&\";\n").unwrap();
+        assert!(
+            html.starts_with("<span style=\"color:var(--codeComment,light-dark(#555f5a,#a3a89f))\">// é &lt;b&gt;</span>\n"),
+            "{html}"
+        );
+        assert!(html.contains("&quot;&amp;&quot;</span>"), "{html}");
+        assert_eq!(syntaxes.html("klingon", "x < y"), None);
+        assert!(
+            syntaxes
+                .html("diff", "+a\n")
+                .unwrap()
+                .contains("codeInserted")
+        );
     }
 
     #[test]

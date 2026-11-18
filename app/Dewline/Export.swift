@@ -5,14 +5,14 @@ import UniformTypeIdentifiers
 import WebKit
 
 /// A document as a standalone HTML page, a paged PDF, an EPUB book or one tall PNG in the current theme, or as a Word,
-/// rich text, OpenDocument or plain text file: the PDF, book and PNG in the light palette, as paper is, and the HTML in
-/// both, switched by the reader's appearance. The source file is never read
+/// rich text, OpenDocument, LaTeX or plain text file: the PDF, book and PNG in the light palette, as paper is, and the
+/// HTML in both, switched by the reader's appearance. LaTeX writes its diagrams and images into a folder beside it. The source file is never read
 /// or written: the page comes from the text passed in, and images inline from the document's folder.
 @MainActor
 enum Export {
     enum Format: Int, CaseIterable {
         /// The raw values are stored in the defaults; the order is the Format menu's.
-        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, epub = 7, text = 3, png = 6
+        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, epub = 7, latex = 8, text = 3, png = 6
 
         var fileExtension: String {
             switch self {
@@ -22,6 +22,7 @@ enum Export {
             case .rtf: "rtf"
             case .odt: "odt"
             case .epub: "epub"
+            case .latex: "tex"
             case .text: "txt"
             case .png: "png"
             }
@@ -39,6 +40,7 @@ enum Export {
             case .rtf: "Rich Text"
             case .odt: "OpenDocument"
             case .epub: "EPUB"
+            case .latex: "LaTeX"
             case .text: "Plain Text"
             case .png: "PNG Image"
             }
@@ -88,6 +90,10 @@ enum Export {
             data = try exportEPUB(
                 text, title: title, css: stylesheet(light: light, dark: nil), folder: folder, colors: light.colors, mathSize: ThemeStore.shared.bodySize
             )
+        case .latex:
+            let article = exportLaTeX(text, name: url.deletingPathExtension().lastPathComponent, folder: folder, colors: Palette(.aqua).colors)
+            try write(article.files, beside: url)
+            data = Data(article.tex.utf8)
         case .html, .pdf, .png:
             let light = Palette(.aqua)
             let dark = format == .html ? Palette(.darkAqua) : nil
@@ -104,6 +110,24 @@ enum Export {
         try data.write(to: url, options: .atomic)
     }
 
+    /// Writes each file at its path relative to `url`'s folder, making the folders on the way and refusing one that is a
+    /// symbolic link or a file.
+    private static func write(_ files: [(path: String, data: Data)], beside url: URL) throws {
+        for file in files {
+            var folder = url.deletingLastPathComponent()
+            for part in file.path.split(separator: "/").dropLast() {
+                folder.append(path: String(part), directoryHint: .isDirectory)
+                var info = stat()
+                if lstat(folder.path, &info) != 0 {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+                } else if info.st_mode & S_IFMT != S_IFDIR {
+                    throw Failure(errorDescription: "\u{201C}\(folder.lastPathComponent)\u{201D} beside the export isn\u{2019}t a folder.")
+                }
+            }
+            try file.data.write(to: folder.appending(path: (file.path as NSString).lastPathComponent), options: .atomic)
+        }
+    }
+
     /// The page with diagrams and math as their source, task boxes as ballot boxes and images as their alt text, read
     /// by AppKit's HTML reader in the editor's faces, the system's named as faces every Mac has.
     private static func richText(_ text: String, title: String, as type: NSAttributedString.DocumentType) throws -> Data {
@@ -115,7 +139,7 @@ enum Export {
         h1, h2, h3, h4, h5, h6 { font-family: \(face(store.headingFace, "serif")); }
         code, pre { font-family: \(face(store.codeFace, "monospace")); }
         """
-        let page = previewPage(text, title: title, css: css)
+        let page = previewPage(text, title: title, css: css, syntaxes: nil)
             .replacing("<input type=\"checkbox\" disabled checked>", with: "\u{2611}")
             .replacing("<input type=\"checkbox\" disabled>", with: "\u{2610}")
             .replacing(/<img [^>]*?alt="([^"]*)"[^>]*>/) { $0.1.isEmpty ? "[image]" : "[image: \($0.1)]" }

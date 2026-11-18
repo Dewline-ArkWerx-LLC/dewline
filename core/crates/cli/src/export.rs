@@ -18,6 +18,7 @@ pub enum Format {
     Rtf,
     Odt,
     Epub,
+    Tex,
     Txt,
     Png,
 }
@@ -31,6 +32,7 @@ impl Format {
             Format::Rtf => "rtf",
             Format::Odt => "odt",
             Format::Epub => "epub",
+            Format::Tex => "tex",
             Format::Txt => "txt",
             Format::Png => "png",
         }
@@ -78,6 +80,7 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
                     css: CSS,
                     diagram: &|_| None,
                     math: &|_, _| None,
+                    code: &|_, _| None,
                     folder: source.parent(),
                 },
             );

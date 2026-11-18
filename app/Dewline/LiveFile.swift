@@ -158,8 +158,9 @@ final class LiveFile {
             case .sessionEnd: ("SessionEnd", nil, nil)
             }
         claims.async {
-            if case .preToolUse(let use) = claim.event, let hash = use.hash {
-                closedWrite(use.path, hash: hash, by: claim, engine: engine)
+            // A Read declares nothing and writes nothing.
+            if case .preToolUse(let use) = claim.event, use.tool != .read, let hash = use.hash, let declared = use.declared {
+                closedWrite(use.path, hash: hash, declared: declared, by: claim, engine: engine)
             }
             let updates = engine.claim(
                 event: event, vendor: claim.vendor.rawValue, session: claim.session, toolUseId: use?.id,
@@ -185,9 +186,12 @@ final class LiveFile {
         }
     }
 
-    /// Before an agent's tool writes a file: keeps the bytes it read, if the file still holds them, so a write to a
-    /// file no tab has open lands marked when it opens (B5). The engine ignores open files.
-    private nonisolated static func closedWrite(_ path: String, hash: String, by claim: ControlSocket.Claim, engine: ChangeEngine) {
+    /// Before an agent's tool writes a file: keeps the bytes it read, if the file still holds them, and the hash of the
+    /// bytes it declares, so a write to a file no tab has open lands marked, and named if it made those bytes, when it
+    /// opens (B5). The engine ignores open files.
+    private nonisolated static func closedWrite(
+        _ path: String, hash: String, declared: String, by claim: ControlSocket.Claim, engine: ChangeEngine
+    ) {
         let vendor: ChangeEngine.Vendor =
             switch claim.vendor {
             case .claude: .claude
@@ -201,7 +205,7 @@ final class LiveFile {
             contentHash(before).map({ String(format: "%02x", $0) }).joined() == hash
         else { return }
         do throws(ChangeEngine.Failure) {
-            try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: before)
+            try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: before, declared: declared)
             Task { @MainActor in NotificationCenter.default.post(name: changesDidChange, object: nil) }
         } catch {
             log.error("A closed file's write was not kept: \(String(describing: error), privacy: .public)")

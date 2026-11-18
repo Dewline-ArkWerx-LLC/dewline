@@ -13,6 +13,7 @@ pub mod links;
 pub mod loads;
 pub mod md;
 pub mod merge;
+pub mod notelinks;
 pub mod search;
 pub mod store;
 pub mod text;

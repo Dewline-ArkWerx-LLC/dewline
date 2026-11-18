@@ -34,9 +34,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open files in Dewline, starting it if it isn't running
+    /// Open files or folders in Dewline, starting it if it isn't running
     Open {
-        /// A file, with the caret at LINE and COLUMN when given (both count from 1)
+        /// A file, with the caret at LINE and COLUMN when given (both count from 1), or a folder
         #[arg(required = true, value_name = "FILE[:LINE[:COLUMN]]")]
         files: Vec<OsString>,
         /// Return once every file's window has closed, as EDITOR="dewline open --wait" needs
@@ -66,11 +66,12 @@ enum Command {
         /// The entry's text; without it, stdin is read
         text: Vec<String>,
     },
-    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, plain text or PNG
+    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, plain text or PNG
     #[command(
-        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, plain text or PNG.\n\n\
+        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, plain text or PNG.\n\n\
                       HTML and DOCX are written here, with images in the file's folder inlined; diagrams and math keep \
-                      their source. The other formats need the Dewline app: this command hands the file to it."
+                      their source. The other formats need the Dewline app: this command hands the file to it. LaTeX \
+                      also writes a NAME-files folder beside OUT holding its diagrams and images."
     )]
     Export {
         file: PathBuf,
@@ -144,6 +145,10 @@ fn open(files: &[OsString], wait: bool) -> Result<(), String> {
     let mut errors = Vec::new();
     for file in files {
         match target::resolve(file, &cwd, home.as_deref()) {
+            Ok(target) if wait && target.folder => errors.push(format!(
+                "{}: is a folder; --wait takes files",
+                file.to_string_lossy()
+            )),
             Ok(target) => targets.push(target),
             Err(error) => errors.push(error),
         }

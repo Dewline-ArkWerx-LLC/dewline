@@ -61,6 +61,7 @@ enum MainMenu {
         menu.addItem(withTitle: "Open\u{2026}", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
         let folder = menu.addItem(withTitle: "Open Folder\u{2026}", action: #selector(AppDelegate.openFolder(_:)), keyEquivalent: "o")
         folder.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = RecentMenu.menu()
         menu.addItem(withTitle: "Quick Open\u{2026}", action: #selector(AppDelegate.quickOpen(_:)), keyEquivalent: "O")
         menu.addItem(withTitle: "Open Inbox", action: #selector(AppDelegate.openInbox(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Capture\u{2026}", action: #selector(AppDelegate.capture(_:)), keyEquivalent: "")
@@ -189,6 +190,8 @@ enum MainMenu {
             item.isHidden = key == "="
             item.allowsKeyEquivalentWhenHidden = true
         }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Sidebar Outline", action: #selector(SidebarOutline.toggle(_:)), keyEquivalent: "").target = SidebarOutline.self
         return menu
     }
 

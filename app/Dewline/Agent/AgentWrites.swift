@@ -98,7 +98,7 @@ final class AgentWrites {
         let before = FileManager.default.contents(atPath: path)
         guard before != after else { return [:] }
         if !isOpen, let before {
-            ClosedChanges.record(path: URL(fileURLWithPath: path), writer: .agent(.acp, session: session), before: before)
+            ClosedChanges.record(path: URL(fileURLWithPath: path), writer: .agent(.acp, session: session), before: before, declared: Self.hex(after))
         }
         let id = UUID().uuidString
         if let engine {

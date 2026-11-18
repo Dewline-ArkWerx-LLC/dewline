@@ -1,3 +1,4 @@
+#if COLLAB
 import AppKit
 import MdCore
 import Security
@@ -411,3 +412,4 @@ private final class CaretMark: NSView {
         nil
     }
 }
+#endif

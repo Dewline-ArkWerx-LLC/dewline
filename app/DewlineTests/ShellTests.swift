@@ -3,8 +3,12 @@ import Testing
 @testable import Dewline
 
 struct ShellTests {
-    @Test func gitIgnoreMatchesNamesAnchorsAndFolders() {
-        let ignore = GitIgnore("# build output\nbuild/\n/drafts\n*.log\ndocs/private\n!keep.log\n")
+    @Test func gitIgnoreMatchesNamesAnchorsAndFolders() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("# build output\nbuild/\n/drafts\n*.log\ndocs/private\n!keep.log\n".utf8).write(to: root.appending(path: ".gitignore"))
+        let ignore = Folder(root).ignore
         #expect(ignore.ignores("build", isFolder: true))
         #expect(ignore.ignores("notes/build", isFolder: true))
         #expect(!ignore.ignores("build", isFolder: false))
@@ -14,6 +18,7 @@ struct ShellTests {
         #expect(ignore.ignores("docs/private", isFolder: true))
         #expect(!ignore.ignores("private", isFolder: true))
         #expect(!ignore.ignores("notes.md", isFolder: false))
+        #expect(!ignore.ignores("keep.log", isFolder: false))
     }
 
     @Test func folderListsFoldersFirstInFinderOrderAndHidesNoise() throws {

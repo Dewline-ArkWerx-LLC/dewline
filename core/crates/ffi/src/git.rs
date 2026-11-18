@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use dewline_core::git::status::{self, Ignores, Status};
 
@@ -87,7 +87,10 @@ impl GitIgnores {
             } else {
                 [&self.prefix, b"/".as_slice(), path.as_bytes()].concat()
             };
-            self.ignores.lock().unwrap().ignored(&path, is_folder)
+            self.ignores
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .ignored(&path, is_folder)
         })
     }
 }

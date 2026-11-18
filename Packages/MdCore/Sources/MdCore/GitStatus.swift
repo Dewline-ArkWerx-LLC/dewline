@@ -44,8 +44,8 @@ public final class GitIgnores: Sendable {
     }
 
     /// Whether git ignores `path`, "/"-separated from the folder: it or a folder above it matches. A folder's .gitignore
-    /// is read the first time a path under it is asked about.
+    /// is read the first time a path under it is asked about. A path the rules fail on counts as ignored.
     public func ignores(_ path: String, isFolder: Bool) -> Bool {
-        (try? rules.ignores(path: path, isFolder: isFolder)) ?? false
+        (try? rules.ignores(path: path, isFolder: isFolder)) ?? true
     }
 }

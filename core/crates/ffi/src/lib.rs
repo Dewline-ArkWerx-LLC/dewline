@@ -19,6 +19,7 @@ mod highlight;
 mod markdown;
 mod save;
 mod search;
+#[cfg(feature = "collab")]
 mod sync;
 mod system;
 

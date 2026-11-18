@@ -62,7 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         RightPane.makeChanges = { ReviewViewController(for: $0) }
-        RightPane.makeAgent = { AgentPanel.makeViewController(window: $0) }
         Review.closedNotes = {
             ClosedChanges.all.map { ClosedNote(url: $0.url, origin: $0.origin, time: $0.time) }.sorted { $0.time > $1.time }
         }
@@ -369,11 +368,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !launched { openedBeforeLaunch = true }
         for url in urls {
             if url.scheme == "dewline" {
+                #if COLLAB
                 if url.host == "join" {
                     Collaboration.join(link: url.absoluteString)
-                } else {
-                    SchemeLinks.handle(url)
+                    continue
                 }
+                #endif
+                SchemeLinks.handle(url)
             } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 if !launched { opensFile = true }
                 resume(after: openFolder(at: url))
@@ -537,11 +538,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Capture.show()
     }
 
-    /// Settings > Agents > Set Up… and the agent panel's Set Up: installs the hooks after a sheet listing the files.
+    /// Settings > Agents > Set Up…: installs the hooks after a sheet listing the files.
     @objc func setUpHooks(_ sender: Any?) {
         HookSetup.install(from: NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
+    #if COLLAB
     /// File > Join Shared Note…: the invite link, pasted.
     @objc func joinSharedNote(_ sender: Any?) {
         let alert = NSAlert()
@@ -564,6 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Collaboration.join(link: link)
     }
+    #endif
 
     /// File > Print…: the note as its PDF export lays it out.
     @objc func printNote(_ sender: Any?) {

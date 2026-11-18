@@ -2,10 +2,10 @@ import AppKit
 
 /// What the window answers through the responder chain: the right pane's tabs, Share, and reopening a closed tab.
 @MainActor @objc protocol ShellActions {
-    func togglePreview(_ sender: Any?)
-    func toggleAgent(_ sender: Any?)
     func toggleChanges(_ sender: Any?)
+    #if COLLAB
     func shareNote(_ sender: Any?)
+    #endif
     func reopenClosedTab(_ sender: Any?)
 }
 
@@ -73,9 +73,11 @@ enum MainMenu {
         menu.addItem(withTitle: "Duplicate", action: #selector(AppDelegate.duplicateNote(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Move to Trash", action: #selector(AppDelegate.trashNote(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Earlier Versions\u{2026}", action: #selector(AppDelegate.showEarlierVersions(_:)), keyEquivalent: "")
+        #if COLLAB
         menu.addItem(.separator())
         menu.addItem(withTitle: "Share\u{2026}", action: #selector(ShellActions.shareNote(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Join Shared Note\u{2026}", action: #selector(AppDelegate.joinSharedNote(_:)), keyEquivalent: "")
+        #endif
         menu.addItem(.separator())
         menu.addItem(withTitle: "Export\u{2026}", action: #selector(MarkdownDocument.exportDocument(_:)), keyEquivalent: "E").tag = Export.Format.pdf.rawValue
         menu.addItem(withTitle: "Print\u{2026}", action: #selector(AppDelegate.printNote(_:)), keyEquivalent: "p")
@@ -160,11 +162,6 @@ enum MainMenu {
 
     private static func viewMenu() -> NSMenu {
         let menu = NSMenu(title: "View")
-        for (title, action, key) in [
-            ("Preview", #selector(ShellActions.togglePreview(_:)), "p"), ("Agent", #selector(ShellActions.toggleAgent(_:)), "a"),
-        ] {
-            menu.addItem(withTitle: title, action: action, keyEquivalent: key).keyEquivalentModifierMask = [.command, .option]
-        }
         menu.addItem(withTitle: "Changes", action: #selector(ShellActions.toggleChanges(_:)), keyEquivalent: "R")
         let sidebar = menu.addItem(withTitle: "Show Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
         sidebar.keyEquivalentModifierMask = [.command, .control]
@@ -174,7 +171,6 @@ enum MainMenu {
         source.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(withTitle: "Focus", action: #selector(EditorTextView.toggleFocusMode(_:)), keyEquivalent: "D")
         menu.addItem(withTitle: "Typewriter", action: #selector(EditorTextView.toggleTypewriterMode(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Follow Changes", action: #selector(FollowChanges.toggleFollow(_:)), keyEquivalent: "").target = FollowChanges.shared
         menu.addItem(.separator())
         menu.addItem(withTitle: "Show Previous Tab", action: #selector(MainWindowController.showPreviousTab(_:)), keyEquivalent: "{")
         menu.addItem(withTitle: "Show Next Tab", action: #selector(MainWindowController.showNextTab(_:)), keyEquivalent: "}")

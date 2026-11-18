@@ -125,7 +125,7 @@
           <table>
             <thead><tr><th scope="col">The change</th><th scope="col">No unsaved edits</th><th scope="col">Unsaved edits</th></tr></thead>
             <tbody>
-              <tr><td>An agent's, through the panel or named by its hooks</td><td>Marked</td><td>Marked</td></tr>
+              <tr><td>An agent's, named by its hooks</td><td>Marked</td><td>Marked</td></tr>
               <tr><td>git's, such as a checkout or a rebase</td><td>Lands unmarked</td><td>Marked</td></tr>
               <tr><td>Another app's</td><td>Lands unmarked</td><td>Marked</td></tr>
               <tr><td>Another app's, to an agent instruction file such as <code>CLAUDE.md</code></td><td>Marked</td><td>Marked</td></tr>
@@ -134,27 +134,6 @@
         </div>
         <p>A hook that reports late can still name a change that landed unmarked; it then becomes marked.</p>
       </details>
-
-      <h2 id="chat">Chat with your agent</h2>
-      <p>The Agent panel talks to a coding agent you install yourself. Dewline ships no model and needs no account.</p>
-      <ol class="steps">
-        <li><b>Press <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>A</kbd></span></b>, or click Agent in the toolbar. The panel opens beside the note.</li>
-        <li><b>Pick an agent</b> from the menu at the top.</li>
-        <li><b>Type and press <kbd>↩</kbd>.</b> The open note and any selection go along.</li>
-        <li><b>Keep or revert its edits</b>, which arrive marked.</li>
-      </ol>
-      <p><span class="keys"><kbd>⌘</kbd><kbd>.</kbd></span> stops a turn. The agent works only inside the open folder and asks before it runs a command.</p>
-      <div class="table" tabindex="0" role="region" aria-label="Agents the panel finds">
-        <table>
-          <thead><tr><th scope="col">Agent</th><th scope="col">Install</th></tr></thead>
-          <tbody>
-            <tr><td>Gemini CLI</td><td><code>npm install -g @google/gemini-cli</code></td></tr>
-            <tr><td>Claude Code</td><td><code>npm install -g @agentclientprotocol/claude-agent-acp</code></td></tr>
-            <tr><td>Codex</td><td><code>npm install -g @agentclientprotocol/codex-acp</code></td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Run each agent once in Terminal to sign in. Settings &gt; Agents &gt; Add Agent… adds any other Agent Client Protocol agent.</p>
 
       <h2 id="install">Mark edits from other agents</h2>
       <p>An agent you run in Terminal writes files itself. Hooks let its edits carry its name.</p>
@@ -174,7 +153,7 @@ and don't redo a change the user reverted.</code></pre>
       </div>
 
       <h2 id="naming">How Dewline knows who wrote it</h2>
-      <p>A change carries an agent's name only when its hooks prove the write was theirs. Panel edits need no hooks.</p>
+      <p>A change carries an agent's name only when its hooks prove the write was theirs.</p>
       <details id="proof">
         <summary>The four steps, and the lines one Edit sent</summary>
       <ol>

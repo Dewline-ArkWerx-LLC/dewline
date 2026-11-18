@@ -1,3 +1,4 @@
+#if COLLAB
 import AppKit
 import MdCore
 
@@ -162,3 +163,4 @@ final class ShareSheet: NSViewController {
         dismiss(nil)
     }
 }
+#endif

@@ -226,14 +226,24 @@ fn hooks<'a>(group: &'a Value, agent: &Agent) -> &'a [Value] {
         .map_or(&[], Vec::as_slice)
 }
 
-/// Whether `group` runs for every tool `matcher` names: it has that matcher, or none, which matches every tool.
+/// The tools `matcher` names that `group`'s matcher leaves out, as alternatives in any order; none when it matches
+/// every tool.
+fn uncovered<'a>(group: &Value, matcher: &'a str) -> Vec<&'a str> {
+    match group.get("matcher").and_then(Value::as_str) {
+        None | Some("" | "*" | ".*") => Vec::new(),
+        Some(have) => {
+            let have: Vec<&str> = have.split('|').collect();
+            matcher
+                .split('|')
+                .filter(|tool| !have.contains(tool))
+                .collect()
+        }
+    }
+}
+
+/// Whether `group` runs for every tool `matcher` names.
 fn covers(group: &Value, matcher: Option<&str>) -> bool {
-    matcher.is_none_or(|matcher| {
-        group
-            .get("matcher")
-            .and_then(Value::as_str)
-            .is_none_or(|have| have == matcher || have.is_empty() || have == "*")
-    })
+    matcher.is_none_or(|matcher| uncovered(group, matcher).is_empty())
 }
 
 /// The events of `agent` with no hook calling `dewline notify --hook <name>` through a program that `runs`, in a group
@@ -302,8 +312,9 @@ fn trusted(settings: &Value, agent: &Agent, file: &str, config: Option<&toml::Ta
 }
 
 /// `settings` with a hook running `command` for each of `agent`'s events that lacks one: a Dewline hook whose program
-/// is gone, or whose group's matcher is narrower, gets `command` and the matcher in its place, and otherwise one is
-/// added. Every other key and hook is kept as it was.
+/// is gone gets `command`; a group of Dewline hooks only whose matcher is narrower gains the tools it lacks; a Dewline
+/// hook sharing such a group with other hooks moves to a group of its own; and otherwise one is added. Every other key
+/// and hook is kept as it was.
 fn merge(
     settings: Option<&Value>,
     agent: &Agent,
@@ -341,20 +352,27 @@ fn merge(
             .iter_mut()
             .find(|group| hooks(group, agent).iter().any(ours))
         {
-            if let Some(matcher) = matcher {
-                group["matcher"] = json!(matcher);
+            let lacks = matcher.map_or_else(Vec::new, |matcher| uncovered(group, matcher));
+            if lacks.is_empty() || hooks(group, agent).iter().all(ours) {
+                if !lacks.is_empty() {
+                    let have = group["matcher"].as_str().unwrap_or_default();
+                    group["matcher"] = json!(format!("{have}|{}", lacks.join("|")));
+                }
+                let hook = if agent.flat {
+                    Some(group)
+                } else {
+                    group["hooks"]
+                        .as_array_mut()
+                        .and_then(|hooks| hooks.iter_mut().find(|hook| ours(hook)))
+                };
+                if let Some(hook) = hook {
+                    hook["command"] = json!(command);
+                }
+                continue;
             }
-            let hook = if agent.flat {
-                Some(group)
-            } else {
-                group["hooks"]
-                    .as_array_mut()
-                    .and_then(|hooks| hooks.iter_mut().find(|hook| ours(hook)))
-            };
-            if let Some(hook) = hook {
-                hook["command"] = json!(command);
+            if let Some(hooks) = group["hooks"].as_array_mut() {
+                hooks.retain(|hook| !ours(hook));
             }
-            continue;
         }
         let mut group = Map::new();
         if let Some(matcher) = matcher {
@@ -657,6 +675,24 @@ trusted_hash = "sha256:3"
         assert_eq!(merged["hooks"]["PreToolUse"], json!([group(TOOLS)]));
         let any = json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": COMMAND}]}]}});
         assert!(!missing(Some(&any), claude, every).contains(&"PreToolUse"));
+        let reordered = json!({"hooks": {"PreToolUse": [group("Bash|Write|MultiEdit|Edit|Read")]}});
+        assert!(!missing(Some(&reordered), claude, every).contains(&"PreToolUse"));
+
+        let custom = json!({"hooks": {"PreToolUse": [group("Write|NotebookEdit|Edit")]}});
+        let merged = merge(Some(&custom), claude, COMMAND, every).unwrap();
+        assert_eq!(
+            merged["hooks"]["PreToolUse"],
+            json!([group("Write|NotebookEdit|Edit|Read|MultiEdit|Bash")])
+        );
+
+        let guard = json!({"type": "command", "command": "guard.sh"});
+        let shared = json!({"hooks": {"PreToolUse": [{"matcher": "Edit|Write", "hooks": [guard, {"type": "command", "command": COMMAND}]}]}});
+        let merged = merge(Some(&shared), claude, COMMAND, every).unwrap();
+        assert_eq!(
+            merged["hooks"]["PreToolUse"],
+            json!([{"matcher": "Edit|Write", "hooks": [guard]}, group(TOOLS)])
+        );
+        assert!(missing(Some(&merged), claude, every).is_empty());
     }
 
     #[test]

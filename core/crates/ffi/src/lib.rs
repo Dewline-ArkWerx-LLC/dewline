@@ -17,8 +17,10 @@ mod engine;
 mod git;
 mod highlight;
 mod markdown;
+mod notelinks;
 mod save;
 mod search;
+#[cfg(feature = "collab")]
 mod sync;
 mod system;
 
@@ -229,12 +231,21 @@ pub fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, R
 /// pixels.
 #[uniffi::export]
 pub fn rasterize_svg(svg: String, scale: f32, max_width: u32) -> Result<Raster, RenderError> {
+    let pixmap = draw(&svg, scale, max_width)?;
+    Ok(Raster {
+        width: pixmap.width(),
+        height: pixmap.height(),
+        pixels: pixmap.take(),
+    })
+}
+
+fn draw(svg: &str, scale: f32, max_width: u32) -> Result<tiny_skia::Pixmap, RenderError> {
     let invalid = |message: String| RenderError::Invalid { message };
     let options = usvg::Options {
         fontdb: FONTS.clone(),
         ..Default::default()
     };
-    let tree = usvg::Tree::from_str(&svg, &options).map_err(|error| invalid(error.to_string()))?;
+    let tree = usvg::Tree::from_str(svg, &options).map_err(|error| invalid(error.to_string()))?;
     let scale = scale.min(max_width as f32 / tree.size().width());
     let (width, height) = (
         (tree.size().width() * scale).ceil() as u32,
@@ -250,11 +261,7 @@ pub fn rasterize_svg(svg: String, scale: f32, max_width: u32) -> Result<Raster, 
         tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
-    Ok(Raster {
-        width,
-        height,
-        pixels: pixmap.take(),
-    })
+    Ok(pixmap)
 }
 
 /// A PNG of display math at `size` points, `scale` pixels per point, in
@@ -391,6 +398,53 @@ pub fn export_epub(
     })
 }
 
+/// A file an export writes beside its main file, at `path` relative to that file's folder.
+#[derive(uniffi::Record)]
+pub struct ExportFile {
+    pub path: String,
+    pub bytes: Vec<u8>,
+}
+
+/// An export's text and the files it writes beside it.
+#[derive(uniffi::Record)]
+pub struct TextWithFiles {
+    pub text: String,
+    pub files: Vec<ExportFile>,
+}
+
+impl TextWithFiles {
+    fn new((text, files): (String, Vec<(String, Vec<u8>)>)) -> Self {
+        TextWithFiles {
+            text,
+            files: files
+                .into_iter()
+                .map(|(path, bytes)| ExportFile { path, bytes })
+                .collect(),
+        }
+    }
+}
+
+/// `text` as a LaTeX article named `name`, with images read from inside `folder` and diagrams drawn in `colors` as
+/// PNGs at three pixels per point, at most 2400 pixels wide.
+#[uniffi::export]
+pub fn export_latex(
+    text: String,
+    name: String,
+    folder: Option<String>,
+    colors: DiagramColors,
+) -> TextWithFiles {
+    let diagram = |source: &str| {
+        let svg = render_mermaid(source.to_owned(), colors).ok()?;
+        draw(&svg, 3.0, 2400).ok()?.encode_png().ok()
+    };
+    TextWithFiles::new(export::latex::latex(
+        &text,
+        &name,
+        folder.as_deref().map(std::path::Path::new),
+        &diagram,
+    ))
+}
+
 /// `img` (an open tag without its source) showing `light`, or `dark` on a dark page.
 fn picture(light: &str, dark: Option<String>, img: &str) -> String {
     match dark {
@@ -519,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn books_carry_their_math_and_diagrams_as_files() {
+    fn books_and_articles_carry_their_diagrams_as_files() {
         isolate();
         let text = "# Notes\n\n$x^2$\n\n```mermaid\nflowchart LR\n  a[Start] --> b\n```\n";
         let book =
@@ -529,6 +583,12 @@ mod tests {
             book.contains("OEBPS/images/image-1.png")
                 && book.contains("OEBPS/images/diagram-2.svg")
         );
+        let article = export_latex(text.into(), "notes".into(), None, night());
+        assert!(
+            article.text.contains("$x^2$") && article.text.contains("{notes-files/diagram-1.png}")
+        );
+        assert_eq!(article.files.len(), 1);
+        assert!(article.files[0].bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 
     #[test]

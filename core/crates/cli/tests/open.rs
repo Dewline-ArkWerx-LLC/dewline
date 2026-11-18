@@ -219,11 +219,11 @@ fn bad_names_open_nothing() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.dir.path().join("drafts")).unwrap();
     // Nothing listens, so reaching the socket would fail differently.
-    let output = fixture.run(&["open", "my plan.md", "drafts", "missing.md:4"]);
+    let output = fixture.run(&["open", "my plan.md", "drafts:3", "missing.md:4"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr(&output),
-        "dewline: drafts: is a folder; dewline open takes files\ndewline: missing.md:4: no such file\n"
+        "dewline: drafts:3: is a folder; a line needs a file\ndewline: missing.md:4: no such file\n"
     );
 }
 

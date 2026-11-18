@@ -19,7 +19,7 @@ required-features = ["bindgen"]
 
 [dependencies]
 dewline-core = { path = "../core" }
-dewline-sync = { path = "../sync" }
+dewline-sync = { path = "../sync", optional = true }
 libc = "=0.2.191"
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 ratex-layout = "=0.1.15"
@@ -35,3 +35,5 @@ tempfile = "=3.27.0"
 
 [features]
 bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
+# Live collaboration (D13), off until X6: the app builds it in with `#if COLLAB`.
+collab = ["dep:dewline-sync"]

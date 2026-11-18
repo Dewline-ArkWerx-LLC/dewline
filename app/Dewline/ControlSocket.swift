@@ -5,7 +5,7 @@ import Synchronization
 /// carries one request, a JSON line such as `{"v":1,"op":"open","path":"/Users/me/plan.md","line":12,"col":4,
 /// "wait":true}`. The answers are JSON lines too: `{"reply":"opened","v":1}`, then `{"reply":"closed","v":1}` once
 /// the document closes or the app quits if the request waits, or `{"error":"not_a_file","reply":"error","v":1}`.
-/// Only absolute paths of existing regular files get through. `dewline export --to rtf` sends
+/// Only absolute paths of existing regular files get through, and of folders for a request that doesn't wait. `dewline export --to rtf` sends
 /// `{"v":1,"op":"export","path":"/Users/me/plan.md","out":"/Users/me/plan.rtf","format":"rtf"}`, the one request that
 /// writes a file: a Markdown file's export to the path the command was given, which ends in the format's extension,
 /// answered `{"reply":"exported","v":1}` once written. A request without a format asks for a PDF.
@@ -55,7 +55,7 @@ final class ControlSocket: @unchecked Sendable {
             case claude, codex, cursor
             /// The first-run demo in Welcome.md.
             case demo
-            /// An agent in the agent panel; the session names it (`AgentWrites.session`).
+            /// The agent panel's, which is gone; nothing sends it.
             case acp
         }
 
@@ -242,11 +242,12 @@ final class ControlSocket: @unchecked Sendable {
         return .success(.open(Open(path: path, line: wire.line, column: wire.col, wait: wire.wait ?? false)))
     }
 
-    /// Why `path` can't be opened, or nil when it names an existing regular file.
-    static func refusal(of path: String) -> Failure? {
+    /// Why `path` can't be opened, or nil when it names an existing regular file, or a folder when `folders`.
+    static func refusal(of path: String, folders: Bool = false) -> Failure? {
         var info = stat()
         guard stat(path, &info) == 0 else { return .notFound }
-        return info.st_mode & S_IFMT == S_IFREG ? nil : .notAFile
+        let type = info.st_mode & S_IFMT
+        return type == S_IFREG || folders && type == S_IFDIR ? nil : .notAFile
     }
 
     /// Why `path` can't be exported, or nil when it names an existing regular file whose realpath has a Markdown
@@ -353,7 +354,7 @@ final class ControlSocket: @unchecked Sendable {
             let handler = handler
             // stat can hang on a dead network volume, and this queue has to stay free for other clients and stop().
             DispatchQueue.global().async { [weak self] in
-                let refusal = Self.refusal(of: open.path)
+                let refusal = Self.refusal(of: open.path, folders: !open.wait)
                 guard let self else { return }
                 self.queue.async {
                     if let refusal {
@@ -434,7 +435,6 @@ extension ControlSocket.Claim {
         event: String?, vendor: String?, session: String?, toolUseId: String?, tool: String?, path: String?,
         hash: String?, declared: String?
     ) {
-        // Only the agent panel claims as acp, and it never goes through the socket.
         guard let vendor = vendor.flatMap(Vendor.init(rawValue:)), vendor != .acp, let session, Self.isId(session) else { return nil }
         let realpath = path.flatMap { $0.hasPrefix("/") && $0.utf8.count <= Self.maxPath && !$0.utf8.contains(0) ? $0 : nil }
         func toolUse() -> ToolUse? {

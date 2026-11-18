@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Editing · Dewline docs</title>
-<meta name="description" content="What the editor does as you type: live Markdown, Preview, links, lists, find, Vim mode and Settings.">
+<meta name="description" content="What the editor does as you type: live Markdown, links, lists, find, Vim mode and Settings.">
 <meta name="doc-type" content="reference">
 <link rel="canonical" href="https://dewline.arkwerx.com/docs/editing/">
 <meta name="color-scheme" content="light dark">
@@ -105,10 +105,6 @@
       <p>A diagram, a <code>$$</code> formula, an image alone on its line and front matter draw as a picture until the caret moves in. If one fails to draw, its source shows with the error under it.</p>
       <p>Settings &gt; Editor &gt; Heading style offers Standard and Editorial. Editorial sets the first heading as a display title and section heads in small caps.</p>
 
-      <h2 id="preview">Preview beside the text</h2>
-      <p>View &gt; Preview <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>P</kbd></span> opens the finished page in a pane on the right, with every marker hidden. The text on the left switches to Source while the pane is open. The preview scrolls with you and updates when you pause.</p>
-      <p>The same pane holds the <a href="/docs/agents/#chat">Agent</a> panel and the Changes list. Close it with the same key.</p>
-
       <h2 id="source">Source view</h2>
       <p>View &gt; Show Source <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>U</kbd></span> shows every character, in the code font. The caret's line stays where it was on screen.</p>
 
@@ -144,6 +140,7 @@
       <h2 id="find">Find</h2>
       <p>Find… <span class="keys"><kbd>⌘</kbd><kbd>F</kbd></span> finds and replaces in the open note. <span class="keys"><kbd>⌘</kbd><kbd>G</kbd></span> and <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd></span> step through matches. Go to Line… <span class="keys"><kbd>⌘</kbd><kbd>L</kbd></span> jumps by number.</p>
       <p>Find in Files… <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd></span> searches every note in the folder, in the sidebar. Matches come grouped by note, up to 10,000. <kbd>↩</kbd> opens one, <span class="keys"><kbd>⌘</kbd><kbd>↩</kbd></span> opens it in a new tab, and <kbd>⎋</kbd> returns to the folder.</p>
+      <p>The buttons beside the field match case, whole words and regular expressions, which match within a line. <code>path:docs</code> in the query searches only the notes whose path in the folder holds “docs”. Replace All puts the text of the Replace field in place of every match, after asking; with a regular expression, <code>$1</code> stands for what its first group matched. A note open in a tab takes it as one edit you can undo; other notes are saved at once, and one that changed since it was read keeps its matches.</p>
 
       <h2 id="focus">Focus, typewriter and motion</h2>
       <ul>
@@ -201,7 +198,7 @@
             <tr><td>Editor</td><td>Vim mode, heading style, motion, Tab key, spelling, Smart Punctuation, link previews</td></tr>
             <tr><td>Appearance</td><td><a href="/docs/themes-and-fonts/">Themes, fonts</a>, text size, line height, line width</td></tr>
             <tr><td>Files</td><td>Ignored files, where pasted images go, the inbox, daily note, capture shortcut</td></tr>
-            <tr><td>Agents</td><td>Agents for the Agent panel, and <a href="/docs/agents/#install">agent hooks</a></td></tr>
+            <tr><td>Agents</td><td><a href="/docs/agents/#install">Agent hooks</a></td></tr>
             <tr><td>Sharing</td><td>Your name, where shared copies go</td></tr>
           </tbody>
         </table>

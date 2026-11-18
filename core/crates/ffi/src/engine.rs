@@ -9,6 +9,8 @@ use dewline_core::claims::{self, Fields};
 use dewline_core::engine::{self as core, ChangeId, DocId, LandingId};
 use dewline_core::{file, merge, store, text};
 
+use crate::{Panicked, contained};
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum EngineError {
     #[error("the document is closed")]
@@ -464,17 +466,19 @@ impl Engine {
 
     /// Files no document has open that changed since Dewline last saw
     /// them, oldest first.
-    pub fn closed_changes(&self) -> Vec<ClosedChange> {
-        self.0
-            .closed_changes()
-            .into_iter()
-            .map(|change| ClosedChange {
-                path: change.path.to_string_lossy().into_owned(),
-                origin: change.origin.into(),
-                count: change.count,
-                time: change.time,
-            })
-            .collect()
+    pub fn closed_changes(&self) -> Result<Vec<ClosedChange>, Panicked> {
+        contained(|| {
+            self.0
+                .closed_changes()
+                .into_iter()
+                .map(|change| ClosedChange {
+                    path: change.path.to_string_lossy().into_owned(),
+                    origin: change.origin.into(),
+                    count: change.count,
+                    time: change.time,
+                })
+                .collect()
+        })
     }
 
     /// Whether the file differs from the base. Off the main thread.
@@ -566,14 +570,16 @@ impl Engine {
         change: u64,
         decision: Decision,
         current: String,
-    ) -> Option<String> {
-        let decision = match decision {
-            Decision::Keep => core::Decision::Keep,
-            Decision::Other => core::Decision::Other,
-            Decision::Both => core::Decision::Both,
-        };
-        self.0
-            .decide(DocId(doc), ChangeId(change), decision, &current)
+    ) -> Result<Option<String>, Panicked> {
+        contained(|| {
+            let decision = match decision {
+                Decision::Keep => core::Decision::Keep,
+                Decision::Other => core::Decision::Other,
+                Decision::Both => core::Decision::Both,
+            };
+            self.0
+                .decide(DocId(doc), ChangeId(change), decision, &current)
+        })
     }
 
     /// The snapshot's text, to replace the buffer as one undoable edit.
@@ -624,12 +630,14 @@ impl Engine {
     }
 
     /// The documents in the gitdir's repository, to land again.
-    pub fn git_changed(&self, gitdir: String) -> Vec<u64> {
-        self.0
-            .git_changed(Path::new(&gitdir))
-            .into_iter()
-            .map(|doc| doc.0)
-            .collect()
+    pub fn git_changed(&self, gitdir: String) -> Result<Vec<u64>, Panicked> {
+        contained(|| {
+            self.0
+                .git_changed(Path::new(&gitdir))
+                .into_iter()
+                .map(|doc| doc.0)
+                .collect()
+        })
     }
 
     /// The document's file is now at `to`; returns its repository's
@@ -654,8 +662,10 @@ impl Engine {
         Ok(self.0.keep_marks(DocId(doc), &buffer, &ranges)?)
     }
 
-    pub fn close(&self, doc: u64) {
-        self.0.close(DocId(doc));
+    pub fn close(&self, doc: u64) -> Result<(), Panicked> {
+        contained(|| {
+            self.0.close(DocId(doc));
+        })
     }
 
     /// Newest first.
@@ -812,7 +822,7 @@ mod tests {
             declared: None,
         });
         assert!(matches!(refused, Err(ClaimRefused::Invalid { field }) if field == "tool"));
-        engine.close(opened.doc);
+        engine.close(opened.doc).unwrap();
         assert!(matches!(
             engine.observe(opened.doc),
             Err(EngineError::Closed)

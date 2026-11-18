@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use dewline_core::notelinks::{self, Notes};
 
+use crate::{Panicked, contained};
+
 /// A line that links to a note. Offsets are UTF-16 code units in the file's text after any byte-order mark.
 #[derive(uniffi::Record)]
 pub struct Backlink {
@@ -42,41 +44,45 @@ fn relative(root: &Path, path: &str) -> Option<PathBuf> {
 
 /// The notes under `root`, root-relative, in name order: `.md`, `.markdown` and `.txt` files outside dot folders.
 #[uniffi::export]
-pub fn note_paths(root: String) -> Vec<String> {
-    notelinks::walk(Path::new(&root))
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect()
+pub fn note_paths(root: String) -> Result<Vec<String>, Panicked> {
+    contained(|| {
+        notelinks::walk(Path::new(&root))
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    })
 }
 
 /// The lines in the other notes under `root` that link to `note` by wikilink or markdown link, at most 200.
 #[uniffi::export]
-pub fn note_backlinks(root: String, note: String) -> Vec<Backlink> {
-    let root = Path::new(&root);
-    let Some(target) = relative(root, &note) else {
-        return Vec::new();
-    };
-    let notes = Notes::new(notelinks::walk(root));
-    let mut found = Vec::new();
-    for source in notes.paths() {
-        let Some(text) = notelinks::read(&root.join(source)) else {
-            continue;
+pub fn note_backlinks(root: String, note: String) -> Result<Vec<Backlink>, Panicked> {
+    contained(|| {
+        let root = Path::new(&root);
+        let Some(target) = relative(root, &note) else {
+            return Vec::new();
         };
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        for link in notelinks::backlinks(text, source, &notes, &target) {
-            found.push(Backlink {
-                path: root.join(source).to_string_lossy().into_owned(),
-                line: link.line as u32,
-                start: utf16(text, link.link.start),
-                end: utf16(text, link.link.end),
-                preview: link.text,
-            });
-            if found.len() == 200 {
-                return found;
+        let notes = Notes::new(notelinks::walk(root));
+        let mut found = Vec::new();
+        for source in notes.paths() {
+            let Some(text) = notelinks::read(&root.join(source)) else {
+                continue;
+            };
+            let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+            for link in notelinks::backlinks(text, source, &notes, &target) {
+                found.push(Backlink {
+                    path: root.join(source).to_string_lossy().into_owned(),
+                    line: link.line as u32,
+                    start: utf16(text, link.link.start),
+                    end: utf16(text, link.link.end),
+                    preview: link.text,
+                });
+                if found.len() == 200 {
+                    return found;
+                }
             }
         }
-    }
-    found
+        found
+    })
 }
 
 /// Points the links to the note renamed from `old` to `new` in the notes under `root` at its new name. Closed notes
@@ -87,36 +93,38 @@ pub fn relink_notes(
     old: String,
     new: String,
     open: Vec<OpenNote>,
-) -> Vec<Vec<LinkEdit>> {
-    let root = Path::new(&root);
-    let (Some(old), Some(new)) = (relative(root, &old), relative(root, &new)) else {
-        return open.iter().map(|_| Vec::new()).collect();
-    };
-    let mut paths = notelinks::walk(root);
-    paths.retain(|path| *path != new);
-    paths.push(old.clone());
-    let notes = Notes::new(paths);
-    let skipping: Vec<PathBuf> = open
-        .iter()
-        .filter_map(|note| relative(root, &note.path))
-        .collect();
-    notelinks::rewrite(root, &notes, &old, &new, &skipping);
-    open.iter()
-        .map(|note| {
-            let Some(source) = relative(root, &note.path) else {
-                return Vec::new();
-            };
-            let source = if source == new { old.clone() } else { source };
-            notelinks::relink(&note.text, &source, &notes, &old, &new)
-                .into_iter()
-                .map(|(range, text)| LinkEdit {
-                    start: utf16(&note.text, range.start),
-                    end: utf16(&note.text, range.end),
-                    text,
-                })
-                .collect()
-        })
-        .collect()
+) -> Result<Vec<Vec<LinkEdit>>, Panicked> {
+    contained(|| {
+        let root = Path::new(&root);
+        let (Some(old), Some(new)) = (relative(root, &old), relative(root, &new)) else {
+            return open.iter().map(|_| Vec::new()).collect();
+        };
+        let mut paths = notelinks::walk(root);
+        paths.retain(|path| *path != new);
+        paths.push(old.clone());
+        let notes = Notes::new(paths);
+        let skipping: Vec<PathBuf> = open
+            .iter()
+            .filter_map(|note| relative(root, &note.path))
+            .collect();
+        notelinks::rewrite(root, &notes, &old, &new, &skipping);
+        open.iter()
+            .map(|note| {
+                let Some(source) = relative(root, &note.path) else {
+                    return Vec::new();
+                };
+                let source = if source == new { old.clone() } else { source };
+                notelinks::relink(&note.text, &source, &notes, &old, &new)
+                    .into_iter()
+                    .map(|(range, text)| LinkEdit {
+                        start: utf16(&note.text, range.start),
+                        end: utf16(&note.text, range.end),
+                        text,
+                    })
+                    .collect()
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]
@@ -134,7 +142,7 @@ mod tests {
             path: path("open.md"),
             text: "é [[old]] and [[old]]".into(),
         };
-        let edits = relink_notes(root.clone(), path("old.md"), path("new.md"), vec![open]);
+        let edits = relink_notes(root.clone(), path("old.md"), path("new.md"), vec![open]).unwrap();
         let starts: Vec<_> = edits[0]
             .iter()
             .map(|edit| (edit.start, edit.end, edit.text.as_str()))
@@ -144,7 +152,7 @@ mod tests {
             std::fs::read_to_string(path("closed.md")).unwrap(),
             "See [[new]]."
         );
-        let links = note_backlinks(root, path("new.md"));
+        let links = note_backlinks(root, path("new.md")).unwrap();
         assert_eq!(
             links
                 .iter()

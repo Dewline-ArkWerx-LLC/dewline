@@ -2,6 +2,8 @@ use std::path::Path;
 
 use dewline_core::export;
 
+use crate::{Panicked, contained};
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ExportError {
     #[error("{message}")]
@@ -19,6 +21,6 @@ pub fn export_docx(markdown: String, folder: String) -> Result<Vec<u8>, ExportEr
 
 /// `markdown` as plain text.
 #[uniffi::export]
-pub fn export_text(markdown: String) -> String {
-    export::text::text(&markdown)
+pub fn export_text(markdown: String) -> Result<String, Panicked> {
+    contained(|| export::text::text(&markdown))
 }

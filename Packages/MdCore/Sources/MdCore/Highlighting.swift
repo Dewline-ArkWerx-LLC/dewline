@@ -30,13 +30,13 @@ public final class CodeHighlighter: Sendable {
     /// The spans of `text` in `language`, waiting for the worker, so call it off the main thread. Empty for a language
     /// without a syntax; nil when a newer request for `block` or `forget` overtook this one.
     public func highlight(block: UInt64, language: String, text: String) -> [CodeSpan]? {
-        highlighter.highlight(block: block, language: language, text: text).map(Self.spans)
+        (try? highlighter.highlight(block: block, language: language, text: text)).map(Self.spans)
     }
 
     /// `highlight` for a whole file, `text`, in the syntax its `path` names: by its file name (Makefile), its extension,
     /// or its `#!` line. An edit reparses from its first changed line until the parser is back in step.
     public func highlightFile(block: UInt64, path: String, text: String) -> [CodeSpan]? {
-        highlighter.highlightFile(block: block, path: path, text: text).map(Self.spans)
+        (try? highlighter.highlightFile(block: block, path: path, text: text)).map(Self.spans)
     }
 
     private static func spans(_ words: [UInt32]) -> [CodeSpan] {

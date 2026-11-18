@@ -1,15 +1,8 @@
-use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use dewline_core::md::{self, BlockKind, TokenKind};
 
-/// A parse fails only by panicking. Returned as this error, a panic throws in Swift; UniFFI traps on a panic from a
-/// function that cannot return an error.
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum ParseError {
-    #[error("{message}")]
-    Panic { message: String },
-}
+use crate::{Panicked, contained};
 
 /// A text Swift hands over in pieces. A String argument crosses through a Swift copy of all of it, and memory Swift
 /// frees stays in the app's footprint.
@@ -49,9 +42,9 @@ impl Markdown {
     }
 
     /// The whole document as records. Its labels replace the ones windows use.
-    pub fn parse(&self, text: Arc<Text>) -> Result<Vec<u8>, ParseError> {
+    pub fn parse(&self, text: Arc<Text>) -> Result<Vec<u8>, Panicked> {
         let text = text.lock();
-        let (records, labels) = unwound(|| {
+        let (records, labels) = contained(|| {
             let parse = md::parse(&text);
             (records(&parse), parse.labels)
         })?;
@@ -66,7 +59,7 @@ impl Markdown {
         next: String,
         at_start: bool,
         row: bool,
-    ) -> Result<Option<Vec<u8>>, ParseError> {
+    ) -> Result<Option<Vec<u8>>, Panicked> {
         let labels = self.labels.lock().unwrap().clone();
         let window = md::Window {
             text: &text,
@@ -74,24 +67,13 @@ impl Markdown {
             at_start,
             row,
         };
-        unwound(|| md::parse_window(&window, &labels).map(|parse| records(&parse)))
+        contained(|| md::parse_window(&window, &labels).map(|parse| records(&parse)))
     }
 
     /// Panics where a parse would. Only the test that a panic reaches Swift as an error calls it.
-    pub fn panic_for_test(&self) -> Result<Vec<u8>, ParseError> {
-        unwound(|| panic!("a test asked for a panic"))
+    pub fn panic_for_test(&self) -> Result<Vec<u8>, Panicked> {
+        contained(|| panic!("a test asked for a panic"))
     }
-}
-
-/// `parse`'s result, or its panic with the panic's message.
-fn unwound<T>(parse: impl FnOnce() -> T) -> Result<T, ParseError> {
-    panic::catch_unwind(AssertUnwindSafe(parse)).map_err(|panic| ParseError::Panic {
-        message: panic
-            .downcast_ref::<&str>()
-            .map(|message| message.to_string())
-            .or_else(|| panic.downcast_ref::<String>().cloned())
-            .unwrap_or_default(),
-    })
 }
 
 /// Little-endian u32 words: whether the parse holds (1 or 0), the number of blocks, the number of tokens, then each
@@ -214,7 +196,7 @@ mod tests {
     #[test]
     fn a_panic_is_an_error() {
         let markdown = Markdown::new();
-        let Err(ParseError::Panic { message }) = markdown.panic_for_test() else {
+        let Err(Panicked::Panic { message }) = markdown.panic_for_test() else {
             panic!("the panic was not an error");
         };
         assert_eq!(message, "a test asked for a panic");

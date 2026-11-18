@@ -1,3 +1,4 @@
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, LazyLock};
 use std::thread;
@@ -364,55 +365,57 @@ pub fn export_html(
     dark: Option<DiagramColors>,
     math_size: f32,
     syntaxes: Option<String>,
-) -> String {
-    let syntaxes = syntaxes
-        .and_then(|dump| dewline_core::highlight::Syntaxes::load(std::path::Path::new(&dump)));
-    let svg = |source: &str, colors: DiagramColors| {
-        let svg = render_mermaid(source.to_owned(), colors).ok()?;
-        Some(svg[svg.find("<svg")?..].to_owned())
-    };
-    let diagram = |source: &str| {
-        let light = svg(source, colors)?;
-        let Some(dark) = dark else { return Some(light) };
-        let data = |svg: &str| {
-            format!(
-                "data:image/svg+xml;base64,{}",
-                export::base64(svg.as_bytes())
-            )
+) -> Result<String, Panicked> {
+    contained(|| {
+        let syntaxes = syntaxes
+            .and_then(|dump| dewline_core::highlight::Syntaxes::load(std::path::Path::new(&dump)));
+        let svg = |source: &str, colors: DiagramColors| {
+            let svg = render_mermaid(source.to_owned(), colors).ok()?;
+            Some(svg[svg.find("<svg")?..].to_owned())
         };
-        Some(picture(
-            &data(&light),
-            svg(source, dark).map(|svg| data(&svg)),
-            "<img alt=\"diagram\"",
-        ))
-    };
-    let math = |tex: &str, display: bool| {
-        let size = if display { math_size * 1.2 } else { math_size };
-        let png = |color: u32| render_math(tex.to_owned(), size, 2.0, color).ok();
-        let light = png(colors.ink)?;
-        let width = u32::from_be_bytes(light.get(16..20)?.try_into().ok()?) as f32 / 2.0;
-        let data = |png: Vec<u8>| format!("data:image/png;base64,{}", export::base64(&png));
-        let img = format!(
-            "<img class=\"math\" alt=\"{}\" style=\"width:{width}px\"",
-            export::escape(tex)
-        );
-        Some(picture(
-            &data(light),
-            dark.and_then(|dark| png(dark.ink)).map(data),
-            &img,
-        ))
-    };
-    export::html(
-        &text,
-        &export::ExportOptions {
-            title: &title,
-            css: &css,
-            diagram: &diagram,
-            math: &math,
-            code: &|language, code| syntaxes.as_ref()?.html(language, code),
-            folder: folder.as_deref().map(std::path::Path::new),
-        },
-    )
+        let diagram = |source: &str| {
+            let light = svg(source, colors)?;
+            let Some(dark) = dark else { return Some(light) };
+            let data = |svg: &str| {
+                format!(
+                    "data:image/svg+xml;base64,{}",
+                    export::base64(svg.as_bytes())
+                )
+            };
+            Some(picture(
+                &data(&light),
+                svg(source, dark).map(|svg| data(&svg)),
+                "<img alt=\"diagram\"",
+            ))
+        };
+        let math = |tex: &str, display: bool| {
+            let size = if display { math_size * 1.2 } else { math_size };
+            let png = |color: u32| render_math(tex.to_owned(), size, 2.0, color).ok();
+            let light = png(colors.ink)?;
+            let width = u32::from_be_bytes(light.get(16..20)?.try_into().ok()?) as f32 / 2.0;
+            let data = |png: Vec<u8>| format!("data:image/png;base64,{}", export::base64(&png));
+            let img = format!(
+                "<img class=\"math\" alt=\"{}\" style=\"width:{width}px\"",
+                export::escape(tex)
+            );
+            Some(picture(
+                &data(light),
+                dark.and_then(|dark| png(dark.ink)).map(data),
+                &img,
+            ))
+        };
+        export::html(
+            &text,
+            &export::ExportOptions {
+                title: &title,
+                css: &css,
+                diagram: &diagram,
+                math: &math,
+                code: &|language, code| syntaxes.as_ref()?.html(language, code),
+                folder: folder.as_deref().map(std::path::Path::new),
+            },
+        )
+    })
 }
 
 /// `text` as an EPUB 3 book of the page `export_html` writes in `colors` alone, its images, diagrams and math as files
@@ -435,7 +438,10 @@ pub fn export_epub(
         None,
         math_size,
         None,
-    );
+    )
+    .map_err(|error| docx::ExportError::Io {
+        message: error.to_string(),
+    })?;
     export::epub::epub(&page, &title, SystemTime::now()).map_err(|error| docx::ExportError::Io {
         message: error.to_string(),
     })
@@ -475,17 +481,19 @@ pub fn export_latex(
     name: String,
     folder: Option<String>,
     colors: DiagramColors,
-) -> TextWithFiles {
-    let diagram = |source: &str| {
-        let svg = render_mermaid(source.to_owned(), colors).ok()?;
-        draw(&svg, 3.0, 2400).ok()?.encode_png().ok()
-    };
-    TextWithFiles::new(export::latex::latex(
-        &text,
-        &name,
-        folder.as_deref().map(std::path::Path::new),
-        &diagram,
-    ))
+) -> Result<TextWithFiles, Panicked> {
+    contained(|| {
+        let diagram = |source: &str| {
+            let svg = render_mermaid(source.to_owned(), colors).ok()?;
+            draw(&svg, 3.0, 2400).ok()?.encode_png().ok()
+        };
+        TextWithFiles::new(export::latex::latex(
+            &text,
+            &name,
+            folder.as_deref().map(std::path::Path::new),
+            &diagram,
+        ))
+    })
 }
 
 /// `text`, a note in `folder`, as portable Markdown named `name`, with the images it copies beside it.
@@ -494,12 +502,14 @@ pub fn export_portable_markdown(
     text: String,
     name: String,
     folder: Option<String>,
-) -> TextWithFiles {
-    TextWithFiles::new(export::portable::portable(
-        &text,
-        &name,
-        folder.as_deref().map(std::path::Path::new),
-    ))
+) -> Result<TextWithFiles, Panicked> {
+    contained(|| {
+        TextWithFiles::new(export::portable::portable(
+            &text,
+            &name,
+            folder.as_deref().map(std::path::Path::new),
+        ))
+    })
 }
 
 /// `img` (an open tag without its source) showing `light`, or `dark` on a dark page.
@@ -510,6 +520,25 @@ fn picture(light: &str, dark: Option<String>, img: &str) -> String {
         ),
         None => format!("{img} src=\"{light}\">"),
     }
+}
+
+/// A panic in an export that has no error of its own. Returned, it throws in Swift; UniFFI traps on a panic from an
+/// export that cannot return an error.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum Panicked {
+    #[error("{message}")]
+    Panic { message: String },
+}
+
+/// `work`'s result, or its panic with the panic's message.
+fn contained<T>(work: impl FnOnce() -> T) -> Result<T, Panicked> {
+    panic::catch_unwind(AssertUnwindSafe(work)).map_err(|panic| Panicked::Panic {
+        message: panic
+            .downcast_ref::<&str>()
+            .map(|message| message.to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]
@@ -654,7 +683,7 @@ mod tests {
             book.contains("OEBPS/images/image-1.png")
                 && book.contains("OEBPS/images/diagram-2.svg")
         );
-        let article = export_latex(text.into(), "notes".into(), None, night());
+        let article = export_latex(text.into(), "notes".into(), None, night()).unwrap();
         assert!(
             article.text.contains("$x^2$") && article.text.contains("{notes-files/diagram-1.png}")
         );
@@ -675,7 +704,8 @@ mod tests {
             None,
             17.0,
             None,
-        );
+        )
+        .unwrap();
         assert!(
             page.contains("<figure class=\"diagram\"><svg") && page.contains("Start"),
             "{page}"
@@ -698,7 +728,8 @@ mod tests {
             Some(night()),
             17.0,
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(
             both.matches(
                 "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"data:image/"

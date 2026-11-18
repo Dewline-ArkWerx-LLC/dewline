@@ -311,7 +311,7 @@ final class Updates: NSObject, NSMenuItemValidation, SPUUpdaterDelegate, SPUStan
 
     /// When the bundle on disk carries another build than the one running, as after `brew upgrade`, every window says
     /// so and offers a restart into it. The running app keeps the code it loaded. Runs on each activation and each
-    /// `dewline` connection, never on a timer.
+    /// `dewline` open, never on a hook event or a timer.
     func checkBundleOnDisk() {
         let running = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         guard let disk = Self.versionOnDisk(at: bundleURL), let running, disk.build != running else { return }

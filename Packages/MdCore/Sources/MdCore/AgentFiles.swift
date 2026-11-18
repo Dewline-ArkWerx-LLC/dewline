@@ -44,7 +44,7 @@ public struct LoadedAgentFile: Sendable {
 
 /// What Claude Code, Codex and Cursor load for a session started in `folder`.
 public func agentFilesLoaded(in folder: String, home: String?) -> [LoadedAgentFile] {
-    whatLoads(folder: folder, home: home).map {
+    ((try? whatLoads(folder: folder, home: home)) ?? []).map {
         LoadedAgentFile(agent: $0.agent, path: $0.path, how: $0.how, tokens: $0.tokens)
     }
 }
@@ -57,12 +57,12 @@ public struct SiblingDifference: Sendable {
 }
 
 public func siblingDifferences(in folder: String) -> [SiblingDifference] {
-    siblingDivergence(folder: folder).map { SiblingDifference(path: $0.path, other: $0.other, sections: $0.sections) }
+    ((try? siblingDivergence(folder: folder)) ?? []).map { SiblingDifference(path: $0.path, other: $0.other, sections: $0.sections) }
 }
 
 /// Agent-written memory and plan files, newest first, with when each changed in seconds since 1970.
 public func agentReviewFiles(home: String?, folder: String?) -> [(path: String, modified: Double)] {
-    reviewFiles(home: home, folder: folder).map { ($0.path, $0.modified) }
+    ((try? reviewFiles(home: home, folder: folder)) ?? []).map { ($0.path, $0.modified) }
 }
 
 /// A broken link or import, in UTF-16 offsets.
@@ -74,7 +74,7 @@ public struct BrokenTarget: Sendable {
 
 /// The broken relative links and CLAUDE.md `@imports` of `text`, the file at `path`.
 public func brokenTargets(in text: TextCopy, path: String, home: String?) -> [BrokenTarget] {
-    brokenLinks(path: path, text: text.text, home: home).map {
+    ((try? brokenLinks(path: path, text: text.text, home: home)) ?? []).map {
         BrokenTarget(range: NSRange(location: Int($0.location), length: Int($0.length)), target: $0.target, problem: $0.problem)
     }
 }

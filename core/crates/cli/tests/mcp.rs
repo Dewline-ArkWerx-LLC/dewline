@@ -291,10 +291,7 @@ fn doctor_installs_hooks_only_from_a_terminal() {
         report.contains("Claude Code: PreToolUse, PostToolUse"),
         "{report}"
     );
-    assert!(
-        report.contains("Codex: PreToolUse, PostToolUse missing"),
-        "{report}"
-    );
+    assert!(report.contains("Codex: not installed; no "), "{report}");
     let install = fixture
         .command(&["doctor", "--install-hooks"])
         .stdin(Stdio::null())

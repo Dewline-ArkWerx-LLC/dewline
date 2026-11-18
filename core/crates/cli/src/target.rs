@@ -4,13 +4,15 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-/// A file to open and where to put the caret. Lines and columns count from 1.
+/// A file to open and where to put the caret, or a folder to open in a
+/// window. Lines and columns count from 1.
 #[derive(Debug, PartialEq)]
 pub struct Target {
-    /// Absolute, with every symlink resolved, naming a regular file.
+    /// Absolute, with every symlink resolved, naming a regular file or a folder.
     pub path: String,
     pub line: Option<u32>,
     pub column: Option<u32>,
+    pub folder: bool,
 }
 
 /// Reads `FILE[:LINE[:COLUMN]]`. A file that exists under the whole argument
@@ -25,17 +27,23 @@ pub fn resolve(arg: &OsStr, cwd: &Path, home: Option<&Path>) -> Result<Target, S
         .ok_or_else(|| format!("{shown}: no such file"))?;
     let path = fs::canonicalize(path).map_err(|error| format!("{shown}: {error}"))?;
     let metadata = fs::metadata(&path).map_err(|error| format!("{shown}: {error}"))?;
-    if metadata.is_dir() {
-        return Err(format!("{shown}: is a folder; dewline open takes files"));
+    let folder = metadata.is_dir();
+    if folder && line.is_some() {
+        return Err(format!("{shown}: is a folder; a line needs a file"));
     }
-    if !metadata.is_file() {
+    if !folder && !metadata.is_file() {
         return Err(format!("{shown}: not a regular file"));
     }
     let path = path
         .into_os_string()
         .into_string()
         .map_err(|_| format!("{shown}: the path is not UTF-8"))?;
-    Ok(Target { path, line, column })
+    Ok(Target {
+        path,
+        line,
+        column,
+        folder,
+    })
 }
 
 type Candidate<'a> = (&'a [u8], Option<u32>, Option<u32>);
@@ -115,6 +123,7 @@ mod tests {
             path: real(path),
             line,
             column,
+            folder: false,
         }
     }
 
@@ -147,7 +156,12 @@ mod tests {
         );
         assert_eq!(
             from_home("~"),
-            Err("~: is a folder; dewline open takes files".into())
+            Ok(Target {
+                path: real(dir.path()),
+                line: None,
+                column: None,
+                folder: true,
+            })
         );
         // Only a whole first component is home; without a home the tilde is a name.
         assert_eq!(from_home("~plan.md"), Err("~plan.md: no such file".into()));
@@ -242,11 +256,20 @@ mod tests {
     }
 
     #[test]
-    fn folders_and_special_files_are_refused() {
+    fn folders_open_without_a_line_and_special_files_are_refused() {
         let dir = folder(&["notes/plan.md"]);
         assert_eq!(
             at("notes", dir.path()),
-            Err("notes: is a folder; dewline open takes files".into())
+            Ok(Target {
+                path: real(&dir.path().join("notes")),
+                line: None,
+                column: None,
+                folder: true,
+            })
+        );
+        assert_eq!(
+            at("notes:3", dir.path()),
+            Err("notes:3: is a folder; a line needs a file".into())
         );
         assert_eq!(
             at("missing.md:3", dir.path()),

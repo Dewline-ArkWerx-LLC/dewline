@@ -100,7 +100,7 @@ struct ControlSocketTests {
         await MainActor.run { again.updates.restart() }
         #expect(await again.installs == 0)
         quitter = nil
-        for _ in 0..<40 where await again.document.isAwaited {
+        for _ in 0..<40 where await again.isAwaited {
             try await Task.sleep(for: .milliseconds(50))
         }
         await MainActor.run { NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil) }
@@ -409,6 +409,7 @@ private final class Restart {
     let updates: Updates
     let document = MarkdownDocument()
     private(set) var installs = 0
+    var isAwaited: Bool { document.isAwaited }
     private let suite = "dev.arkwerx.dewline.tests.restart.\(UUID().uuidString)"
     private let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.titled], backing: .buffered, defer: true)
 

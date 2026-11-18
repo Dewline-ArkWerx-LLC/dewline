@@ -487,8 +487,6 @@ final class EditorTextView: CaretTextView {
             return
         }
         snapshot?.removeFromSuperview()
-        // The line numbers come and go before the picture, so the fade doesn't stretch it.
-        showLineNumbers(!styler.showsSource)
         let storage = textStorage!
         let visible = visibleRect
         // TextKit 2 answers a point in the top inset with an index near the end of the text, so probes stay below the inset.
@@ -505,12 +503,14 @@ final class EditorTextView: CaretTextView {
             offset = held.offset
         }
         held = offset.map { (anchor, $0) }
+        // The line numbers come and go after the anchor is read and before the picture, so the fade doesn't stretch it.
+        showLineNumbers(!styler.showsSource)
 
         let caretView = subviews.first { $0 is NSTextInsertionIndicator }
         let caretWasHidden = caretView?.isHidden ?? true
         caretView?.isHidden = true
-        let picture = bitmapImageRepForCachingDisplay(in: visible)
-        if let picture { cacheDisplay(in: visible, to: picture) }
+        let picture = bitmapImageRepForCachingDisplay(in: visibleRect)
+        if let picture { cacheDisplay(in: visibleRect, to: picture) }
         caretView?.isHidden = caretWasHidden
 
         // The visible text and as much again on either side change first, so the fade starts before the rest restyles. TextKit 2

@@ -187,11 +187,12 @@ static MERMAID_FONTS: LazyLock<()> = LazyLock::new(|| {
 /// Runs `work` on its own thread and stops waiting after the budget. Neither
 /// renderer can be cancelled, so a render that overruns finishes unobserved.
 fn within_budget<T: Send + 'static>(
+    budget: Duration,
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, RenderError> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || sender.send(work()));
-    match receiver.recv_timeout(BUDGET) {
+    match receiver.recv_timeout(budget) {
         Ok(result) => result.map_err(|message| RenderError::Invalid { message }),
         Err(RecvTimeoutError::Timeout) => Err(RenderError::TooSlow),
         Err(RecvTimeoutError::Disconnected) => Err(RenderError::Invalid {
@@ -202,6 +203,14 @@ fn within_budget<T: Send + 'static>(
 
 #[uniffi::export]
 pub fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, RenderError> {
+    mermaid_within(BUDGET, source, colors)
+}
+
+fn mermaid_within(
+    budget: Duration,
+    source: String,
+    colors: DiagramColors,
+) -> Result<String, RenderError> {
     if source.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
     }
@@ -224,7 +233,7 @@ pub fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, R
     LazyLock::force(&MERMAID_FONTS);
     let theme = colors.theme(&known);
     let flowchart = matches!(known.as_str(), "flowchart" | "graph");
-    within_budget(move || {
+    within_budget(budget, move || {
         let graph = mermaid_rs_renderer::parse_mermaid_strict(&source)
             .map_err(|error| error.to_string())?
             .graph;
@@ -309,7 +318,7 @@ pub fn render_inline_math(
     if tex.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
     }
-    within_budget(move || {
+    within_budget(BUDGET, move || {
         let [r, g, b, a] = color
             .to_be_bytes()
             .map(|channel| f32::from(channel) / 255.0);
@@ -542,7 +551,9 @@ mod tests {
     #[test]
     fn mermaid_folds_a_long_flow_into_the_column() {
         isolate();
-        let svg = render_mermaid(
+        // Folding, not speed, is under test; a shared runner can overrun the production budget.
+        let svg = mermaid_within(
+            Duration::from_secs(30),
             "flowchart LR\n  a[Write the draft] --> b[Agent edits] --> c[Review changes] --> d[Keep or revert] --> e[Save]".into(),
             night(),
         )

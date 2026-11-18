@@ -17,6 +17,7 @@ pub enum Format {
     Html,
     Rtf,
     Odt,
+    Epub,
     Txt,
     Png,
 }
@@ -29,6 +30,7 @@ impl Format {
             Format::Html => "html",
             Format::Rtf => "rtf",
             Format::Odt => "odt",
+            Format::Epub => "epub",
             Format::Txt => "txt",
             Format::Png => "png",
         }

@@ -79,6 +79,8 @@ final class ControlSocket: @unchecked Sendable {
             case preToolUse(ToolUse)
             case postToolUse(ToolUse)
             case instructionsLoaded(path: String)
+            /// A Claude Code Bash call's PreToolUse, or its PostToolUse when `ended`, for its timing alone.
+            case shell(id: String, ended: Bool)
             /// Stop, StopFailure, or UserPromptSubmit, the first hook after an interrupt.
             case turnEnd
             case sessionEnd
@@ -444,8 +446,11 @@ extension ControlSocket.Claim {
             else { return nil }
             return ToolUse(id: toolUseId, tool: tool, path: realpath, hash: hash, declared: declared)
         }
+        let shell = vendor == .claude && tool == "Bash"
         let parsed: Event? =
             switch event ?? "" {
+            case "PreToolUse" where shell, "PostToolUse" where shell:
+                toolUseId.flatMap { Self.isId($0) ? Event.shell(id: $0, ended: event == "PostToolUse") : nil }
             case "PreToolUse": toolUse().map(Event.preToolUse)
             case "PostToolUse": toolUse().map(Event.postToolUse)
             case "InstructionsLoaded": realpath.map { Event.instructionsLoaded(path: $0) }

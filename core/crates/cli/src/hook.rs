@@ -26,7 +26,7 @@ pub struct Event {
     pub tool: Option<String>,
     pub tool_use_id: Option<String>,
     pub cwd: Option<String>,
-    /// InstructionsLoaded's file.
+    /// InstructionsLoaded's and Cursor's afterFileEdit's file.
     pub file_path: Option<String>,
     pub input: Input,
 }
@@ -45,7 +45,7 @@ pub struct Input {
     pub command: Option<String>,
 }
 
-/// One of MultiEdit's `edits`.
+/// One of MultiEdit's `edits`, or a hunk of Cursor's afterFileEdit.
 #[derive(Debug, Default)]
 pub struct Edit {
     pub old_string: Option<String>,
@@ -70,6 +70,8 @@ pub fn read(input: impl BufRead, vendor: Vendor) -> io::Result<Event> {
         "tool_use_id" => reader.text(&mut event.tool_use_id, MAX_ID),
         "cwd" => reader.text(&mut event.cwd, MAX_NAME),
         "file_path" => reader.text(&mut event.file_path, MAX_NAME),
+        // Cursor's afterFileEdit hunks.
+        "edits" if vendor == Vendor::Cursor => reader.edits(&mut event.input.edits),
         "tool_input" => reader.object(&mut |reader, key| {
             let input = &mut event.input;
             match (vendor, key) {

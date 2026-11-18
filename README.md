@@ -60,7 +60,7 @@ The app carries a `dewline` command in `Dewline.app/Contents/Helpers`; the Homeb
 
 - `dewline open notes.md:12 --wait` opens a file at a line and returns when its window closes, so `EDITOR="dewline open --wait"` works for git and your shell.
 - `dewline mcp <folder>` serves a folder's notes to an agent over MCP: read, search, backlinks, decisions and an inbox append.
-- `dewline notify` runs from Claude Code and Codex hooks and tells Dewline which agent changed a file, so the change carries its name. `dewline doctor --install-hooks` installs them; [docs/hooks.md](docs/hooks.md) has them by hand. Cursor's hooks don't say what an edit wrote, so Cursor's edits show as from another app.
+- `dewline notify` runs from Claude Code, Codex and Cursor hooks and tells Dewline which agent changed a file, so the change carries its name. `dewline doctor --install-hooks` installs them; [docs/hooks.md](docs/hooks.md) has them by hand and says which edits stay unnamed: shell commands, Cursor Tab, and Cursor edits its hooks don't report in full.
 - `dewline export` writes HTML, PDF or DOCX, `dewline capture` adds a dated line to `~/Documents/Dewline/Inbox.md`, and `dewline changes` lists the agent changes you kept or reverted.
 
 ## Install

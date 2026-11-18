@@ -22,13 +22,14 @@ struct Agent {
     settings: &'static str,
     /// Each hook event, with the tool matcher it takes.
     events: &'static [(&'static str, Option<&'static str>)],
+    /// Cursor's shape: each event a list of `{"command"}` with no groups, under `"version": 1`.
+    flat: bool,
 }
 
-const TOOLS: &str = "Read|Edit|MultiEdit|Write";
+/// Bash for its timing alone: a change that lands during a shell command says so.
+const TOOLS: &str = "Read|Edit|MultiEdit|Write|Bash";
 
-/// Cursor has none: its hooks don't say what an edit wrote (docs/decisions/0007-agent-attribution.md), so its edits
-/// show as another app's.
-const AGENTS: [Agent; 2] = [
+const AGENTS: [Agent; 3] = [
     Agent {
         name: "claude",
         title: "Claude Code",
@@ -43,6 +44,7 @@ const AGENTS: [Agent; 2] = [
             ("SessionEnd", None),
             ("InstructionsLoaded", None),
         ],
+        flat: false,
     },
     Agent {
         name: "codex",
@@ -54,6 +56,19 @@ const AGENTS: [Agent; 2] = [
             ("Stop", None),
             ("SessionEnd", None),
         ],
+        flat: false,
+    },
+    Agent {
+        name: "cursor",
+        title: "Cursor",
+        settings: ".cursor/hooks.json",
+        events: &[
+            ("preToolUse", Some("Write")),
+            ("postToolUse", Some("Write")),
+            ("afterFileEdit", None),
+            ("stop", None),
+        ],
+        flat: true,
     },
 ];
 
@@ -200,25 +215,47 @@ fn runs(program: &str) -> bool {
             .is_ok_and(|info| info.is_file() && info.permissions().mode() & 0o111 != 0)
 }
 
-/// The events of `agent` with no hook calling `dewline notify --hook <name>` through a program that `runs`. A hook
-/// whose program is gone, as after the app moved, is missing.
+/// A group's hooks: Claude Code and Codex list them under `"hooks"`; Cursor's group is one hook.
+fn hooks<'a>(group: &'a Value, agent: &Agent) -> &'a [Value] {
+    if agent.flat {
+        return std::slice::from_ref(group);
+    }
+    group
+        .get("hooks")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+/// Whether `group` runs for every tool `matcher` names: it has that matcher, or none, which matches every tool.
+fn covers(group: &Value, matcher: Option<&str>) -> bool {
+    matcher.is_none_or(|matcher| {
+        group
+            .get("matcher")
+            .and_then(Value::as_str)
+            .is_none_or(|have| have == matcher || have.is_empty() || have == "*")
+    })
+}
+
+/// The events of `agent` with no hook calling `dewline notify --hook <name>` through a program that `runs`, in a group
+/// whose matcher covers the event's tools. A hook whose program is gone, as after the app moved, is missing, and so
+/// is one set up before the matcher took Bash.
 fn missing(settings: Option<&Value>, agent: &Agent, runs: fn(&str) -> bool) -> Vec<&'static str> {
-    let installed = |event: &str| {
+    let installed = |event: &str, matcher: Option<&str>| {
         settings
             .and_then(|settings| settings.pointer(&format!("/hooks/{event}")))
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|group| group.get("hooks")?.as_array())
-            .flatten()
+            .filter(|group| covers(group, matcher))
+            .flat_map(|group| hooks(group, agent))
             .filter_map(|hook| program(hook.get("command")?.as_str()?, agent))
             .any(runs)
     };
     agent
         .events
         .iter()
+        .filter(|&&(event, matcher)| !installed(event, matcher))
         .map(|&(event, _)| event)
-        .filter(|event| !installed(event))
         .collect()
 }
 
@@ -265,7 +302,8 @@ fn trusted(settings: &Value, agent: &Agent, file: &str, config: Option<&toml::Ta
 }
 
 /// `settings` with a hook running `command` for each of `agent`'s events that lacks one: a Dewline hook whose program
-/// is gone gets `command` in its place, and otherwise one is added. Every other key and hook is kept as it was.
+/// is gone, or whose group's matcher is narrower, gets `command` and the matcher in its place, and otherwise one is
+/// added. Every other key and hook is kept as it was.
 fn merge(
     settings: Option<&Value>,
     agent: &Agent,
@@ -277,7 +315,10 @@ fn merge(
     let root = settings
         .as_object_mut()
         .ok_or("the settings aren't a JSON object")?;
-    let hooks = root
+    if agent.flat {
+        root.entry("version").or_insert(json!(1));
+    }
+    let events = root
         .entry("hooks")
         .or_insert_with(|| json!({}))
         .as_object_mut()
@@ -286,32 +327,47 @@ fn merge(
         if !missing.contains(&event) {
             continue;
         }
-        let groups = hooks
+        let groups = events
             .entry(event)
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .ok_or_else(|| format!("its hooks for {event} aren't a JSON array"))?;
-        let stale = groups
+        let ours = |hook: &Value| {
+            hook.get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|old| program(old, agent).is_some())
+        };
+        if let Some(group) = groups
             .iter_mut()
-            .filter_map(|group| group.get_mut("hooks")?.as_array_mut())
-            .flatten()
-            .find(|hook| {
-                hook.get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(|old| program(old, agent).is_some())
-            });
-        if let Some(hook) = stale {
-            hook["command"] = json!(command);
+            .find(|group| hooks(group, agent).iter().any(ours))
+        {
+            if let Some(matcher) = matcher {
+                group["matcher"] = json!(matcher);
+            }
+            let hook = if agent.flat {
+                Some(group)
+            } else {
+                group["hooks"]
+                    .as_array_mut()
+                    .and_then(|hooks| hooks.iter_mut().find(|hook| ours(hook)))
+            };
+            if let Some(hook) = hook {
+                hook["command"] = json!(command);
+            }
             continue;
         }
         let mut group = Map::new();
         if let Some(matcher) = matcher {
             group.insert("matcher".into(), json!(matcher));
         }
-        group.insert(
-            "hooks".into(),
-            json!([{"type": "command", "command": command}]),
-        );
+        if agent.flat {
+            group.insert("command".into(), json!(command));
+        } else {
+            group.insert(
+                "hooks".into(),
+                json!([{"type": "command", "command": command}]),
+            );
+        }
         groups.push(Value::Object(group));
     }
     Ok(settings)
@@ -331,9 +387,9 @@ fn install_hooks(
         .map(|event| {
             let group = merged["hooks"][event].as_array().and_then(|groups| {
                 groups.iter().find(|group| {
-                    group["hooks"]
-                        .as_array()
-                        .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+                    hooks(group, agent)
+                        .iter()
+                        .any(|hook| hook["command"] == command)
                 })
             });
             json!({ (event): group })
@@ -592,8 +648,41 @@ trusted_hash = "sha256:3"
     }
 
     #[test]
-    fn cursor_gets_no_hooks() {
-        assert!(AGENTS.iter().all(|agent| agent.name != "cursor"));
+    fn a_hook_set_up_before_bash_is_missing_and_set_up_widens_its_matcher() {
+        let claude = &AGENTS[0];
+        let group = |matcher: &str| json!({"matcher": matcher, "hooks": [{"type": "command", "command": COMMAND}]});
+        let old = json!({"hooks": {"PreToolUse": [group("Read|Edit|MultiEdit|Write")]}});
+        assert!(missing(Some(&old), claude, every).contains(&"PreToolUse"));
+        let merged = merge(Some(&old), claude, COMMAND, every).unwrap();
+        assert_eq!(merged["hooks"]["PreToolUse"], json!([group(TOOLS)]));
+        let any = json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": COMMAND}]}]}});
+        assert!(!missing(Some(&any), claude, every).contains(&"PreToolUse"));
+    }
+
+    #[test]
+    fn cursor_hooks_are_flat_under_version_1() {
+        let cursor = &AGENTS[2];
+        let command = "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook cursor";
+        let settings = json!({"hooks": {"stop": [{"command": "say done"}]}});
+        let merged = merge(Some(&settings), cursor, command, every).unwrap();
+        assert_eq!(merged["version"], 1);
+        assert_eq!(
+            merged["hooks"]["preToolUse"],
+            json!([{"matcher": "Write", "command": command}])
+        );
+        assert_eq!(
+            merged["hooks"]["afterFileEdit"],
+            json!([{"command": command}])
+        );
+        assert_eq!(
+            merged["hooks"]["stop"],
+            json!([{"command": "say done"}, {"command": command}])
+        );
+        assert!(missing(Some(&merged), cursor, every).is_empty());
+        assert_eq!(
+            merge(Some(&merged), cursor, command, every).unwrap(),
+            merged
+        );
     }
 
     #[test]

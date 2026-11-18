@@ -54,9 +54,9 @@ struct Writer {
 }
 
 /// The tools a claim may name: Claude Code's file tools, and Codex's
-/// `apply_patch` with one claim per file the patch names. Bash and every
-/// other tool are refused: a hook around a command can't say which bytes it
-/// wrote.
+/// `apply_patch` with one claim per file the patch names. Claude Code's Bash
+/// is a `Shell` event, and every other tool is refused: a hook around a
+/// command can't say which bytes it wrote.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tool {
     Read,
@@ -119,6 +119,10 @@ enum Event {
     PostToolUse(ToolUse),
     /// The session loaded a file as instructions.
     InstructionsLoaded,
+    /// A Claude Code Bash call's PreToolUse or PostToolUse, for its timing
+    /// alone: the app says a change that lands while one runs landed during
+    /// it, and leaves it unnamed (X2).
+    Shell,
     /// Stop, StopFailure, or UserPromptSubmit, the first hook after an
     /// interrupt.
     TurnEnd,
@@ -193,6 +197,15 @@ impl Claim {
             })
         };
         let event = match fields.event {
+            "PreToolUse" | "PostToolUse"
+                if vendor == Vendor::Claude && fields.tool == Some("Bash") =>
+            {
+                fields
+                    .tool_use_id
+                    .and_then(Id::new)
+                    .ok_or(Refused::Invalid("tool_use_id"))?;
+                Event::Shell
+            }
             "PreToolUse" => Event::PreToolUse(tool_use()?),
             "PostToolUse" => Event::PostToolUse(tool_use()?),
             "InstructionsLoaded" => {
@@ -264,7 +277,7 @@ impl Claims {
         match event {
             Event::PreToolUse(tool_use) => self.half(writer.vendor, tool_use, true, now),
             Event::PostToolUse(tool_use) => self.half(writer.vendor, tool_use, false, now),
-            Event::InstructionsLoaded | Event::TurnEnd | Event::SessionEnd => Ok(()),
+            Event::InstructionsLoaded | Event::Shell | Event::TurnEnd | Event::SessionEnd => Ok(()),
         }
     }
 
@@ -596,7 +609,8 @@ mod tests {
             (Fields { event: "pretooluse", ..edit }, invalid("event")),
             (Fields { vendor: "Claude", ..edit }, invalid("vendor")),
             (Fields { vendor: "", ..edit }, invalid("vendor")),
-            (Fields { tool: Some("Bash"), ..edit }, invalid("tool")),
+            (Fields { tool: Some("Bash"), tool_use_id: None, ..edit }, invalid("tool_use_id")),
+            (Fields { vendor: "cursor", tool: Some("Bash"), ..edit }, invalid("tool")),
             (Fields { vendor: "codex", tool: Some("Bash"), ..edit }, invalid("tool")),
             (Fields { vendor: "codex", tool: Some("Edit"), ..edit }, invalid("tool")),
             (Fields { vendor: "acp", ..edit }, invalid("tool")),
@@ -628,6 +642,17 @@ mod tests {
             ..edit
         };
         assert!(Claim::parse(panel).is_ok());
+        for event in ["PreToolUse", "PostToolUse"] {
+            let bash = Fields {
+                event,
+                tool: Some("Bash"),
+                path: None,
+                hash: None,
+                declared: None,
+                ..edit
+            };
+            assert!(Claim::parse(bash).is_ok(), "{event}");
+        }
         for event in ["Stop", "StopFailure", "UserPromptSubmit", "SessionEnd"] {
             let fields = Fields {
                 event,

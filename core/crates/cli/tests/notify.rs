@@ -408,10 +408,20 @@ fn each_event_shape_sends_what_claims_rs_parses() {
 }
 
 #[test]
-fn bash_and_other_tools_name_nothing() {
+fn bash_sends_its_timing_alone_and_other_tools_name_nothing() {
     let fixture = Fixture::new();
     let mut event = fixture.event("claude PreToolUse Edit");
-    for tool in ["Bash", "NotebookEdit", "Glob", "edit"] {
+    event["tool_name"] = "Bash".into();
+    event["tool_input"] = json!({"command": "sed -i '' s/it/me/ plan.md"});
+    let line = fixture.one("claude", &event).unwrap();
+    parses(&line);
+    assert_eq!(line["tool"], "Bash");
+    assert!(
+        line.get("path").is_none() && line.get("hash").is_none(),
+        "{line}"
+    );
+    let mut event = fixture.event("claude PreToolUse Edit");
+    for tool in ["NotebookEdit", "Glob", "edit"] {
         event["tool_name"] = tool.into();
         assert_eq!(fixture.one("claude", &event), None, "{tool}");
     }
@@ -491,6 +501,39 @@ fn a_failed_call_closes_like_its_post_tool_use() {
     event["hook_event_name"] = json!("PostToolUseFailure");
     event["error"] = json!("String to replace not found in file.");
     assert_eq!(fixture.one("claude", &event), post);
+}
+
+#[test]
+fn cursor_writes_and_file_edits_send_what_claims_rs_parses() {
+    let fixture = Fixture::new();
+    let plan = fixture.real("plan.md");
+    let friday = "# Plan\n\nShip it on Friday.\n";
+    let write = json!({"conversation_id": "c1", "generation_id": "g1", "hook_event_name": "preToolUse",
+        "tool_name": "Write", "tool_use_id": "w1", "tool_input": {"file_path": plan, "content": friday}});
+    let line = fixture.one("cursor", &write).unwrap();
+    parses(&line);
+    assert_eq!(line["hash"], hex(PLAN));
+    assert_eq!(line["declared"], hex(friday));
+
+    fs::write(&plan, friday).unwrap();
+    let mut edited = json!({"conversation_id": "c1", "generation_id": "g1", "hook_event_name": "afterFileEdit",
+        "file_path": plan, "edits": [{"old_string": "Ship it.\n", "new_string": "Ship it on Friday.\n"}]});
+    let lines = fixture.notify("cursor", edited.to_string().as_bytes());
+    lines.iter().for_each(parses);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["event"], "PostToolUse");
+    assert_eq!(lines[0]["hash"], hex(friday));
+    assert_eq!(lines[1]["event"], "PreToolUse");
+    assert_eq!(lines[1]["hash"], hex(PLAN));
+    assert_eq!(lines[1]["declared"], hex(friday));
+    assert_eq!(lines[0]["tool_use_id"], lines[1]["tool_use_id"]);
+    // A deletion has no lines to find, so it names nothing.
+    edited["edits"] = json!([{"old_string": "Ship it.\n", "new_string": ""}]);
+    assert!(
+        fixture
+            .notify("cursor", edited.to_string().as_bytes())
+            .is_empty()
+    );
 }
 
 #[test]

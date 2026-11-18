@@ -6,6 +6,9 @@ import SwiftUI
 struct HookStatus: Equatable, Sendable {
     var claude: Bool
     var codex: Bool
+    /// Codex has the hooks but hasn't recorded trust for each one, so it doesn't run them.
+    var codexNeedsTrust = false
+    var cursor = false
     /// The `dewline` on the PATH, if any.
     var onPath: String?
     /// The doctor's version line, or nil when the command didn't run.
@@ -34,11 +37,12 @@ struct HookStatus: Equatable, Sendable {
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if process.isRunning { process.terminate() } }
         let lines = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n")
         process.waitUntilExit()
-        func installed(_ agent: String) -> Bool {
-            lines.contains { $0.hasPrefix("  \(agent): installed in ") }
+        func installed(_ agent: String) -> Substring? {
+            lines.first { $0.hasPrefix("  \(agent): installed in ") }
         }
         return HookStatus(
-            claude: installed("Claude Code"), codex: installed("Codex"), onPath: onPath,
+            claude: installed("Claude Code") != nil, codex: installed("Codex") != nil,
+            codexNeedsTrust: installed("Codex")?.contains("; needs trust") == true, cursor: installed("Cursor") != nil, onPath: onPath,
             version: lines.first { $0.hasPrefix("Version: ") }.map { String($0.dropFirst("Version: ".count)) }
         )
     }
@@ -57,12 +61,17 @@ struct AgentsPane: View {
     var body: some View {
         SettingsPage {
             SettingsSection(title: "Hooks", note: "Hooks tell Dewline which agent wrote a change.") {
-                SettingsRow(label: "Claude Code") { status(hooks.claude ? "Installed" : nil) }
-                SettingsRow(label: "Codex", detail: "Codex runs them once you trust them: type /hooks in Codex.") {
-                    status(hooks.codex ? "Added" : nil)
+                SettingsRow(label: "Claude Code", detail: "Edits made by its shell commands show as Another app.") {
+                    status(hooks.claude ? "Installed" : nil)
                 }
-                SettingsRow(label: "Cursor", detail: "Cursor\u{2019}s hooks don\u{2019}t say what an edit wrote.") {
-                    status("Edits show as Another app", muted: true)
+                SettingsRow(label: "Codex", detail: "Codex runs them once you trust them: type /hooks in Codex.") {
+                    status(hooks.codex ? (hooks.codexNeedsTrust ? "Needs trust" : "Installed") : nil)
+                }
+                SettingsRow(
+                    label: "Cursor",
+                    detail: "Names the agent\u{2019}s edits Cursor reports. Tab edits, terminal commands and edits that only delete lines show as Another app."
+                ) {
+                    status(hooks.cursor ? "Installed" : nil)
                 }
                 SettingsRow(label: "") {
                     Button("Set Up All Hooks\u{2026}") { NSApp.sendAction(Self.setUpHooks, to: nil, from: nil) }
@@ -78,9 +87,9 @@ struct AgentsPane: View {
     static let setUpHooks = #selector(AppDelegate.setUpHooks(_:))
 
     /// `text`, or "Not set up" in the muted ink when it is nil.
-    private func status(_ text: String?, muted: Bool = false) -> some View {
+    private func status(_ text: String?) -> some View {
         Text(text ?? "Not set up")
             .font(Station.label)
-            .foregroundStyle(Station.color(text == nil || muted ? .ink2 : .ink))
+            .foregroundStyle(Station.color(text == nil ? .ink2 : .ink))
     }
 }

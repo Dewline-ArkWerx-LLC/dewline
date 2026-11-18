@@ -52,7 +52,7 @@ struct PaletteCommand {
         let store = ThemeStore.shared
         let preferences = Preferences.shared
         func onOff(_ on: Bool) -> String { on ? "On" : "Off" }
-        let themes = Theme.all + Theme.devPack
+        let themes = dark ? Theme.dark : Theme.light
         let appearances: [(ThemeStore.Appearance, String)] = [(.light, "Light"), (.dark, "Dark"), (.auto, "Auto")]
         return [
             PaletteCommand(

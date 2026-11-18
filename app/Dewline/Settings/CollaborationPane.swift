@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if COLLAB
 struct CollaborationPane: View {
     @Bindable var preferences: Preferences
     let store: ThemeStore
@@ -36,3 +37,4 @@ struct StationTextField: View {
             .accessibilityLabel(label)
     }
 }
+#endif

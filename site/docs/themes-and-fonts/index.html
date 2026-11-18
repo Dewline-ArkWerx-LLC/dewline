@@ -103,66 +103,28 @@
       <h2 id="choose">Choose a theme</h2>
       <ol class="steps">
         <li><b>Open Settings &gt; Appearance</b> <span class="keys">(<kbd>⌘</kbd><kbd>,</kbd>)</span>.</li>
-        <li><b>Click a theme</b> to use it in the mode you are in now. Control-click it for Use in Light or Use in Dark.</li>
+        <li><b>Click a theme</b> for light windows (Tidewater or Onionskin) and one for dark windows (Nightwatch or Carbon).</li>
         <li><b>Set Mode</b> to Light, Dark or Match system, the default.</li>
       </ol>
       <p>The command palette has Theme… and Appearance… too. Changes apply as you pick them.</p>
 
       <h2 id="themes">Themes</h2>
-      <p>Ten themes are built in, each with a light and a dark version. Nord is dark only and fills both. Every theme also colors code, diagrams and exports.</p>
+      <p>Four themes are built in, two light and two dark. Every theme also colors code, diagrams and exports.</p>
       <div class="table" tabindex="0" role="region" aria-label="Built-in themes">
         <table>
           <thead><tr><th scope="col">Theme</th><th scope="col">What it looks like</th></tr></thead>
           <tbody>
-            <tr><td>Tidewater</td><td>Near-white paper, near-black ink, one sea-green accent. The default light theme.</td></tr>
-            <tr><td>Nightwatch</td><td>Near-black paper and light ink, the same accent. The default dark theme.</td></tr>
-            <tr><td>Aurora</td><td>Sage paper by day; polar-night navy with green links after dark.</td></tr>
-            <tr><td>Dawnline</td><td>A blush of dawn in the paper, ultramarine ink; warm ink on indigo at night.</td></tr>
-            <tr><td>Dusk</td><td>Indigo above a green afterglow, mint accents, periwinkle links.</td></tr>
-            <tr><td>Carbon</td><td>Onionskin and carbon ink, the manuscript.</td></tr>
-            <tr><td>Solarized</td><td>Ethan Schoonover's sixteen colors: base3 paper by day, base03 at night.</td></tr>
-            <tr><td>Gruvbox</td><td>Warm parchment by day, charcoal and cream at night.</td></tr>
-            <tr><td>Nord</td><td>Polar Night paper, Snow Storm ink, Frost accents. Dark only.</td></tr>
-            <tr><td>Tokyo Night</td><td>Downtown Tokyo after dark; Tokyo Night Day for the light slot.</td></tr>
+            <tr><td>Tidewater</td><td>Warm paper, green-black ink, one sea-green accent. The default light theme.</td></tr>
+            <tr><td>Onionskin</td><td>Gray paper, near-black ink, the same accent.</td></tr>
+            <tr><td>Nightwatch</td><td>Green-black paper and cream ink, the same accent. The default dark theme.</td></tr>
+            <tr><td>Carbon</td><td>Charcoal paper, near-white ink, the same accent.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The last four are ports of editor palettes and keep their code colors. Dewline has no theme files or plugins.</p>
+      <p>Dewline has no theme files or plugins.</p>
 
       <h2 id="fonts">Choose fonts</h2>
-      <ol class="steps">
-        <li><b>Pick a font for each slot:</b> Body, Headings and Code. Code is sized to the body font's x-height.</li>
-        <li><b>Or pick a pairing</b>, which sets all three and downloads what it needs first.</li>
-        <li><b>For more fonts, click Install Fonts…</b> Choose from the catalog, or drop font files on the sheet.</li>
-      </ol>
-      <div class="table" tabindex="0" role="region" aria-label="Font slots and pairings">
-        <table>
-          <thead><tr><th scope="col"></th><th scope="col">Body</th><th scope="col">Headings</th><th scope="col">Code</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">Default</th><td>New York</td><td>SF Pro, semibold</td><td>JetBrains Mono</td></tr>
-            <tr><th scope="row" id="pairings">Editorial</th><td>Newsreader</td><td>Bricolage Grotesque</td><td>JetBrains Mono</td></tr>
-            <tr><th scope="row">Manuscript</th><td>Courier Prime</td><td>Courier Prime</td><td>Courier Prime</td></tr>
-            <tr><th scope="row">Hyperlegible</th><td>Atkinson Hyperlegible Next</td><td>Atkinson Hyperlegible Next</td><td>Atkinson Hyperlegible Mono</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Any font on your Mac works in a slot; Code takes monospaced fonts. Bricolage Grotesque and JetBrains Mono ship inside the app.</p>
-      <details id="install-fonts">
-        <summary>The font catalog</summary>
-        <p>Twenty open-source families from Google Fonts. A font downloads only when you click Install, and every file must match the SHA-256 the catalog records. If a download fails, your fonts stay as they were.</p>
-        <div class="table" tabindex="0" role="region" aria-label="The font catalog">
-          <table>
-            <thead><tr><th scope="col">Kind</th><th scope="col">Families</th></tr></thead>
-            <tbody>
-              <tr><td>Serif</td><td>Newsreader, Literata, Source Serif 4, EB Garamond, Charis SIL</td></tr>
-              <tr><td>Sans</td><td>Atkinson Hyperlegible Next, IBM Plex Sans, Inter</td></tr>
-              <tr><td>Mono</td><td>IBM Plex Mono, Atkinson Hyperlegible Mono, Courier Prime, Fira Code, Source Code Pro, Cascadia Code, Victor Mono, Geist Mono, Inconsolata</td></tr>
-              <tr><td>Display</td><td>Fraunces, Recursive, Instrument Serif</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>Installed fonts are for Dewline only, in <code>~/Library/Application Support/dev.arkwerx.dewline/Fonts</code>. Install for All Apps hands them to Font Book. Removing a font moves any slot that uses it to another font first.</p>
-      </details>
+      <p>Pick a font for each slot: Body, Headings and Code. Any font on your Mac works; Code takes monospaced fonts and is sized to the body font's x-height. Bricolage Grotesque, the default for headings, and JetBrains Mono ship inside the app.</p>
 
       <h2 id="page">Set the size and width of the text</h2>
       <div class="table" tabindex="0" role="region" aria-label="Page settings">

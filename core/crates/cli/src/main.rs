@@ -211,7 +211,7 @@ fn capture(words: Vec<String>) -> Result<(), String> {
     inbox::append(&path, "cli", &text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// The inbox file every capture appends to: the app's `DewlineInboxPath` setting (Settings > Files), else
+/// The inbox file every capture appends to: the app's `DewlineInboxPath` setting (Settings > General), else
 /// ~/Documents/Dewline/Inbox.md.
 fn inbox_path() -> Result<PathBuf, String> {
     let home = env::home_dir().ok_or("there is no home folder for the inbox")?;

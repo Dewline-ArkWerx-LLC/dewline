@@ -684,11 +684,10 @@ struct JourneyTests {
         #expect(Export.lastExport == html)
     }
 
-    // MARK: J9 Daily capture
+    // MARK: J9 Capture
 
-    /// Capture adds a line to the inbox and closes; an empty line only closes. The Dock menu offers Capture, and
-    /// Today's Note only while the daily note is on.
-    @Test func j9CaptureAddsALineAndTheDockMenuOffersIt() throws {
+    /// Capture adds a line to the inbox and closes; an empty line only closes. File > Capture… is its one way in.
+    @Test func j9CaptureAddsALineFromTheFileMenu() throws {
         var added: [String] = []
         let capture = Capture()
         capture.append = { added.append($0) }
@@ -697,31 +696,9 @@ struct JourneyTests {
         #expect(added == ["call the bank"])
         let delegate = try #require(NSApp.delegate as? AppDelegate)
         let dock = try #require(delegate.applicationDockMenu(NSApp))
-        #expect(dock.items.map(\.title).prefix(2) == ["New Note", "Capture\u{2026}"])
+        #expect(dock.items.map(\.title) == ["New Note"])
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)
         #expect(file.items.contains { $0.title == "Open Inbox" } && file.items.contains { $0.title == "Capture\u{2026}" })
-    }
-
-    /// The daily note is off by default; on, it opens once a day as Daily/2026-11-02.md in the notes folder.
-    @Test func j9TheDailyNoteIsOffByDefaultAndOpensOncePerDay() throws {
-        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let vault = try Vault([:])
-        defer { vault.remove() }
-        var parts = DateComponents()
-        (parts.year, parts.month, parts.day, parts.hour) = (2026, 11, 2, 9)
-        let day = try #require(Calendar.current.date(from: parts))
-        #expect(!DailyNote.isOn(defaults: defaults) && !DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        defaults.set("firstLaunch", forKey: DailyNote.key)
-        #expect(DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        let url = try DailyNote.today(in: vault.notes, now: day)
-        #expect(url == vault.url("Daily/2026-11-02.md"))
-        try Data("# Monday\n".utf8).write(to: url)
-        #expect(try DailyNote.today(in: vault.notes, now: day) == url && vault.text("Daily/2026-11-02.md") == "# Monday\n")
-        DailyNote.noteOpened(defaults: defaults, now: day)
-        #expect(!DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        #expect(DailyNote.opensAtLaunch(defaults: defaults, now: day.addingTimeInterval(24 * 60 * 60)))
     }
 
     // MARK: Launch, hooks and tracking

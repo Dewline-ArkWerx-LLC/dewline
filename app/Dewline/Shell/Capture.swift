@@ -1,8 +1,7 @@
 import AppKit
-import Carbon.HIToolbox
 
 /// Capture: a one-line panel over whatever is in front. Return adds the line to the inbox and closes the panel; Esc
-/// closes it. The Dock menu, File > Capture… and an optional global shortcut open it.
+/// closes it. File > Capture… opens it.
 @MainActor
 final class Capture: NSObject, NSTextFieldDelegate {
     static let shared = Capture()
@@ -85,39 +84,5 @@ final class Capture: NSObject, NSTextFieldDelegate {
         }
         field.stringValue = ""
         panel?.orderOut(nil)
-    }
-
-    // MARK: Global shortcut
-
-    private var hotKey: EventHotKeyRef?
-    private var handler: EventHandlerRef?
-
-    /// Registers `key` with `modifiers` (Carbon's cmdKey, optionKey…) as the system-wide Capture shortcut, replacing
-    /// the last one; nil unregisters it. Settings > Files > Capture shortcut sets it; it is empty by default.
-    func register(key: UInt32?, modifiers: UInt32) {
-        if let hotKey { UnregisterEventHotKey(hotKey) }
-        hotKey = nil
-        guard let key else { return }
-        if handler == nil {
-            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-                DispatchQueue.main.async { MainActor.assumeIsolated { Capture.show() } }
-                return noErr
-            }, 1, &spec, nil, &handler)
-        }
-        let id = EventHotKeyID(signature: OSType(0x6477_6C6E), id: 1)  // "dwln"
-        RegisterEventHotKey(key, modifiers, id, GetApplicationEventTarget(), 0, &hotKey)
-    }
-
-    /// Registers Settings > Files > Capture shortcut, or nothing when it is empty.
-    func register(_ shortcut: Preferences.Shortcut?) {
-        guard let shortcut else { return register(key: nil, modifiers: 0) }
-        let flags = shortcut.modifiers
-        var modifiers: UInt32 = 0
-        if flags.contains(.command) { modifiers |= UInt32(cmdKey) }
-        if flags.contains(.option) { modifiers |= UInt32(optionKey) }
-        if flags.contains(.control) { modifiers |= UInt32(controlKey) }
-        if flags.contains(.shift) { modifiers |= UInt32(shiftKey) }
-        register(key: UInt32(shortcut.keyCode), modifiers: modifiers)
     }
 }

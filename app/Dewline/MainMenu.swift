@@ -63,7 +63,6 @@ enum MainMenu {
         folder.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(withTitle: "Quick Open\u{2026}", action: #selector(AppDelegate.quickOpen(_:)), keyEquivalent: "O")
         menu.addItem(withTitle: "Open Inbox", action: #selector(AppDelegate.openInbox(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Today\u{2019}s Note", action: #selector(AppDelegate.openTodaysNote(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Capture\u{2026}", action: #selector(AppDelegate.capture(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Reopen Closed Tab", action: #selector(ShellActions.reopenClosedTab(_:)), keyEquivalent: "T")
         menu.addItem(.separator())

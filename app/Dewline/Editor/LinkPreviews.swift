@@ -60,7 +60,7 @@ final class LinkPreviews {
         )
     }()
 
-    /// The Settings switch, on unless set false.
+    /// The Settings switch, off unless set true.
     static let defaultsKey = "DewlineLinkPreviews"
     /// Posted when previews turn on or off, and when a page arrives (`object` is its URL).
     static let didChange = Notification.Name("DewlineLinkPreviewsDidChange")
@@ -84,7 +84,7 @@ final class LinkPreviews {
     }
 
     static func isOn(_ defaults: UserDefaults) -> Bool {
-        defaults.object(forKey: defaultsKey) as? Bool ?? true
+        defaults.bool(forKey: defaultsKey)
     }
 
     @objc private func defaultsDidChange() {

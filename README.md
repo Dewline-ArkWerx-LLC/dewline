@@ -23,9 +23,9 @@ macOS 26+ · Free · No account, no telemetry
 
 **Finding your way.** The sidebar starts at your folder, with + for a new note. Tabs, Quick Open (⇧⌘O), find in files (⇧⌘F) and a command palette for files, commands and settings (⇧⌘P). A preview pane shows the rendered note beside its Markdown.
 
-**Looks.** Six themes, a pack of four more (Solarized, Gruvbox, Nord, Tokyo Night), light and dark, and fonts you install from Settings.
+**Looks.** Four themes, two light and two dark, and any font on your Mac for the body, headings and code.
 
-**Links.** Links stay quiet in the text. A link on its own line shows a preview card, and hovering a link shows one; Settings turns previews off.
+**Links.** Links stay quiet in the text. Turn on link previews in Settings and a link on its own line shows a preview card, and hovering a link shows one.
 
 **Your agent, beside the note.** A side panel talks to the coding agent you already use (Claude Code, Codex or Gemini) over the Agent Client Protocol. Its edits land as marked changes you keep or revert. Dewline ships no model and needs no account.
 

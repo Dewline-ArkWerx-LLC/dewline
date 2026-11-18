@@ -1,38 +1,11 @@
 import AppKit
 import Observation
 
-/// The General and Files settings, kept in user defaults. Posts `didChange` after every change.
+/// The General settings, kept in user defaults. Posts `didChange` after every change.
 @MainActor @Observable
 final class Preferences {
     enum LaunchBehavior: String {
         case lastFiles, launchWindow
-    }
-
-    enum DailyNote: String {
-        case off
-        /// Today's note opens on the first launch of each day.
-        case firstLaunch
-    }
-
-    /// A key with its modifiers, as `NSEvent` reports them.
-    struct Shortcut: Equatable {
-        let keyCode: UInt16
-        let modifiers: NSEvent.ModifierFlags
-
-        /// "⌃⌥Space".
-        var label: String {
-            let marks: [(NSEvent.ModifierFlags, String)] = [(.control, "⌃"), (.option, "⌥"), (.shift, "⇧"), (.command, "⌘")]
-            let key = Self.names[keyCode] ?? Self.character(keyCode)
-            return marks.filter { modifiers.contains($0.0) }.map(\.1).joined() + key
-        }
-
-        private static let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 53: "Esc"]
-
-        private static func character(_ keyCode: UInt16) -> String {
-            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
-                                         characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: keyCode)
-            return event?.charactersIgnoringModifiers?.uppercased() ?? "Key \(keyCode)"
-        }
     }
 
     enum Attachments: String {
@@ -74,18 +47,6 @@ final class Preferences {
     var linkPreviews: Bool { didSet { save(linkPreviews, "DewlineLinkPreviews") } }
     /// Source and config files list in the sidebar and Quick Open and open as highlighted code (`CodeFile`).
     var opensCodeFiles: Bool { didSet { save(opensCodeFiles, CodeFile.key) } }
-    var dailyNote: DailyNote { didSet { save(dailyNote.rawValue, "DewlineDailyNote") } }
-    /// The key that opens Capture from any app; none until the user sets one.
-    var captureShortcut: Shortcut? {
-        didSet {
-            if let captureShortcut {
-                save(["key": Int(captureShortcut.keyCode), "modifiers": Int(captureShortcut.modifiers.rawValue)], "DewlineCaptureShortcut")
-            } else {
-                defaults.removeObject(forKey: "DewlineCaptureShortcut")
-                NotificationCenter.default.post(name: Self.didChange, object: self)
-            }
-        }
-    }
 
     init(defaults: UserDefaults, home: URL = URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory)) {
         self.defaults = defaults
@@ -101,13 +62,8 @@ final class Preferences {
         opensInSource = defaults.bool(forKey: "DewlineOpenInSource")
         collaborationName = defaults.string(forKey: "DewlineCollaborationName").flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
         sharedFolder = path("DewlineSharedFolder") ?? documents.appending(path: "Dewline Shared", directoryHint: .isDirectory)
-        linkPreviews = defaults.object(forKey: "DewlineLinkPreviews") as? Bool ?? true
+        linkPreviews = defaults.bool(forKey: "DewlineLinkPreviews")
         opensCodeFiles = defaults.bool(forKey: CodeFile.key)
-        dailyNote = defaults.string(forKey: "DewlineDailyNote").flatMap(DailyNote.init) ?? .off
-        captureShortcut = (defaults.dictionary(forKey: "DewlineCaptureShortcut") as? [String: Int]).flatMap { saved in
-            guard let key = saved["key"], let modifiers = saved["modifiers"] else { return nil }
-            return Shortcut(keyCode: UInt16(key), modifiers: NSEvent.ModifierFlags(rawValue: UInt(modifiers)))
-        }
     }
 
     /// AppKit brings back the last windows only while NSQuitAlwaysKeepsWindows holds; the system's

@@ -36,7 +36,7 @@ pub fn epub(page: &str, title: &str, modified: SystemTime) -> io::Result<Vec<u8>
     for (index, (name, _)) in book.files.iter().enumerate() {
         let media = match name.rsplit('.').next() {
             Some("png") => "image/png",
-            Some("jpeg") => "image/jpeg",
+            Some("jpg") => "image/jpeg",
             Some("gif") => "image/gif",
             Some("webp") => "image/webp",
             _ => "image/svg+xml",
@@ -159,11 +159,22 @@ impl Book {
     fn image(&mut self, tag: &str, out: &mut String) {
         let alt = attribute(tag, "alt").unwrap_or("");
         let data = attribute(tag, "src").and_then(|src| {
-            let (kind, data) = src.strip_prefix("data:image/")?.split_once(";base64,")?;
-            Some((
-                if kind == "svg+xml" { "svg" } else { kind },
-                unbase64(data)?,
-            ))
+            let bytes = unbase64(src.strip_prefix("data:image/")?.split_once(";base64,")?.1)?;
+            let head = &bytes[..bytes.len().min(1024)];
+            let extension = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                "png"
+            } else if bytes.starts_with(b"\xff\xd8\xff") {
+                "jpg"
+            } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+                "gif"
+            } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+                "webp"
+            } else if head.windows(4).any(|window| window == b"<svg") {
+                "svg"
+            } else {
+                return None;
+            };
+            Some((extension, bytes))
         });
         let Some((extension, bytes)) = data else {
             let _ = write!(out, "[image: {alt}]");
@@ -265,11 +276,12 @@ mod tests {
                 math: &|tex, _| {
                     Some(format!(
                         "<img class=\"math\" alt=\"{tex}\" style=\"width:4px\" src=\"data:image/png;base64,{}\">",
-                        base64(b"\x89PNG math")
+                        base64(b"\x89PNG\r\n\x1a\nmath")
                     ))
                 },
                 code: &|_, _| None,
                 folder: None,
+                code: &|_, _| None,
             },
         );
         let bytes = epub(&page, "notes", SystemTime::UNIX_EPOCH).unwrap();
@@ -354,7 +366,7 @@ mod tests {
             chapter.contains("<figure class=\"diagram\"><img src=\"images/diagram-2.svg\" alt=\"diagram\"/></figure>"),
             "{chapter}"
         );
-        assert_eq!(bytes("OEBPS/images/image-1.png"), b"\x89PNG math");
+        assert_eq!(bytes("OEBPS/images/image-1.png"), b"\x89PNG\r\n\x1a\nmath");
         assert!(file("OEBPS/images/diagram-2.svg").starts_with("<svg xmlns"));
         let nav = file("OEBPS/nav.xhtml");
         assert!(
@@ -375,6 +387,44 @@ mod tests {
             package.contains("href=\"images/image-1.png\" media-type=\"image/png\"")
                 && package.contains("href=\"images/diagram-2.svg\" media-type=\"image/svg+xml\""),
             "{package}"
+        );
+    }
+
+    #[test]
+    fn an_image_extension_comes_from_its_bytes_not_its_data_url() {
+        let page = |kind: &str, bytes: &[u8]| {
+            format!(
+                "<html><body><p><img alt=\"x\" src=\"data:image/{kind};base64,{}\"></p></body></html>",
+                base64(bytes)
+            )
+        };
+        let names = |page: &str| -> Vec<String> {
+            let bytes = epub(page, "notes", SystemTime::UNIX_EPOCH).unwrap();
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+            (0..archive.len())
+                .map(|index| {
+                    archive
+                        .by_index(index)
+                        .unwrap()
+                        .name()
+                        .unwrap()
+                        .into_owned()
+                })
+                .collect()
+        };
+        let hostile = names(&page("png/../../x", b"\x89PNG\r\n\x1a\nrest"));
+        assert!(
+            hostile.contains(&"OEBPS/images/image-1.png".to_owned()),
+            "{hostile:?}"
+        );
+        assert!(
+            hostile.iter().all(|name| !name.contains("..")),
+            "{hostile:?}"
+        );
+        let other = names(&page("png/../../x", b"not an image"));
+        assert!(
+            other.iter().all(|name| !name.contains("images/")),
+            "{other:?}"
         );
     }
 

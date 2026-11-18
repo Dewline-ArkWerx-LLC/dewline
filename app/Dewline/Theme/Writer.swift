@@ -4,8 +4,6 @@ import Foundation
 /// shows its writer by name.
 enum Writer: String, CaseIterable, Identifiable, Sendable {
     case you, claude, codex, cursor, copilot, gemini, git, unknown, otherMac, collaborator
-    /// An agent chatting in the agent panel, over the Agent Client Protocol; the change carries its own name.
-    case agent
     /// Welcome.md's first-run demo; it has no row in Settings.
     case demo
 
@@ -23,7 +21,6 @@ enum Writer: String, CaseIterable, Identifiable, Sendable {
         case .unknown: "Another app"
         case .otherMac: "Your other Mac"
         case .collaborator: "Collaborator"
-        case .agent: "Agent"
         case .demo: "Demo"
         }
     }

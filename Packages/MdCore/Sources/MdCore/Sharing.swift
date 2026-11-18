@@ -1,3 +1,4 @@
+#if COLLAB
 internal import DewlineFFIBindings
 import Foundation
 
@@ -145,3 +146,4 @@ private final class Listener: CollabListener {
         onChange()
     }
 }
+#endif

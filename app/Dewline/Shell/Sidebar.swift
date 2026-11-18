@@ -85,7 +85,7 @@ struct MoveRequest {
 
 /// The folder's header, "tidepool main ⌄", over its tree; Pinned above the tree when something is pinned. Rows badge
 /// the notes with changes waiting and carry git's word. A window with no folder says so, offers Open Folder, and lists
-/// the note's headings. A folder's window can show Find in Files in place of the tree.
+/// the note's headings. A folder's window can show Find in Files, or the note's headings, in place of the tree.
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
     NSTextFieldDelegate, QLPreviewPanelDataSource
 {
@@ -108,6 +108,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var fileNode: SidebarNode?
     private var headings: [Heading] = []
     private var showsAllHeadings = false
+    /// A folder's window lists the note's headings in place of the tree; each folder keeps its choice.
+    private(set) var showsOutline: Bool
     /// The location of the heading whose section is at the top of the page.
     private var section: Int?
     private var watch: FolderWatch?
@@ -134,6 +136,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         gitStates = folder.map { GitStates(folder: $0.url) }
         showsIgnored = Preferences.shared.showsIgnored
         listsCode = CodeFile.isOn
+        showsOutline = folder.map { UserDefaults.standard.bool(forKey: "Outline " + $0.url.path) } ?? false
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
@@ -320,6 +323,33 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         find.flatMap { $0.view.isHidden ? nil : $0.query }
     }
 
+    /// Lists the note's headings in place of the tree, or the tree again, opening the sidebar when it is collapsed.
+    func toggleOutline() {
+        guard let folder else { return }
+        showsOutline.toggle()
+        UserDefaults.standard.set(showsOutline, forKey: "Outline " + folder.url.path)
+        listMode()
+        if showsOutline { (parent as? NSSplitViewController)?.splitViewItem(for: self)?.isCollapsed = false }
+        if find?.view.isHidden == false { showFiles() }
+    }
+
+    /// Lists the headings or the tree, whichever `showsOutline` picks.
+    private func listMode() {
+        guard filled else { return }
+        if showsOutline {
+            listHeadings()
+        } else {
+            reload()
+            adoptExpansion()
+            if let url = fileNode?.url { fileNode = treeNode(for: url) }
+            selectOpenFile()
+        }
+    }
+
+    var hasFolder: Bool {
+        folder != nil
+    }
+
     func showFiles() {
         find?.view.isHidden = true
         outlineView.enclosingScrollView?.isHidden = false
@@ -354,7 +384,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func updateOutline(_ headings: [Heading]) {
         self.headings = headings
-        guard folder == nil else { return }
+        guard folder == nil || showsOutline else { return }
         listHeadings()
     }
 
@@ -369,7 +399,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// Sets in medium the heading whose section holds `location`.
     func markSection(at location: Int) {
-        guard folder == nil else { return }
+        guard folder == nil || showsOutline else { return }
         let current = headings.last { $0.location <= location }?.location
         guard current != section else { return }
         section = current
@@ -381,14 +411,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// Whether the top level is section rows (Pinned, then the tree under "Files", or a folderless window's Outline)
-    /// rather than the tree itself.
+    /// Whether the top level is section rows (Pinned, then the tree under "Files", or the Outline) rather than the
+    /// tree itself.
     private var sectioned: Bool {
-        folder == nil || !(pinned.children ?? []).isEmpty
+        folder == nil || showsOutline || !(pinned.children ?? []).isEmpty
     }
 
     /// The top-level rows: the sections, or the tree's own rows when nothing is pinned.
     private var topLevel: [SidebarNode] {
+        if showsOutline { return [outlineSection] }
         guard sectioned else { return tree.map(children(of:)) ?? [] }
         let main = tree ?? (outlineSection.children!.isEmpty ? nil : outlineSection)
         return ((pinned.children ?? []).isEmpty ? [] : [pinned]) + (main.map { [$0] } ?? [])
@@ -557,13 +588,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return menu
     }
 
-    /// "…": New Folder and Collapse All.
+    /// "…": New Folder, Collapse All, and Show Outline or Show Files.
     private func actionsMenu() -> NSMenu {
         let menu = NSMenu()
         guard let url = folder?.url else { return menu }
         menu.addItem(withTitle: "New Folder", action: FileCommand.newFolder, keyEquivalent: "").representedObject = url
-        menu.addItem(withTitle: "Collapse All", action: #selector(collapseAll), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Collapse All", action: showsOutline ? nil : #selector(collapseAll), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: showsOutline ? "Show Files" : "Show Outline", action: #selector(outlineToggled), keyEquivalent: "").target = self
         return menu
+    }
+
+    @objc private func outlineToggled() {
+        toggleOutline()
     }
 
     @objc private func openRecent(_ sender: NSMenuItem) {
@@ -869,9 +906,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         decorate(rowView, row: row)
     }
 
-    /// Expands and collapses the tree to the folders kept in user defaults, which another tab may have changed.
+    /// Expands and collapses the tree to the folders kept in user defaults, which another tab may have changed, and
+    /// takes the outline or the tree as the folder's other tabs last had it.
     func adoptExpansion() {
         guard filled, let folder, tree != nil else { return }
+        if UserDefaults.standard.bool(forKey: "Outline " + folder.url.path) != showsOutline {
+            showsOutline.toggle()
+            return listMode()
+        }
+        guard !showsOutline else { return }
         let kept = Set(UserDefaults.standard.stringArray(forKey: "Expanded " + folder.url.path) ?? [])
         for row in (0..<outlineView.numberOfRows).reversed() {
             guard let node = outlineView.item(atRow: row) as? SidebarNode, outlineView.isItemExpanded(node), case .entry(let entry) = node.kind,
@@ -1129,5 +1172,22 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
         textField?.stringValue = heading.title
         indent?.constant = 4 + CGFloat(heading.level - 1) * 10
         paint()
+    }
+}
+
+/// View > Sidebar Outline: the main window's sidebar lists the note's headings in place of its folder's files.
+@MainActor
+final class SidebarOutline: NSObject {
+    private static var sidebar: SidebarViewController? {
+        (NSApp.mainWindow?.windowController as? MainWindowController)?.sidebar
+    }
+
+    @objc static func toggle(_ sender: Any?) {
+        sidebar?.toggleOutline()
+    }
+
+    @objc static func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.state = sidebar?.showsOutline == true ? .on : .off
+        return sidebar?.hasFolder == true
     }
 }

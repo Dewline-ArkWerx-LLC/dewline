@@ -323,7 +323,9 @@ pub fn render_inline_math(
 /// A standalone HTML page of `text`: `css` inlined, images under `folder` inlined, diagrams as SVG and math as PNG
 /// images at twice the resolution of `math_size` points. Given `dark` colors, each diagram and formula carries a second
 /// picture for a dark page; without them a diagram is inline SVG. A diagram or formula that fails shows its source.
+/// Fenced code is colored in the syntaxes at `syntaxes` when they load.
 #[uniffi::export]
+#[allow(clippy::too_many_arguments)]
 pub fn export_html(
     text: String,
     title: String,
@@ -332,7 +334,10 @@ pub fn export_html(
     colors: DiagramColors,
     dark: Option<DiagramColors>,
     math_size: f32,
+    syntaxes: Option<String>,
 ) -> String {
+    let syntaxes = syntaxes
+        .and_then(|dump| dewline_core::highlight::Syntaxes::load(std::path::Path::new(&dump)));
     let svg = |source: &str, colors: DiagramColors| {
         let svg = render_mermaid(source.to_owned(), colors).ok()?;
         Some(svg[svg.find("<svg")?..].to_owned())
@@ -375,7 +380,7 @@ pub fn export_html(
             css: &css,
             diagram: &diagram,
             math: &math,
-            code: &|_, _| None,
+            code: &|language, code| syntaxes.as_ref()?.html(language, code),
             folder: folder.as_deref().map(std::path::Path::new),
         },
     )
@@ -392,7 +397,16 @@ pub fn export_epub(
     colors: DiagramColors,
     math_size: f32,
 ) -> Result<Vec<u8>, docx::ExportError> {
-    let page = export_html(text, title.clone(), css, folder, colors, None, math_size);
+    let page = export_html(
+        text,
+        title.clone(),
+        css,
+        folder,
+        colors,
+        None,
+        math_size,
+        None,
+    );
     export::epub::epub(&page, &title, SystemTime::now()).map_err(|error| docx::ExportError::Io {
         message: error.to_string(),
     })
@@ -617,6 +631,7 @@ mod tests {
             night(),
             None,
             17.0,
+            None,
         );
         assert!(
             page.contains("<figure class=\"diagram\"><svg") && page.contains("Start"),
@@ -639,6 +654,7 @@ mod tests {
             night(),
             Some(night()),
             17.0,
+            None,
         );
         assert_eq!(
             both.matches(

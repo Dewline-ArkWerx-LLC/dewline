@@ -41,15 +41,18 @@ public func mermaidImage(_ source: String, colors: DiagramColors, scale: Double,
 }
 
 /// `text` as a standalone HTML page with `css` inlined, images inside `folder` inlined, and diagrams and math in
-/// `colors`, with a second picture in `dark` colors for a dark page; raw HTML in the source shows as text.
+/// `colors`, with a second picture in `dark` colors for a dark page, and fenced code colored in the `syntaxes` dump when it
+/// loads; raw HTML in the source shows as text.
 public func exportPage(
-    _ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, dark: DiagramColors?, mathSize: Double
+    _ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, dark: DiagramColors?, mathSize: Double,
+    syntaxes: URL?
 ) -> String {
     func engine(_ colors: DiagramColors) -> DewlineFFIBindings.DiagramColors {
         .init(paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill)
     }
     return exportHtml(
-        text: text, title: title, css: css, folder: folder?.path, colors: engine(colors), dark: dark.map(engine), mathSize: Float(mathSize)
+        text: text, title: title, css: css, folder: folder?.path, colors: engine(colors), dark: dark.map(engine), mathSize: Float(mathSize),
+        syntaxes: syntaxes?.path
     )
 }
 

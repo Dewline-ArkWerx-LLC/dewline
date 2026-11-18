@@ -50,6 +50,9 @@ enum Export {
         }
     }
 
+    /// The app's code syntaxes, which color fenced code in a page.
+    private static let syntaxes = Bundle.main.url(forResource: "Syntaxes", withExtension: "packdump")
+
     struct Failure: LocalizedError {
         let errorDescription: String?
     }
@@ -106,7 +109,7 @@ enum Export {
             let dark = format == .html ? Palette(.darkAqua) : nil
             let page = exportPage(
                 text, title: title, css: stylesheet(light: light, dark: dark), folder: folder, colors: light.colors, dark: dark?.colors,
-                mathSize: ThemeStore.shared.bodySize
+                mathSize: ThemeStore.shared.bodySize, syntaxes: syntaxes
             )
             switch format {
             case .html: data = Data(page.utf8)
@@ -146,7 +149,7 @@ enum Export {
         h1, h2, h3, h4, h5, h6 { font-family: \(face(store.headingFace, "serif")); }
         code, pre { font-family: \(face(store.codeFace, "monospace")); }
         """
-        let page = previewPage(text, title: title, css: css, syntaxes: nil)
+        let page = previewPage(text, title: title, css: css, syntaxes: syntaxes)
             .replacing("<input type=\"checkbox\" disabled checked>", with: "\u{2611}")
             .replacing("<input type=\"checkbox\" disabled>", with: "\u{2610}")
             .replacing(/<img [^>]*?alt="([^"]*)"[^>]*>/) { $0.1.isEmpty ? "[image]" : "[image: \($0.1)]" }
@@ -160,7 +163,10 @@ enum Export {
     /// `text` as the body of an HTML page, for the pasteboard: diagrams and math in the light palette, images at their
     /// paths.
     static func fragment(_ text: String) -> String {
-        let page = exportPage(text, title: "", css: "", folder: nil, colors: Palette(.aqua).colors, dark: nil, mathSize: ThemeStore.shared.bodySize)
+        let page = exportPage(
+            text, title: "", css: "", folder: nil, colors: Palette(.aqua).colors, dark: nil, mathSize: ThemeStore.shared.bodySize,
+            syntaxes: nil
+        )
         guard let start = page.range(of: "<body>\n"), let end = page.range(of: "</body>", options: .backwards) else { return page }
         return String(page[start.upperBound..<end.lowerBound])
     }

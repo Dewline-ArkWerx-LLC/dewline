@@ -1,8 +1,9 @@
 //! Each file's state under a folder, as `git status` reports it: the index
 //! against HEAD's tree, the working tree against the index, and the files no
 //! ignore file matches that the index doesn't list. Read from the
-//! repository's files, as the rest of this module reads them.
+//! repository's files, as the rest of this module reads them; no git runs.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -53,11 +54,22 @@ const MAX_TREE_ENTRIES: usize = 1 << 22;
 const LINK: u32 = 0o120000;
 const GITLINK: u32 = 0o160000;
 const TREE: u32 = 0o040000;
+/// Git's default rename limit, 1000, squared, and its scale for a score.
+const MAX_RENAME_PAIRS: usize = 1000 * 1000;
+const MAX_SCORE: u64 = 60_000;
+/// The most bytes read of each blob a rename's content is compared in; a
+/// larger one pairs with nothing.
+const MAX_RENAME_BYTES: u64 = 256 << 10;
+/// The most bytes read of all blobs, and pieces looked up, in one rename
+/// search; past either, nothing pairs.
+const MAX_RENAME_TOTAL: u64 = 8 << 20;
+const MAX_RENAME_LOOKUPS: usize = 1 << 22;
 
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
-/// exact: the same blob at the new path. Ignore files are the repository's
-/// .gitignore files and info/exclude. A file over 256 MB whose stat data
+/// the same blob at the new path, or a staged file at least half of whose
+/// bytes a file the index deletes holds. Ignore files are as `Ignores` reads
+/// them. A file over 256 MB whose stat data
 /// changed counts as modified. None when the folder is in no repository, or
 /// its index, HEAD or objects can't be read: split or sparse indexes,
 /// SHA-256 repositories, reftables, alternates and missing objects.
@@ -65,10 +77,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     // `find` looks for `.git` in each folder above the path, the folder first.
     let repo = Repo::find(&folder.join(".git"))?;
     let prefix = folder.strip_prefix(&repo.top).ok()?.as_os_str().as_bytes();
-    let common = match read_line(&repo.gitdir.join("commondir")) {
-        Some(common) => repo.gitdir.join(common),
-        None => repo.gitdir.clone(),
-    };
+    let common = common(&repo.gitdir);
 
     // Files changed at or after the index was written may match its stat
     // data with other bytes, so their bytes are compared.
@@ -95,11 +104,14 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     }
 
     // HEAD's files, but those in folders whose tree the index holds as is.
+    let objects = Objects::open(&common.join("objects"));
+    let tree = match head_commit(&repo.gitdir, &common)? {
+        Some(commit) => Some(objects.commit_tree(commit)?),
+        None => None,
+    };
     let mut head = HashMap::new();
     let mut same = HashSet::new();
-    if let Some(commit) = head_commit(&repo.gitdir, &common)? {
-        let objects = Objects::open(&common.join("objects"));
-        let tree = objects.commit_tree(commit)?;
+    if let Some(tree) = tree {
         if index.trees.get(&b""[..]) == Some(&tree) {
             same.insert(Vec::new());
         } else {
@@ -152,6 +164,11 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         files.entry(name.to_vec()).or_insert(status);
     }
 
+    // A file renamed into the folder can come from anywhere in HEAD.
+    if let Some(tree) = tree.filter(|_| !prefix.is_empty() && !added.is_empty()) {
+        objects.flatten(tree, b"", &index.trees, &mut head, &mut HashSet::new())?;
+    }
+
     // Deleted files by blob, each list in reverse byte order of path, so a
     // rename takes the first.
     let mut deleted: HashMap<(u32, Oid), Vec<&Vec<u8>>> = HashMap::new();
@@ -164,6 +181,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         deleted.entry((canonical(mode), id)).or_default().push(name);
     }
     let empty = blob_id(b"");
+    let mut unmatched = Vec::new();
     for entry in added {
         if files.get(&entry.name) != Some(&Status::New) || entry.id == empty {
             continue;
@@ -171,34 +189,42 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         let from = deleted.get_mut(&(canonical(entry.mode), entry.id));
         if from.and_then(|names| names.pop()).is_some() {
             files.insert(entry.name.clone(), Status::Renamed);
+        } else if canonical(entry.mode) & 0o170000 == 0o100000 {
+            unmatched.push(entry);
         }
     }
-    for name in deleted.into_values().flatten() {
-        files.insert(name.clone(), Status::Deleted);
+    let mut gone: Vec<_> = deleted
+        .into_iter()
+        .flat_map(|((mode, id), names)| names.into_iter().map(move |name| (name, mode, id)))
+        .collect();
+    gone.sort_by(|a, b| a.0.cmp(b.0));
+    let sources: Vec<_> = gone
+        .iter()
+        .filter(|(_, mode, id)| mode & 0o170000 == 0o100000 && *id != empty)
+        .collect();
+    let from: Vec<_> = sources.iter().map(|(_, _, id)| *id).collect();
+    let to: Vec<_> = unmatched.iter().map(|entry| entry.id).collect();
+    let mut renamed = HashSet::new();
+    for (from, to) in similar(&objects, &from, &to) {
+        renamed.insert(sources[from].0);
+        files.insert(unmatched[to].name.clone(), Status::Renamed);
+    }
+    for (name, _, _) in gone {
+        if !renamed.contains(name) {
+            files.insert(name.clone(), Status::Deleted);
+        }
     }
 
     let mut walk = Walk {
         top: &repo.top,
         indexed: &indexed,
         tracked_folders: &tracked_folders,
-        ignores: Vec::new(),
+        ignores: Ignores::new(&repo.top, Some(&common)),
         files: &mut files,
     };
-    if let Ok(exclude) = read_file(&common.join("info/exclude"), MAX_INDEX) {
-        walk.ignores.push((Vec::new(), patterns(&exclude)));
-    }
     // Nothing in an ignored folder is untracked.
-    let mut folder = Vec::new();
-    let mut ignored = false;
-    if !prefix.is_empty() {
-        for part in prefix.split(|&byte| byte == b'/') {
-            walk.push(&folder);
-            folder = join(&folder, part);
-            ignored |= walk.ignored(&folder, true);
-        }
-    }
-    if !ignored {
-        walk.walk(&folder);
+    if prefix.is_empty() || !walk.ignores.ignored(prefix, true) {
+        walk.walk(prefix);
     }
 
     // A file at the folder's own path is not under it.
@@ -217,6 +243,187 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         gitdir: repo.gitdir,
         files,
     })
+}
+
+/// The folder that holds a worktree's objects, refs and config.
+fn common(gitdir: &Path) -> PathBuf {
+    match read_line(&gitdir.join("commondir")) {
+        Some(common) => gitdir.join(common),
+        None => gitdir.to_path_buf(),
+    }
+}
+
+/// The ignore file `core.excludesFile` names in the user's config files or
+/// the repository's, the last one read deciding as in git, else git's
+/// default, ~/.config/git/ignore. The system config and includes are not
+/// read. A relative path is from `top`.
+fn excludes_file(top: &Path, common: &Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|xdg| xdg.is_absolute())
+        .or_else(|| Some(home.as_ref()?.join(".config")));
+    let configs = [
+        xdg.as_ref().map(|xdg| xdg.join("git/config")),
+        home.as_ref().map(|home| home.join(".gitconfig")),
+        Some(common.join("config")),
+    ];
+    let named = configs.into_iter().flatten().rev().find_map(|config| {
+        config_value(
+            &read_file(&config, MAX_INDEX).ok()?,
+            b"core",
+            b"excludesfile",
+        )
+    });
+    let Some(named) = named else {
+        return Some(xdg?.join("git/ignore"));
+    };
+    let path = PathBuf::from(OsStr::from_bytes(&named));
+    Some(match path.strip_prefix("~") {
+        Ok(rest) => home?.join(rest),
+        Err(_) => top.join(path),
+    })
+}
+
+/// The last value `key` takes in `section`, without a subsection, in a git
+/// config file. Both names are lowercase. Lines a backslash continues are not
+/// joined.
+fn config_value(bytes: &[u8], section: &[u8], key: &[u8]) -> Option<Vec<u8>> {
+    let mut inside = false;
+    let mut found = None;
+    for line in bytes.split(|&byte| byte == b'\n') {
+        let mut line = line.trim_ascii_start();
+        if let Some(rest) = line.strip_prefix(b"[") {
+            let Some(end) = rest.iter().position(|&byte| byte == b']') else {
+                continue;
+            };
+            inside = rest[..end].trim_ascii().eq_ignore_ascii_case(section);
+            line = rest[end + 1..].trim_ascii_start();
+        }
+        let name = line
+            .iter()
+            .position(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'-'))
+            .unwrap_or(line.len());
+        if !inside || !line[..name].eq_ignore_ascii_case(key) {
+            continue;
+        }
+        if let Some(value) = line[name..].trim_ascii_start().strip_prefix(b"=") {
+            found = Some(config_string(value));
+        }
+    }
+    found
+}
+
+/// A config value as git reads it: quotes and escapes taken out, a comment
+/// and unquoted space at the ends dropped.
+fn config_string(value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut kept = 0;
+    let mut quoted = false;
+    let mut bytes = value.trim_ascii_start().iter();
+    while let Some(&byte) = bytes.next() {
+        match byte {
+            b'"' => quoted = !quoted,
+            b'#' | b';' if !quoted => break,
+            b'\\' => {
+                out.push(match bytes.next() {
+                    Some(b'n') => b'\n',
+                    Some(b't') => b'\t',
+                    Some(b'b') => 8,
+                    Some(&escaped) => escaped,
+                    None => break,
+                });
+                kept = out.len();
+            }
+            _ => {
+                out.push(byte);
+                if quoted || !byte.is_ascii_whitespace() {
+                    kept = out.len();
+                }
+            }
+        }
+    }
+    out.truncate(kept);
+    out
+}
+
+/// Pairs of a deleted and an added blob, by their places in `deleted` and
+/// `added`, as git's rename detection pairs them: each blob once, best
+/// score first, where the score is the bytes of lines (in pieces of 64 bytes
+/// at most) the two have in common over the larger one's size, and at least
+/// half. Nothing when there are more than git's default limit of pairs, or
+/// the search passes `MAX_RENAME_TOTAL` or `MAX_RENAME_LOOKUPS`; a blob over
+/// `MAX_RENAME_BYTES` pairs with nothing.
+fn similar(objects: &Objects, deleted: &[Oid], added: &[Oid]) -> Vec<(usize, usize)> {
+    if deleted.is_empty() || added.is_empty() || deleted.len() * added.len() > MAX_RENAME_PAIRS {
+        return Vec::new();
+    }
+    // An object that can't be read is empty, which pairs with nothing.
+    let mut left = MAX_RENAME_TOTAL;
+    let mut read = |ids: &[Oid]| -> Option<Vec<Vec<u8>>> {
+        ids.iter()
+            .map(|id| {
+                let bytes = objects
+                    .read(*id, MAX_RENAME_BYTES)
+                    .filter(|(kind, _)| *kind == 3)
+                    .map(|(_, bytes)| bytes)
+                    .unwrap_or_default();
+                left = left.checked_sub(bytes.len() as u64)?;
+                Some(bytes)
+            })
+            .collect()
+    };
+    let Some(deleted) = read(deleted) else {
+        return Vec::new();
+    };
+    let Some(added) = read(added) else {
+        return Vec::new();
+    };
+    let mut lookups = MAX_RENAME_LOOKUPS;
+    let added_pieces: Vec<_> = added.iter().map(|blob| pieces(blob)).collect();
+    let mut scores = Vec::new();
+    for (d, blob) in deleted.iter().enumerate() {
+        let counts = pieces(blob);
+        for (a, (other, others)) in added.iter().zip(&added_pieces).enumerate() {
+            let larger = blob.len().max(other.len());
+            if larger == 0 || blob.len().min(other.len()) * 2 < larger {
+                continue;
+            }
+            let Some(rest) = lookups.checked_sub(counts.len()) else {
+                return Vec::new();
+            };
+            lookups = rest;
+            let common: usize = counts
+                .iter()
+                .filter_map(|(piece, count)| Some(*count.min(others.get(piece)?)))
+                .sum();
+            if common * 2 >= larger {
+                scores.push((common as u64 * MAX_SCORE / larger as u64, d, a));
+            }
+        }
+    }
+    scores.sort_by_key(|&(score, d, a)| (Reverse(score), d, a));
+    let (mut from, mut to) = (HashSet::new(), HashSet::new());
+    let mut pairs = Vec::new();
+    for (_, d, a) in scores {
+        if !from.contains(&d) && !to.contains(&a) {
+            from.insert(d);
+            to.insert(a);
+            pairs.push((d, a));
+        }
+    }
+    pairs
+}
+
+/// A blob's bytes by piece: each line, cut every 64 bytes.
+fn pieces(blob: &[u8]) -> HashMap<&[u8], usize> {
+    let mut counts = HashMap::new();
+    for line in blob.split_inclusive(|&byte| byte == b'\n') {
+        for piece in line.chunks(64) {
+            *counts.entry(piece).or_default() += piece.len();
+        }
+    }
+    counts
 }
 
 /// Whether `path` is `folder` or under it; every path is under "".
@@ -403,15 +610,15 @@ impl Objects {
     }
 
     /// The object's type (1 commit, 2 tree, 3 blob, 4 tag) and bytes, its
-    /// deltas applied.
-    fn read(&self, id: Oid) -> Option<(u8, Vec<u8>)> {
+    /// deltas applied, if they and its bases take at most `limit` bytes.
+    fn read(&self, id: Oid, limit: u64) -> Option<(u8, Vec<u8>)> {
         let mut deltas = Vec::new();
         let mut inflated = 0u64;
         let mut next = id;
         let (kind, mut bytes) = 'chain: loop {
             let hex = next.to_string();
             if let Ok(loose) = read_file(&self.folder.join(&hex[..2]).join(&hex[2..]), MAX_INDEX) {
-                break loose_object(&loose)?;
+                break loose_object(&loose, limit)?;
             }
             let (pack, mut offset) = self
                 .packs
@@ -438,7 +645,7 @@ impl Objects {
                     shift += 7;
                 }
                 inflated += size;
-                if inflated > MAX_INFLATED {
+                if inflated > limit {
                     return None;
                 }
                 match kind {
@@ -474,13 +681,13 @@ impl Objects {
             }
         };
         for delta in deltas.iter().rev() {
-            bytes = apply(&bytes, delta)?;
+            bytes = apply(&bytes, delta, limit)?;
         }
         Some((kind, bytes))
     }
 
     fn commit_tree(&self, commit: Oid) -> Option<Oid> {
-        let (kind, bytes) = self.read(commit)?;
+        let (kind, bytes) = self.read(commit, MAX_INFLATED)?;
         let line = bytes.strip_prefix(b"tree ")?.get(..40)?;
         (kind == 1).then(|| parse_oid(std::str::from_utf8(line).ok()?))?
     }
@@ -498,7 +705,7 @@ impl Objects {
         let mut entries = 0;
         let mut open = vec![(tree, Vec::new())];
         while let Some((tree, base)) = open.pop() {
-            let (kind, bytes) = self.read(tree)?;
+            let (kind, bytes) = self.read(tree, MAX_INFLATED)?;
             if kind != 2 {
                 return None;
             }
@@ -530,11 +737,11 @@ impl Objects {
     }
 }
 
-/// A loose object's type and bytes.
-fn loose_object(compressed: &[u8]) -> Option<(u8, Vec<u8>)> {
+/// A loose object's type and bytes, if it has at most `limit`.
+fn loose_object(compressed: &[u8], limit: u64) -> Option<(u8, Vec<u8>)> {
     let mut bytes = Vec::new();
     ZlibDecoder::new(compressed)
-        .take(MAX_INFLATED + 64)
+        .take(limit + 64)
         .read_to_end(&mut bytes)
         .ok()?;
     let nul = bytes.iter().position(|&byte| byte == 0)?;
@@ -619,8 +826,8 @@ fn inflate_at(file: &File, mut offset: u64, size: u64) -> Option<Vec<u8>> {
 }
 
 /// Applies a git delta: the base's size, the result's, then copies from the
-/// base and inserts.
-fn apply(base: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
+/// base and inserts. Nothing when the result would pass `limit` bytes.
+fn apply(base: &[u8], delta: &[u8], limit: u64) -> Option<Vec<u8>> {
     let mut delta = delta.iter().copied();
     let mut size = || {
         let mut value = 0u64;
@@ -637,7 +844,7 @@ fn apply(base: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let length = size()?;
-    if length > MAX_INDEX {
+    if length > limit.min(MAX_INDEX) {
         return None;
     }
     let mut bytes = Vec::with_capacity(length as usize);
@@ -865,53 +1072,117 @@ fn dowild(pattern: &[u8], mut p: usize, text: &[u8], mut t: usize) -> Wild {
     }
 }
 
+/// A work tree's ignore rules, as git reads them: each folder's .gitignore,
+/// then info/exclude, then the file `core.excludesFile` names. Each
+/// .gitignore is read the first time a path under its folder is asked about.
+pub struct Ignores {
+    top: PathBuf,
+    /// The patterns that apply from the top: `core.excludesFile`'s, then
+    /// info/exclude's, which win.
+    base: Vec<Pattern>,
+    /// Each folder's .gitignore, by its path from the top.
+    folders: HashMap<Vec<u8>, Vec<Pattern>>,
+}
+
+impl Ignores {
+    /// The rules of the repository that holds `folder`, a realpath, and the
+    /// folder's path from its top; or, in no repository, the rules of the
+    /// folder's own .gitignore files.
+    pub fn of(folder: &Path) -> (Ignores, Vec<u8>) {
+        let Some(repo) = Repo::find(&folder.join(".git")) else {
+            return (Ignores::new(folder, None), Vec::new());
+        };
+        let prefix = folder
+            .strip_prefix(&repo.top)
+            .map_or(Vec::new(), |prefix| prefix.as_os_str().as_bytes().to_vec());
+        let common = common(&repo.gitdir);
+        (Ignores::new(&repo.top, Some(&common)), prefix)
+    }
+
+    fn new(top: &Path, common: Option<&Path>) -> Ignores {
+        let mut base = Vec::new();
+        if let Some(common) = common {
+            for path in excludes_file(top, common)
+                .into_iter()
+                .chain([common.join("info/exclude")])
+            {
+                if let Ok(bytes) = read_file(&path, MAX_INDEX) {
+                    base.extend(patterns(&bytes));
+                }
+            }
+        }
+        Ignores {
+            top: top.to_path_buf(),
+            base,
+            folders: HashMap::new(),
+        }
+    }
+
+    /// Whether git ignores `path`, from the top: it or a folder above it
+    /// matches.
+    pub fn ignored(&mut self, path: &[u8], folder: bool) -> bool {
+        path.iter()
+            .enumerate()
+            .filter(|(_, byte)| **byte == b'/')
+            .any(|(at, _)| self.matches(&path[..at], true))
+            || self.matches(path, folder)
+    }
+
+    /// Whether `path` itself matches. The last pattern to match decides,
+    /// deeper ignore files first.
+    fn matches(&mut self, path: &[u8], folder: bool) -> bool {
+        let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
+        let mut parent = &path[..path.len() - name.len()];
+        loop {
+            parent = parent.strip_suffix(b"/").unwrap_or(parent);
+            if !self.folders.contains_key(parent) {
+                let file = self.top.join(OsStr::from_bytes(parent)).join(".gitignore");
+                let found =
+                    read_file(&file, MAX_INDEX).map_or(Vec::new(), |bytes| patterns(&bytes));
+                self.folders.insert(parent.to_vec(), found);
+            }
+            let relative = if parent.is_empty() {
+                path
+            } else {
+                &path[parent.len() + 1..]
+            };
+            if let Some(matched) = decide(&self.folders[parent], relative, name, folder) {
+                return matched;
+            }
+            if parent.is_empty() {
+                return decide(&self.base, path, name, folder).unwrap_or(false);
+            }
+            let at = parent
+                .iter()
+                .rposition(|&byte| byte == b'/')
+                .map_or(0, |at| at + 1);
+            parent = &parent[..at];
+        }
+    }
+}
+
+/// Whether the last of `patterns` that matches ignores the path, if one
+/// does. `relative` is the path from the ignore file's folder.
+fn decide(patterns: &[Pattern], relative: &[u8], name: &[u8], folder: bool) -> Option<bool> {
+    patterns.iter().rev().find_map(|pattern| {
+        let text = if pattern.anchored { relative } else { name };
+        (!(pattern.folders_only && !folder) && wildmatch(&pattern.glob, text))
+            .then_some(!pattern.negated)
+    })
+}
+
 /// The walk for untracked files.
 struct Walk<'a> {
     top: &'a Path,
     indexed: &'a HashSet<&'a [u8]>,
     tracked_folders: &'a HashSet<&'a [u8]>,
-    /// The ignore files that apply, each with its folder, shallowest first.
-    ignores: Vec<(Vec<u8>, Vec<Pattern>)>,
+    ignores: Ignores,
     files: &'a mut BTreeMap<Vec<u8>, Status>,
 }
 
 impl Walk<'_> {
-    /// Takes in `folder`'s .gitignore, if it has one.
-    fn push(&mut self, folder: &[u8]) -> bool {
-        let path = self.top.join(OsStr::from_bytes(folder)).join(".gitignore");
-        let Ok(bytes) = read_file(&path, MAX_INDEX) else {
-            return false;
-        };
-        self.ignores.push((folder.to_vec(), patterns(&bytes)));
-        true
-    }
-
-    /// The last pattern to match decides, deeper ignore files first.
-    fn ignored(&self, path: &[u8], folder: bool) -> bool {
-        let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
-        for (base, patterns) in self.ignores.iter().rev() {
-            let relative = if base.is_empty() {
-                path
-            } else {
-                match path
-                    .strip_prefix(&base[..])
-                    .and_then(|rest| rest.strip_prefix(b"/"))
-                {
-                    Some(relative) => relative,
-                    None => continue,
-                }
-            };
-            for pattern in patterns.iter().rev() {
-                if pattern.folders_only && !folder {
-                    continue;
-                }
-                let text = if pattern.anchored { relative } else { name };
-                if wildmatch(&pattern.glob, text) {
-                    return !pattern.negated;
-                }
-            }
-        }
-        false
+    fn ignored(&mut self, path: &[u8], folder: bool) -> bool {
+        self.ignores.matches(path, folder)
     }
 
     /// `folder`'s children but `.git`, and whether each is a folder.
@@ -930,7 +1201,6 @@ impl Walk<'_> {
     }
 
     fn walk(&mut self, folder: &[u8]) {
-        let pushed = self.push(folder);
         for (path, is_folder) in self.list(folder) {
             if self.indexed.contains(&path[..]) {
                 continue;
@@ -944,9 +1214,6 @@ impl Walk<'_> {
                 self.files.insert(path, Status::New);
             }
         }
-        if pushed {
-            self.ignores.pop();
-        }
     }
 
     /// Whether an untracked folder holds a file no ignore file matches. A
@@ -956,14 +1223,9 @@ impl Walk<'_> {
         if fs::symlink_metadata(top.join(".git")).is_ok() {
             return true;
         }
-        let pushed = self.push(folder);
-        let found = self.list(folder).into_iter().any(|(path, is_folder)| {
+        self.list(folder).into_iter().any(|(path, is_folder)| {
             !self.ignored(&path, is_folder) && (!is_folder || self.holds_untracked(&path))
-        });
-        if pushed {
-            self.ignores.pop();
-        }
-        found
+        })
     }
 }
 
@@ -1025,6 +1287,10 @@ mod tests {
             ("docs/nested/.gitignore", b"*.tmp\n"),
             ("docs/nested/n.md", b"n\n"),
             ("old/name.md", b"# Name\n"),
+            (
+                "guide.md",
+                b"# Guide\n\nOne.\n\nTwo.\n\nThree.\n\nFour.\n\nFive.\n",
+            ),
         ]);
         symlink("a.md", root.join("link")).unwrap();
         git(&root, &["add", "link"]);
@@ -1047,6 +1313,14 @@ mod tests {
         fs::create_dir(root.join("new")).unwrap();
         git(&root, &["mv", "old/name.md", "new/name.md"]);
         write(&root, "new/name.md", b"# Name, edited\n");
+        // Renamed with its content changed, and staged.
+        git(&root, &["mv", "guide.md", "new/guide.md"]);
+        write(
+            &root,
+            "new/guide.md",
+            b"# Guide\n\nOne.\n\nTwo.\n\nThree, edited.\n\nFour.\n\nFive.\n",
+        );
+        git(&root, &["add", "new/guide.md"]);
         fs::rename(root.join("moved.md"), root.join("moved2.md")).unwrap();
         fs::set_permissions(root.join("exec.sh"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::remove_file(root.join("link")).unwrap();
@@ -1057,6 +1331,7 @@ mod tests {
         git(&root, &["add", "-N", "ita.md"]);
         for (name, bytes) in [
             ("notes.md", &b"untracked\n"[..]),
+            ("two words.md", b"untracked\n"),
             ("docs/new.md", b"new\n"),
             ("fresh/x.md", b"x\n"),
             ("fresh/y/z.md", b"z\n"),
@@ -1076,6 +1351,15 @@ mod tests {
         fs::create_dir(root.join("inner")).unwrap();
         git(&root.join("inner"), &["init", "-q"]);
         write(&root, ".git/info/exclude", b"secret.md\n");
+        // A global ignore file, named here in the repository's config.
+        write(&root, ".git/ignore-everywhere", b".DS_Store\n*.local\n");
+        let excludes = root.join(".git/ignore-everywhere");
+        git(
+            &root,
+            &["config", "core.excludesFile", excludes.to_str().unwrap()],
+        );
+        write(&root, ".DS_Store", b"");
+        write(&root, "docs/env.local", b"");
 
         use Status::*;
         let expected = [
@@ -1094,9 +1378,11 @@ mod tests {
             ("link", Modified),
             ("moved.md", Deleted),
             ("moved2.md", New),
+            ("new/guide.md", Renamed),
             ("new/name.md", Renamed),
             ("notes.md", New),
             ("staged.md", New),
+            ("two words.md", New),
         ];
         let expected: Vec<_> = expected
             .iter()
@@ -1107,6 +1393,31 @@ mod tests {
         let paths: Vec<_> = found.into_iter().map(|(path, _)| path).collect();
         assert_eq!(paths, git_paths(&root, ""));
         assert_eq!(status(&root).unwrap().gitdir, root.join(".git"));
+
+        // A rename into a folder from outside it is still a rename.
+        assert_eq!(
+            statuses(&root.join("new")),
+            [
+                ("guide.md".to_owned(), Renamed),
+                ("name.md".to_owned(), Renamed)
+            ]
+        );
+
+        // The sidebar's matcher reads the same ignore files.
+        let (mut ignores, prefix) = Ignores::of(&root.join("docs"));
+        assert_eq!(prefix, b"docs");
+        for (path, ignored) in [
+            ("docs/env.local", true),
+            ("docs/nested/t.tmp", true),
+            ("docs/drafts/d.md", true),
+            ("docs/new.md", false),
+            ("build/out.txt", true),
+            ("keep.log", false),
+            ("x.log", true),
+            ("secret.md", true),
+        ] {
+            assert_eq!(ignores.ignored(path.as_bytes(), false), ignored, "{path}");
+        }
 
         // A folder inside the repository: its files, by their paths from it.
         write(&root, "docs/plan.md", b"# Plan, edited\n");
@@ -1119,6 +1430,13 @@ mod tests {
             git_paths(&root, "docs/").len()
         );
         assert_eq!(statuses(&root.join("docs/drafts")), []);
+
+        // Folders inside an untracked one: each file or folder under them.
+        assert_eq!(
+            statuses(&root.join("fresh")),
+            [("x.md".to_owned(), New), ("y".to_owned(), New)]
+        );
+        assert_eq!(statuses(&root.join("fresh/y")), [("z.md".to_owned(), New)]);
 
         // HEAD's c.md is not under a folder now at its path.
         fs::create_dir(root.join("c.md")).unwrap();

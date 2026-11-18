@@ -36,8 +36,11 @@ enum HookSetup {
                 return present(alert, on: window) { _ in done(false) }
             }
             guard !missing.isEmpty else {
-                alert.messageText = "Agent edits are already marked."
-                alert.informativeText = "Every agent Dewline knows has its hooks."
+                let none = !report.output.contains(": installed in ")
+                alert.messageText = none ? "No agent to set up." : "Agent edits are already marked."
+                alert.informativeText = none
+                    ? "Dewline found no ~/.claude or ~/.codex folder. Set up again after you install Claude Code or Codex."
+                    : "Every agent Dewline knows has its hooks."
                 return present(alert, on: window) { _ in done(true) }
             }
             alert.messageText = "Mark your agents\u{2019} edits"

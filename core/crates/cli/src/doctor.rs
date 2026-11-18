@@ -36,6 +36,7 @@ const AGENTS: [Agent; 2] = [
         events: &[
             ("PreToolUse", Some(TOOLS)),
             ("PostToolUse", Some(TOOLS)),
+            ("PostToolUseFailure", Some(TOOLS)),
             ("Stop", None),
             ("StopFailure", None),
             ("UserPromptSubmit", None),
@@ -50,6 +51,8 @@ const AGENTS: [Agent; 2] = [
         events: &[
             ("PreToolUse", Some("^apply_patch$")),
             ("PostToolUse", Some("^apply_patch$")),
+            ("Stop", None),
+            ("SessionEnd", None),
         ],
     },
 ];
@@ -93,6 +96,11 @@ pub fn run(install: bool) -> Result<(), String> {
     println!("\nAgent hooks:");
     for agent in &AGENTS {
         let path = home.join(agent.settings);
+        let folder = path.parent().expect("a settings file is in a folder");
+        if !folder.is_dir() {
+            println!("  {}: not installed; no {}", agent.title, folder.display());
+            continue;
+        }
         let settings = match read(&path) {
             Ok(settings) => settings,
             Err(error) => {
@@ -102,14 +110,21 @@ pub fn run(install: bool) -> Result<(), String> {
         };
         let missing = missing(settings.as_ref().map(|(value, _)| value), agent, runs);
         if missing.is_empty() {
+            let config = fs::read_to_string(folder.join("config.toml"))
+                .ok()
+                .and_then(|text| text.parse::<toml::Table>().ok());
+            let trusted = agent.name != "codex"
+                || settings.as_ref().is_some_and(|(settings, _)| {
+                    trusted(settings, agent, &path.to_string_lossy(), config.as_ref())
+                });
             println!(
                 "  {}: installed in {}{}",
                 agent.title,
                 path.display(),
-                if agent.name == "codex" {
-                    "; Codex runs them once you trust them in /hooks"
-                } else {
+                if trusted {
                     ""
+                } else {
+                    "; needs trust: in Codex, open /hooks and trust each Dewline hook"
                 }
             );
         } else {
@@ -205,6 +220,48 @@ fn missing(settings: Option<&Value>, agent: &Agent, runs: fn(&str) -> bool) -> V
         .map(|&(event, _)| event)
         .filter(|event| !installed(event))
         .collect()
+}
+
+/// Whether Codex's `config` records trust for every Dewline hook in the hooks file at `file`, under the key Codex
+/// gives a hook: the file, the event in snake case, and the hook's group and place in it. Codex voids trust when a
+/// hook changes; a hook changed since it was trusted still counts here.
+fn trusted(settings: &Value, agent: &Agent, file: &str, config: Option<&toml::Table>) -> bool {
+    let state = config.and_then(|config| config.get("hooks")?.get("state")?.as_table());
+    let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
+        return false;
+    };
+    hooks.iter().all(|(event, groups)| {
+        let label: String = event
+            .chars()
+            .enumerate()
+            .flat_map(|(i, c)| {
+                let gap = (i > 0 && c.is_ascii_uppercase()).then_some('_');
+                gap.into_iter().chain(c.to_lowercase())
+            })
+            .collect();
+        groups
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .all(|(group, entry)| {
+                entry["hooks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .all(|(handler, hook)| {
+                        let ours = hook["command"]
+                            .as_str()
+                            .is_some_and(|command| program(command, agent).is_some());
+                        let key = format!("{file}:{label}:{group}:{handler}");
+                        !ours
+                            || state
+                                .and_then(|state| state.get(&key)?.get("trusted_hash")?.as_str())
+                                .is_some()
+                    })
+            })
+    })
 }
 
 /// `settings` with a hook running `command` for each of `agent`'s events that lacks one: a Dewline hook whose program
@@ -440,8 +497,14 @@ mod tests {
         let by_hand = json!({"hooks": {
             "PreToolUse": [{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": "/opt/dewline notify --hook codex"}]}],
         }});
-        assert_eq!(missing(Some(&by_hand), codex, every), ["PostToolUse"]);
-        assert_eq!(missing(None, codex, every), ["PreToolUse", "PostToolUse"]);
+        assert_eq!(
+            missing(Some(&by_hand), codex, every),
+            ["PostToolUse", "Stop", "SessionEnd"]
+        );
+        assert_eq!(
+            missing(None, codex, every),
+            ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+        );
         let merged = merge(Some(&by_hand), codex, "dewline notify --hook codex", every).unwrap();
         assert_eq!(merged["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
         assert!(missing(Some(&merged), codex, every).is_empty());
@@ -485,7 +548,7 @@ mod tests {
         }});
         assert_eq!(
             missing(Some(&moved), codex, runs),
-            ["PreToolUse", "PostToolUse"]
+            ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
         );
         let command = "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook codex";
         let merged = merge(Some(&moved), codex, command, runs).unwrap();
@@ -495,6 +558,37 @@ mod tests {
                 json!([{"matcher": "^apply_patch$", "hooks": [{"type": "command", "command": command}]}])
             );
         }
+    }
+
+    #[test]
+    fn codex_trust_is_read_from_its_config() {
+        let codex = &AGENTS[1];
+        let file = "/Users/someone/.codex/hooks.json";
+        let settings = merge(None, codex, "dewline notify --hook codex", every).unwrap();
+        let mut config: toml::Table = r#"model = "gpt"
+[hooks.state."/Users/someone/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:1"
+[hooks.state."/Users/someone/.codex/hooks.json:post_tool_use:0:0"]
+trusted_hash = "sha256:2"
+[hooks.state."/Users/someone/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:3"
+"#
+        .parse()
+        .unwrap();
+        assert!(!trusted(&settings, codex, file, None));
+        assert!(!trusted(&settings, codex, file, Some(&config)));
+        let session_end = r#"trusted_hash = "sha256:4""#.parse::<toml::Table>().unwrap();
+        config["hooks"]["state"].as_table_mut().unwrap().insert(
+            format!("{file}:session_end:0:0"),
+            toml::Value::Table(session_end),
+        );
+        assert!(trusted(&settings, codex, file, Some(&config)));
+        assert!(!trusted(
+            &settings,
+            codex,
+            "/elsewhere/hooks.json",
+            Some(&config)
+        ));
     }
 
     #[test]

@@ -130,9 +130,11 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
         session,
         ..Fields::default()
     };
-    let pre = match name {
-        "PreToolUse" => true,
-        "PostToolUse" => false,
+    let (name, pre) = match name {
+        "PreToolUse" => (name, true),
+        // A failed call's PostToolUse finds the file it left, which its declared bytes never match, so it closes the
+        // call and names nothing.
+        "PostToolUse" | "PostToolUseFailure" => ("PostToolUse", false),
         "InstructionsLoaded" => {
             let real = event
                 .file_path
@@ -148,6 +150,7 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
         return Vec::new();
     };
     let fields = Fields {
+        event: name,
         tool_use_id: Some(id),
         tool: Some(tool),
         ..fields
@@ -289,8 +292,9 @@ fn patch_text(bytes: &[u8]) -> Option<&str> {
 }
 
 /// The hash of the bytes Claude Code's tool writes, or None where it would refuse the call or this can't be sure
-/// of its bytes: a file that isn't UTF-8 text, holds a NUL or starts with a byte-order mark, an Edit of a file with
-/// CRs (Edit rewrites line endings), or an Edit Claude Code would refuse.
+/// of its bytes: a file that isn't UTF-8 text, holds a NUL or starts with a byte-order mark, an Edit of a file whose
+/// line endings mix CRLF with LF or lone CRs, or an Edit Claude Code would refuse. Edit works on a CRLF file's text
+/// with LF endings and writes CRLF back.
 fn declared(tool: &str, input: &Input, disk: &Disk) -> Option<blake3::Hash> {
     if tool == "Write" {
         return input.content;
@@ -323,8 +327,14 @@ fn declared(tool: &str, input: &Input, disk: &Disk) -> Option<blake3::Hash> {
             .collect::<Option<_>>()?,
         _ => return None,
     };
-    if text.is_some_and(|text| text.contains('\r')) {
-        return None;
+    if let Some(text) = text.filter(|text| text.contains('\r')) {
+        let pairs = text.matches("\r\n").count();
+        (pairs == text.matches('\r').count() && pairs == text.matches('\n').count())
+            .then_some(())?;
+        let out = edited(Some(&text.replace("\r\n", "\n")), &edits)?;
+        return Some(blake3::hash(
+            out.replace("\r\n", "\n").replace('\n', "\r\n").as_bytes(),
+        ));
     }
     edited(text, &edits).map(|text| blake3::hash(text.as_bytes()))
 }
@@ -333,7 +343,9 @@ fn declared(tool: &str, input: &Input, disk: &Disk) -> Option<blake3::Hash> {
 /// last: an empty `old_string` only as the first edit of a file that is missing or empty, where it writes
 /// `new_string`; otherwise the first match, or every match with `replace_all`, refusing a missing match, more than
 /// one match without `replace_all`, an `old_string` found in an earlier edit's `new_string`, and an edit that changes
-/// nothing. Deleting text that doesn't end in a newline also deletes the newline after it, when one follows.
+/// nothing. An `old_string` the text lacks matches where it would with curly quotes made straight, and then its
+/// `new_string` takes the curly quotes the match had (Claude Code's `findActualString` and `preserveQuoteStyle`).
+/// Deleting text that doesn't end in a newline also deletes the newline after it, when one follows.
 fn edited(text: Option<&str>, edits: &[(&str, &str, bool)]) -> Option<String> {
     let original = text.unwrap_or("");
     let mut out = original.to_owned();
@@ -349,8 +361,10 @@ fn edited(text: Option<&str>, edits: &[(&str, &str, bool)]) -> Option<String> {
             if !trimmed.is_empty() && written.iter().any(|earlier| earlier.contains(trimmed)) {
                 return None;
             }
-            let matches = out.matches(old).count();
-            if matches == 0 || (matches > 1 && !all) {
+            let actual = actual(&out, old)?;
+            let new = restyled(old, &actual, new);
+            let (old, new) = (actual.as_str(), new.as_str());
+            if out.matches(old).count() > 1 && !all {
                 return None;
             }
             let with_newline = format!("{old}\n");
@@ -372,6 +386,72 @@ fn edited(text: Option<&str>, edits: &[(&str, &str, bool)]) -> Option<String> {
         written.push(new);
     }
     (out != original).then_some(out)
+}
+
+/// Each curly quote as its straight one; every other character stays, so character offsets line up.
+fn straight(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            c => c,
+        })
+        .collect()
+}
+
+/// `old` when `text` holds it, else the first span of `text` that equals it once both have straight quotes.
+fn actual(text: &str, old: &str) -> Option<String> {
+    if text.contains(old) {
+        return Some(old.to_owned());
+    }
+    let straight_text = straight(text);
+    let at = straight_text.find(&straight(old))?;
+    let start = straight_text[..at].chars().count();
+    Some(text.chars().skip(start).take(old.chars().count()).collect())
+}
+
+/// `new` with the curly quotes of `actual`, the text that `old` matched: double quotes curl when `actual` has curly
+/// double quotes, single quotes when it has curly single quotes. A quote opens at the start or after a space, tab,
+/// line break, opening bracket or dash, and otherwise closes; a single quote between two letters is an apostrophe.
+fn restyled(old: &str, actual: &str, new: &str) -> String {
+    let double = actual.contains(['\u{201C}', '\u{201D}']);
+    let single = actual.contains(['\u{2018}', '\u{2019}']);
+    if old == actual || !(double || single) {
+        return new.to_owned();
+    }
+    let chars: Vec<char> = new.chars().collect();
+    let before = |i: usize| i.checked_sub(1).map(|i| chars[i]);
+    let opens = |i: usize| {
+        before(i).is_none_or(|c| {
+            matches!(
+                c,
+                ' ' | '\t' | '\n' | '\r' | '(' | '[' | '{' | '\u{2014}' | '\u{2013}'
+            )
+        })
+    };
+    let letter = |c: Option<char>| c.is_some_and(char::is_alphabetic);
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| match c {
+            '"' if double => {
+                if opens(i) {
+                    '\u{201C}'
+                } else {
+                    '\u{201D}'
+                }
+            }
+            '\'' if single && letter(before(i)) && letter(chars.get(i + 1).copied()) => '\u{2019}',
+            '\'' if single => {
+                if opens(i) {
+                    '\u{2018}'
+                } else {
+                    '\u{2019}'
+                }
+            }
+            c => c,
+        })
+        .collect()
 }
 
 /// A named file as one look found it.
@@ -496,6 +576,59 @@ mod tests {
     }
 
     #[test]
+    fn straight_quotes_match_curly_ones_and_take_their_style() {
+        assert_eq!(
+            edit(
+                Some("Say \u{201C}hi\u{201D} now"),
+                "\"hi\"",
+                "\"bye\"",
+                false
+            )
+            .as_deref(),
+            Some("Say \u{201C}bye\u{201D} now")
+        );
+        assert_eq!(
+            edit(
+                Some("it\u{2019}s \u{2018}x\u{2019}"),
+                "it's 'x'",
+                "don't 'y' (it's)",
+                false
+            )
+            .as_deref(),
+            Some("don\u{2019}t \u{2018}y\u{2019} (it\u{2019}s)")
+        );
+        // Only the kind of quote the match had curls.
+        assert_eq!(
+            edit(Some("\u{201C}a\u{201D}"), "\"a\"", "'b' \"c\"", false).as_deref(),
+            Some("'b' \u{201C}c\u{201D}")
+        );
+        // An exact match keeps new_string as sent.
+        assert_eq!(
+            edit(Some("\"a\" \u{201C}a\u{201D}"), "\"a\"", "\"b\"", false).as_deref(),
+            Some("\"b\" \u{201C}a\u{201D}")
+        );
+        assert_eq!(
+            edit(
+                Some("\u{201C}a\u{201D} \u{201C}a\u{201D}"),
+                "\"a\"",
+                "b",
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            edit(
+                Some("\u{201C}a\u{201D} \u{201C}a\u{201D}"),
+                "\"a\"",
+                "b",
+                true
+            )
+            .as_deref(),
+            Some("b b")
+        );
+    }
+
+    #[test]
     fn deleting_a_line_takes_its_newline() {
         assert_eq!(
             edit(Some("one\ntwo\nthree\n"), "two", "", false).as_deref(),
@@ -577,7 +710,22 @@ mod tests {
     fn files_claude_code_rewrites_get_no_declared_hash() {
         let h = |text: &str| Some(blake3::hash(text.as_bytes()));
         assert_eq!(declared("Edit", &input("a", "b"), &file(b"a\n")), h("b\n"));
-        for bytes in [&b"a\r\n"[..], b"\xEF\xBB\xBFa\n", b"a\0\n", b"a\xff\n"] {
+        // Edit reads a CRLF file with LF endings and writes CRLF back.
+        assert_eq!(
+            declared("Edit", &input("a\nb", "c\nd"), &file(b"a\r\nb\r\n")),
+            h("c\r\nd\r\n")
+        );
+        assert_eq!(
+            declared("Edit", &input("a\r\n", "b"), &file(b"a\r\n")),
+            None
+        );
+        for bytes in [
+            &b"a\r\nb\n"[..],
+            b"a\rb",
+            b"\xEF\xBB\xBFa\n",
+            b"a\0\n",
+            b"a\xff\n",
+        ] {
             assert_eq!(
                 declared("Edit", &input("a", "b"), &file(bytes)),
                 None,

@@ -970,6 +970,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -982,6 +983,7 @@ dependencies = [
  "libc",
  "proptest",
  "pulldown-cmark",
+ "regex",
  "serde_json",
  "syntect",
  "tempfile",

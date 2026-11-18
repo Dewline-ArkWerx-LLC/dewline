@@ -318,7 +318,8 @@ struct ControlSocketTests {
         ]
         for (path, error) in refusals {
             let client = try Client(listening.socket.path)
-            client.send(#"{"v":1,"op":"open","path":"\#(path)"}"# + "\n")
+            // A folder opens only for a request that doesn't wait.
+            client.send(#"{"v":1,"op":"open","path":"\#(path)","wait":true}"# + "\n")
             #expect(client.line() == #"{"error":"\#(error)","reply":"error","v":1}"#, "\(path)")
         }
         #expect(await listening.received.requests.isEmpty)

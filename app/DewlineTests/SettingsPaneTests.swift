@@ -75,14 +75,14 @@ struct SettingsPaneTests {
             let group = ["hooks": [["type": "command", "command": "dewline notify --hook \(agent)"]]]
             return try JSONSerialization.data(withJSONObject: ["hooks": Dictionary(uniqueKeysWithValues: events.map { ($0, [group]) })])
         }
-        try hooks("claude", ["PreToolUse", "PostToolUse", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"])
+        try hooks("claude", ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"])
             .write(to: home.appending(path: ".claude/settings.json"))
         #expect(HookStatus.read(home: home).agents == [true, false])
 
         try FileManager.default.createDirectory(at: home.appending(path: ".codex"), withIntermediateDirectories: true)
         try Data("model = \"gpt\"\n".utf8).write(to: home.appending(path: ".codex/config.toml"))
         #expect(HookStatus.read(home: home).codex == false)
-        try hooks("codex", ["PreToolUse", "PostToolUse"]).write(to: home.appending(path: ".codex/hooks.json"))
+        try hooks("codex", ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]).write(to: home.appending(path: ".codex/hooks.json"))
         #expect(HookStatus.read(home: home).agents == [true, true])
     }
 
@@ -95,7 +95,7 @@ struct SettingsPaneTests {
         let here = home.appending(path: "Here/dewline").path
         #expect(FileManager.default.createFile(atPath: here, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755]))
         func install(_ program: String) throws {
-            let events = ["PreToolUse", "PostToolUse", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"]
+            let events = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"]
             let group = ["hooks": [["type": "command", "command": "\(program) notify --hook claude"]]]
             try JSONSerialization.data(withJSONObject: ["hooks": Dictionary(uniqueKeysWithValues: events.map { ($0, [group]) })])
                 .write(to: home.appending(path: ".claude/settings.json"))

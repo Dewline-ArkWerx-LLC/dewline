@@ -3,6 +3,7 @@
 pub mod docx;
 pub mod epub;
 pub mod latex;
+pub mod portable;
 pub mod text;
 
 use std::collections::HashMap;

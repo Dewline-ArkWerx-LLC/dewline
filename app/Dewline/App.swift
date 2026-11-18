@@ -9,7 +9,6 @@ enum DewlineApp {
         // mermaid-rs-renderer copies a system font into XDG_CACHE_HOME, or into ~/.cache without it.
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         setenv("XDG_CACHE_HOME", caches.appending(path: "dev.arkwerx.dewline").path, 1)
-        FontLibrary.registerAtLaunch()
         let app = NSApplication.shared
         // The first document controller made is the shared one.
         _ = DocumentController()
@@ -62,9 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         RightPane.makeChanges = { ReviewViewController(for: $0) }
-        RightPane.makeAgent = { AgentPanel.makeViewController(window: $0) }
         Review.closedNotes = {
-            ClosedChanges.all.map { ClosedNote(url: $0.url, origin: $0.origin, time: $0.time) }.sorted { $0.time > $1.time }
+            ClosedChanges.all.map { ClosedNote(url: $0.url, origin: $0.origin, count: $0.count, time: $0.time) }.sorted { $0.time > $1.time }
         }
         FlowStatus.start()
         guard !isTestHost else { return }
@@ -129,10 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isTestHost else { return }
         Preferences.shared.keepWindows()
         if let failure = MarkdownDocument.engineFailure { Tracking.report(.noEngine(failure)) }
-        Capture.shared.register(Preferences.shared.captureShortcut)
-        NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Capture.shared.register(Preferences.shared.captureShortcut) }
-        }
         Export.publishPreviewStylesheet()
         CodeHighlights.publishForPreview()
         NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { _ in
@@ -142,8 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defaults.set(true, forKey: Welcome.shownKey)
             // Opened before AppKit asks for an untitled file, so the notes folder shows in place of the launch window.
             firstLaunch(in: FileActions.notesFolder)
-        } else if DailyNote.opensAtLaunch(defaults: defaults) {
-            openTodaysNote(nil)
         }
         let engine = MarkdownDocument.sharedEngine
         let control = ControlSocket(path: ControlSocket.standardPath, notify: { claim in
@@ -163,47 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Marks don't outlive the app, so a quit you start with undecided changes asks first: Review cancels it and shows
-    /// the front-most undecided change, Keep All quits. A quit for logout, restart, shutdown or an update restart asks
-    /// nothing, since the writes are already on disk.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let system = NSAppleEventManager.shared().currentAppleEvent?.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason)) != nil
-        guard !isTestHost, !system, !Updates.shared.restarting else { return .terminateNow }
-        let documents = NSApp.orderedWindows.flatMap { window in
-            [window.windowController?.document as? MarkdownDocument].compactMap { $0 } + Review.documents(in: window)
-        } + NSDocumentController.shared.documents.compactMap { $0 as? MarkdownDocument }
-        var waiting: [LiveFile] = []
-        for live in documents.compactMap(\.live) where live.changes.values.contains(where: \.marked) && !waiting.contains(where: { $0 === live }) {
-            waiting.append(live)
-        }
-        guard let file = waiting.first else { return .terminateNow }
-        let names = Set(waiting.flatMap(\.changes.values).filter(\.marked).map { EarlierVersions.writer($0.origin) }).sorted()
-        let others = names.count - 1
-        let alert = NSAlert()
-        alert.messageText = "Keep all changes from \(names[0])" + (others == 0 ? "?" : " and \(others) \(others == 1 ? "other" : "others")?")
-        alert.informativeText = "Keep All accepts them as they stand and quits. After that they can\u{2019}t be reverted."
-        alert.addButton(withTitle: "Review")
-        alert.addButton(withTitle: "Keep All")
-        func review() {
-            if let first = file.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location }) {
-                file.reveal(first.key, caret: true)
-            }
-        }
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
-            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateNow }
-            review()
-            return .terminateCancel
-        }
-        alert.beginSheetModal(for: window) { response in
-            MainActor.assumeIsolated {
-                NSApp.reply(toApplicationShouldTerminate: response != .alertFirstButtonReturn)
-                if response == .alertFirstButtonReturn { review() }
-            }
-        }
-        return .terminateLater
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
+        LiveFile.keepAllMarks()
         control?.stop()
         if !isTestHost { MainWindowController.session().save(to: defaults) }
     }
@@ -259,11 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     else { throw POSIXError(.EFTYPE) }
                     return try handle.readToEnd() ?? Data()
                 }.value
+                let out = URL(fileURLWithPath: request.out)
+                guard out.resolvingSymlinksInPath() != file.resolvingSymlinksInPath() else { throw Export.replacesSource }
                 guard let text = String(data: data, encoding: .utf8) else {
                     throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
                 }
                 try await Export.write(
-                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: URL(fileURLWithPath: request.out),
+                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: out,
                     folder: file.deletingLastPathComponent()
                 )
                 connection.reply(.exported)
@@ -375,11 +330,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !launched { openedBeforeLaunch = true }
         for url in urls {
             if url.scheme == "dewline" {
+                #if COLLAB
                 if url.host == "join" {
                     Collaboration.join(link: url.absoluteString)
-                } else {
-                    SchemeLinks.handle(url)
+                    continue
                 }
+                #endif
+                SchemeLinks.handle(url)
             } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 if !launched { opensFile = true }
                 resume(after: openFolder(at: url))
@@ -529,25 +486,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// File > Today's Note: today's file in the notes folder's Daily folder, made if it isn't there yet.
-    @objc func openTodaysNote(_ sender: Any?) {
-        do {
-            try openMarkdown(at: DailyNote.today(in: FileActions.notesFolder))
-            DailyNote.noteOpened(defaults: defaults)
-        } catch {
-            NSApp.presentError(error)
-        }
-    }
-
     @objc func capture(_ sender: Any?) {
         Capture.show()
     }
 
-    /// Settings > Agents > Set Up… and the agent panel's Set Up: installs the hooks after a sheet listing the files.
+    /// Settings > Agents > Set Up…: installs the hooks after a sheet listing the files.
     @objc func setUpHooks(_ sender: Any?) {
         HookSetup.install(from: NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
+    #if COLLAB
     /// File > Join Shared Note…: the invite link, pasted.
     @objc func joinSharedNote(_ sender: Any?) {
         let alert = NSAlert()
@@ -570,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Collaboration.join(link: link)
     }
+    #endif
 
     /// File > Print…: the note as its PDF export lays it out.
     @objc func printNote(_ sender: Any?) {
@@ -588,10 +537,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         menu.addItem(withTitle: "New Note", action: #selector(newNote(_:)), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Capture\u{2026}", action: #selector(capture(_:)), keyEquivalent: "").target = self
-        if DailyNote.isOn(defaults: defaults) {
-            menu.addItem(withTitle: "Today\u{2019}s Note", action: #selector(openTodaysNote(_:)), keyEquivalent: "").target = self
-        }
         return menu
     }
 }
@@ -599,9 +544,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(openTodaysNote(_:)):
-            item.isHidden = !DailyNote.isOn(defaults: defaults)
-            return !item.isHidden
         case #selector(duplicateNote(_:)), #selector(trashNote(_:)), #selector(printNote(_:)):
             return frontNote?.fileURL != nil
         case #selector(showEarlierVersions(_:)):

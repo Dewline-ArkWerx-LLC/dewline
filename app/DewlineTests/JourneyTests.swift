@@ -347,6 +347,31 @@ struct JourneyTests {
         .replacingOccurrences(of: "Charlie line.", with: "Charlie line, revised.")
         .replacingOccurrences(of: "Delta line.", with: "Delta line, revised.")
 
+    /// FL-3: closing a tab keeps its undecided changes, and the note opens with them marked where they were.
+    @Test func undecidedChangesSurviveClosingTheTab() async throws {
+        let vault = try Vault(["plan.md": Self.plan])
+        defer { vault.remove() }
+        let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
+        try vault.write("plan.md", Self.agentPlan)
+        try await Self.until { tab.marked.count == 4 }
+        tab.live.keep(tab.marked[0].id)
+        let waiting = tab.marked.map(\.change)
+        #expect(waiting.count == 3)
+        let doc = tab.live.doc
+        tab.window.performClose(nil)
+        try await Self.until { (try? vault.engine.observe(doc)) == nil }
+
+        let reopened = try Tab(vault.url("plan.md"), engine: vault.engine)
+        defer { reopened.close() }
+        try await Self.until { reopened.marked.count == 3 }
+        #expect(reopened.textView.string == Self.agentPlan)
+        #expect(reopened.marked.map(\.change.range) == waiting.map(\.range))
+        #expect(reopened.marked.allSatisfy { $0.change.origin == .external })
+        #expect(reopened.marked.map(\.change.removed) == waiting.map(\.removed))
+        reopened.live.revert(reopened.marked[0].id)
+        #expect(reopened.textView.string == Self.agentPlan.replacingOccurrences(of: "Bravo line, revised.", with: "Bravo line."))
+    }
+
     /// Claude Code rewrites the open file and two closed ones. The open file's four changes land marked with Claude's
     /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and a row's
     /// Revert and the stamp's Keep decide them: the stamp's Keep acts on every change it counts, the file's bytes
@@ -671,8 +696,8 @@ struct JourneyTests {
         #expect(word.starts(with: Data([0x50, 0x4B, 0x03, 0x04])))
         #expect(word.range(of: Data("word/document.xml".utf8)) != nil)
         #expect(vault.listing() == listing)
-        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "epub", "tex", "txt", "png"])
-        #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "EPUB", "LaTeX", "Plain Text", "PNG Image"])
+        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "epub", "tex", "md", "txt", "png"])
+        #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "EPUB", "LaTeX", "Markdown (portable)", "Plain Text", "PNG Image"])
 
         // One File > Export… on ⇧⌘E, starting on PDF, and Print on ⌘P; a written export is what the status bar names.
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)
@@ -684,11 +709,10 @@ struct JourneyTests {
         #expect(Export.lastExport == html)
     }
 
-    // MARK: J9 Daily capture
+    // MARK: J9 Capture
 
-    /// Capture adds a line to the inbox and closes; an empty line only closes. The Dock menu offers Capture, and
-    /// Today's Note only while the daily note is on.
-    @Test func j9CaptureAddsALineAndTheDockMenuOffersIt() throws {
+    /// Capture adds a line to the inbox and closes; an empty line only closes. File > Capture… is its one way in.
+    @Test func j9CaptureAddsALineFromTheFileMenu() throws {
         var added: [String] = []
         let capture = Capture()
         capture.append = { added.append($0) }
@@ -697,31 +721,9 @@ struct JourneyTests {
         #expect(added == ["call the bank"])
         let delegate = try #require(NSApp.delegate as? AppDelegate)
         let dock = try #require(delegate.applicationDockMenu(NSApp))
-        #expect(dock.items.map(\.title).prefix(2) == ["New Note", "Capture\u{2026}"])
+        #expect(dock.items.map(\.title) == ["New Note"])
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)
         #expect(file.items.contains { $0.title == "Open Inbox" } && file.items.contains { $0.title == "Capture\u{2026}" })
-    }
-
-    /// The daily note is off by default; on, it opens once a day as Daily/2026-11-02.md in the notes folder.
-    @Test func j9TheDailyNoteIsOffByDefaultAndOpensOncePerDay() throws {
-        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let vault = try Vault([:])
-        defer { vault.remove() }
-        var parts = DateComponents()
-        (parts.year, parts.month, parts.day, parts.hour) = (2026, 11, 2, 9)
-        let day = try #require(Calendar.current.date(from: parts))
-        #expect(!DailyNote.isOn(defaults: defaults) && !DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        defaults.set("firstLaunch", forKey: DailyNote.key)
-        #expect(DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        let url = try DailyNote.today(in: vault.notes, now: day)
-        #expect(url == vault.url("Daily/2026-11-02.md"))
-        try Data("# Monday\n".utf8).write(to: url)
-        #expect(try DailyNote.today(in: vault.notes, now: day) == url && vault.text("Daily/2026-11-02.md") == "# Monday\n")
-        DailyNote.noteOpened(defaults: defaults, now: day)
-        #expect(!DailyNote.opensAtLaunch(defaults: defaults, now: day))
-        #expect(DailyNote.opensAtLaunch(defaults: defaults, now: day.addingTimeInterval(24 * 60 * 60)))
     }
 
     // MARK: Launch, hooks and tracking

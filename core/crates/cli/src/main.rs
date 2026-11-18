@@ -66,12 +66,12 @@ enum Command {
         /// The entry's text; without it, stdin is read
         text: Vec<String>,
     },
-    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, plain text or PNG
+    /// Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, portable Markdown, plain text or PNG
     #[command(
-        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, plain text or PNG.\n\n\
+        long_about = "Export a markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, portable Markdown, plain text or PNG.\n\n\
                       HTML and DOCX are written here, with images in the file's folder inlined; diagrams and math keep \
                       their source. The other formats need the Dewline app: this command hands the file to it. LaTeX \
-                      also writes a NAME-files folder beside OUT holding its diagrams and images."
+                      and Markdown also write a NAME-files folder beside OUT holding their diagrams and images."
     )]
     Export {
         file: PathBuf,
@@ -216,7 +216,7 @@ fn capture(words: Vec<String>) -> Result<(), String> {
     inbox::append(&path, "cli", &text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// The inbox file every capture appends to: the app's `DewlineInboxPath` setting (Settings > Files), else
+/// The inbox file every capture appends to: the app's `DewlineInboxPath` setting (Settings > General), else
 /// ~/Documents/Dewline/Inbox.md.
 fn inbox_path() -> Result<PathBuf, String> {
     let home = env::home_dir().ok_or("there is no home folder for the inbox")?;

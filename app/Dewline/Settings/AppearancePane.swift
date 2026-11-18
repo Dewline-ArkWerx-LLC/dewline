@@ -2,45 +2,22 @@ import SwiftUI
 
 struct AppearancePane: View {
     @Bindable var store: ThemeStore
-    let library: FontLibrary
-    @Environment(\.colorScheme) private var scheme
-    @State private var installing = false
 
     var body: some View {
-        let dark = scheme == .dark
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 3)
-        let themes: [(String?, [(String, Theme)])] = [
-            (nil, Theme.all.map { ($0.name, $0) }), ("Dev pack", Theme.devPack.map { ($0.name, $0) }),
-        ]
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 4)
         SettingsPage {
-            SettingsSection(
-                title: "Theme", trailing: "\(Theme.all.count) + dev pack",
-                note: "Click to use it in \(dark ? "Dark" : "Light"). Control-click for the other."
-            ) {
+            SettingsSection(title: "Theme", note: "Light windows use one of the first two, dark windows one of the last two.") {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                    ForEach(Theme.all) { ThemeCard(theme: $0, store: store, dark: dark) }
-                }
-                Text("Dev pack")
-                    .font(Station.section)
-                    .foregroundStyle(Station.color(.ink2))
-                    .padding(.top, 22)
-                    .padding(.bottom, 10)
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                    ForEach(Theme.devPack) { ThemeCard(theme: $0, store: store, dark: dark) }
+                    ForEach(Theme.light) { ThemeCard(theme: $0, store: store, dark: false) }
+                    ForEach(Theme.dark) { ThemeCard(theme: $0, store: store, dark: true) }
                 }
             }
             SettingsSection(note: "Match system follows macOS between the light theme and the dark one.") {
                 SettingsRow(label: "Mode") {
                     TextChoice(label: "Mode", selection: $store.appearance, options: [("Light", .light), ("Dark", .dark), ("Match system", .auto)])
                 }
-                SettingsRow(label: "Light theme") {
-                    MenuField("Light theme", selection: $store.lightTheme, sections: themes)
-                }
-                SettingsRow(label: "Dark theme") {
-                    MenuField("Dark theme", selection: $store.darkTheme, sections: themes)
-                }
             }
-            FontSlots(store: store, library: library, installing: $installing)
+            FontSlots(store: store)
             SettingsSection(title: "The page", note: "Line width is in characters at this size.") {
                 SettingsRow(label: "Text size") {
                     KeyStepper(label: "Text size", value: $store.bodySize, range: ThemeStore.bodySizes, step: 1,
@@ -68,14 +45,11 @@ struct AppearancePane: View {
                 store.columnWidth = factory.columnWidth
             }
         }
-        .sheet(isPresented: $installing) {
-            FontLibrarySheet(store: store, library: library)
-        }
     }
 }
 
-/// A theme as a window in miniature, in the current mode, with its name under it. A 1.5 pt signal ring, 2 pt out,
-/// marks the theme the current mode uses; a mono tag says when the other mode uses it.
+/// A theme as a window in miniature, in its own mode, with its name and mode under it. A 1.5 pt signal ring, 2 pt
+/// out, marks the theme its mode uses.
 private struct ThemeCard: View {
     let theme: Theme
     let store: ThemeStore
@@ -84,7 +58,6 @@ private struct ThemeCard: View {
 
     var body: some View {
         let selected = (dark ? store.darkTheme : store.lightTheme) == theme
-        let other = (dark ? store.lightTheme : store.darkTheme) == theme
         let card = RoundedRectangle(cornerRadius: 9, style: .continuous)
         Button {
             if dark { store.darkTheme = theme } else { store.lightTheme = theme }
@@ -104,20 +77,14 @@ private struct ThemeCard: View {
                         .font(selected ? Station.labelActive : Station.label)
                         .foregroundStyle(Station.color(selected ? .ink : .ink2))
                     Spacer(minLength: 4)
-                    if selected || other {
-                        Text(selected ? "current" : dark ? "in light" : "in dark")
-                            .font(Station.mono(11))
-                            .foregroundStyle(Station.color(.ink3))
-                    }
+                    Text(dark ? "dark" : "light")
+                        .font(Station.mono(11))
+                        .foregroundStyle(Station.color(.ink3))
                 }
                 .padding(.horizontal, 3.5)
             }
         }
         .buttonStyle(BareButtonStyle(radius: 12.5))
-        .contextMenu {
-            Button("Use in Light") { store.lightTheme = theme }
-            Button("Use in Dark") { store.darkTheme = theme }
-        }
         .help(theme.summary)
         .accessibilityLabel(theme.name)
         .accessibilityHint(theme.summary)

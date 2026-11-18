@@ -1,15 +1,13 @@
 import AppKit
 
-/// The pane on the window's right, 380 pt by default: one of Preview, Agent and Changes under a segmented header.
-/// Agent and Changes show once their parts of the app register what they draw.
+/// The pane on the window's right, 380 pt by default: one of its tabs under a segmented header. A tab shows once its
+/// part of the app registers what it draws.
 final class RightPane: NSViewController {
     enum Tab: Int, CaseIterable {
-        case preview, agent, changes
+        case changes
 
         var title: String {
             switch self {
-            case .preview: "Preview"
-            case .agent: "Agent"
             case .changes: "Changes"
             }
         }
@@ -18,8 +16,6 @@ final class RightPane: NSViewController {
     static let width: CGFloat = 380
     static let widths: ClosedRange<CGFloat> = 300...560
 
-    /// The agent panel for a window; nil leaves the Agent segment out.
-    static var makeAgent: (@MainActor (NSWindow) -> NSViewController)?
     /// The Changes list for a window; nil leaves the Changes segment out.
     static var makeChanges: (@MainActor (NSWindow) -> NSViewController)?
 
@@ -28,8 +24,7 @@ final class RightPane: NSViewController {
         ((window ?? NSApp.mainWindow)?.windowController as? MainWindowController)?.showPane(tab)
     }
 
-    let preview = PreviewPane()
-    private(set) var tab: Tab = .preview
+    private(set) var tab: Tab = .changes
     /// The segment the user picked, to keep across this window's tabs.
     var picked: (Tab) -> Void = { _ in }
     /// The changes waiting for a decision, shown on the Changes segment when there are any.
@@ -44,8 +39,6 @@ final class RightPane: NSViewController {
     private var tabs: [Tab] {
         Tab.allCases.filter { tab in
             switch tab {
-            case .preview: true
-            case .agent: Self.makeAgent != nil
             case .changes: Self.makeChanges != nil
             }
         }
@@ -99,9 +92,9 @@ final class RightPane: NSViewController {
         picked(tab)
     }
 
-    /// Puts `tab`'s content in the pane; a tab this build has no content for falls back to Preview.
+    /// Puts `tab`'s content in the pane; a tab this build has no content for falls back to the first.
     func select(_ tab: Tab) {
-        let tab = tabs.contains(tab) ? tab : .preview
+        let tab = tabs.contains(tab) ? tab : tabs.first ?? tab
         self.tab = tab
         guard isViewLoaded else { return }
         labelSegments()
@@ -120,8 +113,6 @@ final class RightPane: NSViewController {
     private func controller(for tab: Tab) -> NSViewController? {
         if let built = built[tab] { return built }
         let made: NSViewController? = switch tab {
-        case .preview: preview
-        case .agent: view.window.flatMap { window in Self.makeAgent?(window) }
         case .changes: view.window.flatMap { window in Self.makeChanges?(window) }
         }
         if let made {
@@ -133,7 +124,7 @@ final class RightPane: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // Agent and Changes need the window to build.
+        // Tabs need the window to build.
         if built[tab] == nil { select(tab) }
     }
 }

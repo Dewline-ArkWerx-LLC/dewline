@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Editing · Dewline docs</title>
-<meta name="description" content="What the editor does as you type: live Markdown, Preview, links, lists, find, Vim mode and Settings.">
+<meta name="description" content="What the editor does as you type: live Markdown, links, lists, find, Vim mode and Settings.">
 <meta name="doc-type" content="reference">
 <link rel="canonical" href="https://dewline.arkwerx.com/docs/editing/">
 <meta name="color-scheme" content="light dark">
@@ -105,10 +105,6 @@
       <p>A diagram, a <code>$$</code> formula, an image alone on its line and front matter draw as a picture until the caret moves in. If one fails to draw, its source shows with the error under it.</p>
       <p>Settings &gt; Editor &gt; Heading style offers Standard and Editorial. Editorial sets the first heading as a display title and section heads in small caps.</p>
 
-      <h2 id="preview">Preview beside the text</h2>
-      <p>View &gt; Preview <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>P</kbd></span> opens the finished page in a pane on the right, with every marker hidden. The text on the left switches to Source while the pane is open. The preview scrolls with you and updates when you pause.</p>
-      <p>The same pane holds the <a href="/docs/agents/#chat">Agent</a> panel and the Changes list. Close it with the same key.</p>
-
       <h2 id="source">Source view</h2>
       <p>View &gt; Show Source <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>U</kbd></span> shows every character, in the code font. The caret's line stays where it was on screen.</p>
 
@@ -120,8 +116,8 @@
         <li>A footnote reference jumps to its definition and back. Hover it to read the footnote.</li>
         <li>A tag runs Find in Files for it.</li>
       </ul>
-      <p>A web address alone on its line shows as a card with the page's title and picture. Hover any other web link to see the same preview. The file keeps the plain address either way.</p>
-      <p>Previews ask the site for its title and picture. Turn them off in Settings &gt; Editor &gt; Link previews; <a href="/docs/security/">Security and privacy</a> says what is sent. Go &gt; Back <span class="keys"><kbd>⌘</kbd><kbd>[</kbd></span> and Forward <span class="keys"><kbd>⌘</kbd><kbd>]</kbd></span> retrace your jumps. Other schemes, such as <code>javascript:</code> or <code>file:</code>, do nothing.</p>
+      <p>With link previews on, a web address alone on its line shows as a card with the page's title and picture. Hover any other web link to see the same preview. The file keeps the plain address either way.</p>
+      <p>Previews ask the site for its title and picture, so they are off until you turn on Settings &gt; Editor &gt; Link previews; <a href="/docs/security/">Security and privacy</a> says what is sent. Go &gt; Back <span class="keys"><kbd>⌘</kbd><kbd>[</kbd></span> and Forward <span class="keys"><kbd>⌘</kbd><kbd>]</kbd></span> retrace your jumps. Other schemes, such as <code>javascript:</code> or <code>file:</code>, do nothing.</p>
 
       <h2 id="lists">Lists and tasks</h2>
       <p>In a list, <kbd>↩</kbd> starts the next item, counting on or adding an unchecked box. <kbd>↩</kbd> on an empty item ends the list. <kbd>⇥</kbd> and <span class="keys"><kbd>⇧</kbd><kbd>⇥</kbd></span> indent and outdent every selected item, as one undo step. Click a task box to check it.</p>
@@ -136,7 +132,7 @@
       <p>View &gt; Zoom In <span class="keys"><kbd>⌘</kbd><kbd>+</kbd></span>, Zoom Out <span class="keys"><kbd>⌘</kbd><kbd>-</kbd></span> and Actual Size <span class="keys"><kbd>⌘</kbd><kbd>0</kbd></span> change Settings &gt; Appearance &gt; Text size, so every window follows and the size stays. Body Text has no key: press a heading's key again to turn it back.</p>
 
       <h2 id="images">Paste images</h2>
-      <p>Paste or drop an image and Dewline saves it as <code>image-&lt;date&gt;-&lt;n&gt;</code> beside the note, then links it at the caret. A JPEG, GIF, WebP or PNG keeps its bytes and extension; anything else, such as a screenshot's TIFF, is saved as PNG. Settings &gt; Files can put images in an <code>attachments</code> folder instead.</p>
+      <p>Paste or drop an image and Dewline saves it as <code>image-&lt;date&gt;-&lt;n&gt;</code> beside the note, then links it at the caret. A JPEG, GIF, WebP or PNG keeps its bytes and extension; anything else, such as a screenshot's TIFF, is saved as PNG. Settings &gt; General can put images in an <code>attachments</code> folder instead.</p>
 
       <h2 id="copy-paste">Copy and paste</h2>
       <p>Edit &gt; Copy as Markdown copies the selection, or the whole note when nothing is selected, as Markdown. Copy as HTML copies it as HTML, which rich text apps paste formatted and text editors paste as source. Pasting from a web page, Mail or a word processor turns its headings, emphasis, links, lists, quotes, code and tables into Markdown. Text that is already Markdown, and text from a code editor, pastes as it is.</p>
@@ -198,12 +194,10 @@
         <table>
           <thead><tr><th scope="col">Pane</th><th scope="col">What it sets</th></tr></thead>
           <tbody>
-            <tr><td>General</td><td>When Dewline opens, Live or Source for new windows, updates</td></tr>
+            <tr><td>General</td><td>When Dewline opens, Live or Source for new windows, ignored files, where pasted images go, the inbox, updates</td></tr>
             <tr><td>Editor</td><td>Vim mode, heading style, motion, Tab key, spelling, Smart Punctuation, link previews</td></tr>
             <tr><td>Appearance</td><td><a href="/docs/themes-and-fonts/">Themes, fonts</a>, text size, line height, line width</td></tr>
-            <tr><td>Files</td><td>Ignored files, where pasted images go, the inbox, daily note, capture shortcut</td></tr>
-            <tr><td>Agents</td><td>Agents for the Agent panel, and <a href="/docs/agents/#install">agent hooks</a></td></tr>
-            <tr><td>Sharing</td><td>Your name, where shared copies go</td></tr>
+            <tr><td>Agents</td><td><a href="/docs/agents/#install">Agent hooks</a></td></tr>
           </tbody>
         </table>
       </div>

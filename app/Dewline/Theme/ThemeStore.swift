@@ -16,7 +16,6 @@ final class ThemeStore {
     }
 
     static let shared: ThemeStore = {
-        FontLibrary.waitForLaunchRegistration()
         let store = ThemeStore(defaults: .standard)
         store.applyAppearance()
         return store
@@ -69,8 +68,8 @@ final class ThemeStore {
             (defaults.object(forKey: "Dewline" + key) as? Double).map { min(max($0, range.lowerBound), range.upperBound) }
         }
         appearance = string("Appearance").flatMap(Appearance.init) ?? .auto
-        lightTheme = string("LightTheme").flatMap(Theme.named) ?? .tidewater
-        darkTheme = string("DarkTheme").flatMap(Theme.named) ?? .nightwatch
+        lightTheme = string("LightTheme").flatMap { Theme.named($0, dark: false) } ?? .tidewater
+        darkTheme = string("DarkTheme").flatMap { Theme.named($0, dark: true) } ?? .nightwatch
         bodyFace = face("BodyFace") ?? Faces.body
         headingFace = face("HeadingFace") ?? Faces.heading
         codeFace = face("CodeFace") ?? Faces.code
@@ -140,7 +139,7 @@ final class ThemeStore {
         case .codex: .writerCodex
         case .git: .gitModified
         case .you, .otherMac, .collaborator: .ink2
-        case .cursor, .copilot, .gemini, .unknown, .agent, .demo: .writerApp
+        case .cursor, .copilot, .gemini, .unknown, .demo: .writerApp
         }
         return color(token)
     }
@@ -185,24 +184,6 @@ final class ThemeStore {
         let sample = "abcdefghijklmnopqrstuvwxyz "
         let width = NSAttributedString(string: sample, attributes: [.font: bodyFont]).size().width
         return (width / CGFloat(sample.count) * columnWidth).rounded()
-    }
-
-    /// Puts every slot that uses `family` back on its default, before the family is removed; returns the slots' names.
-    func release(_ family: String) -> [String] {
-        var slots: [String] = []
-        if bodyFace == family {
-            bodyFace = Faces.body
-            slots.append("Body")
-        }
-        if headingFace == family {
-            headingFace = Faces.heading
-            slots.append("Headings")
-        }
-        if codeFace == family {
-            codeFace = Faces.code
-            slots.append("Code")
-        }
-        return slots
     }
 
     func codeFont(size: CGFloat) -> NSFont {
@@ -279,27 +260,6 @@ extension NSAppearance {
         let names: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         return [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua].contains(bestMatch(from: names))
     }
-}
-
-/// Three faces chosen together in the Fonts pane (synthesis 2.8); one click sets all three slots, installing any
-/// catalog family they need first.
-struct Pairing: Identifiable {
-    let name: String
-    let body: String
-    let heading: String
-    let code: String
-
-    var id: String { name }
-    /// Each face once, headings first.
-    var faces: [String] { [heading, body, code].reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
-    /// The catalog families among them that aren't installed yet.
-    var missing: [FontCatalog.Family] { faces.filter { !Faces.exists($0) }.compactMap(FontCatalog.family) }
-
-    static let all = [
-        Pairing(name: "Editorial", body: "Newsreader", heading: "Bricolage Grotesque", code: "JetBrains Mono"),
-        Pairing(name: "Manuscript", body: "Courier Prime", heading: "Courier Prime", code: "Courier Prime"),
-        Pairing(name: "Hyperlegible", body: "Atkinson Hyperlegible Next", heading: "Atkinson Hyperlegible Next", code: "Atkinson Hyperlegible Mono"),
-    ]
 }
 
 /// Faces by family name, where New York, SF Pro, SF Pro Rounded and SF Mono name the system designs.

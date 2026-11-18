@@ -104,21 +104,16 @@
       <p>You never sign up or sign in. The code has no analytics, no usage reporting and no crash reporter. The app's logs go to the macOS unified log on your Mac and nowhere else. Sparkle's system profile is off, so an update check sends no hardware details.</p>
 
       <h2 id="network">What goes over the network</h2>
-      <p>The app makes four kinds of request. Nothing else in the code opens a connection.</p>
+      <p>The app makes three kinds of request. Nothing else in the code opens a connection.</p>
       <dl>
         <dt>Updates</dt>
         <dd>Once a day, once the first-run line about updates has shown, and whenever you choose Check Now. The app asks <code>dewline.arkwerx.com/appcast.xml</code> for the feed and downloads an update from GitHub. Each request carries the user agent <code>Dewline</code>. Turn off the daily check in Settings &gt; General &gt; Updates. Debug and unsigned builds never contact the feed.</dd>
-        <dt>Fonts</dt>
-        <dd>Only when you install a font from the catalog in Settings &gt; Fonts. Each file comes from <code>raw.githubusercontent.com</code>, google/fonts at one pinned commit, in an ephemeral session with no cookies and no cache. The file is pinned by URL, byte size and SHA-256, and a download that does not match is refused before it touches the disk.</dd>
         <dt>Collaboration</dt>
         <dd>Only while you share a file or join one. Edits and cursors go to the other Mac directly, or through n0's relay, <code>use1-1.relay.n0.iroh.link</code>, when no direct path opens. The relay sees node ids, addresses and timing. The content is encrypted end to end.</dd>
         <dt>Link previews</dt>
-        <dd>When a note shows a web link, Dewline asks that site for the page's title, icon and picture, as Messages does. It asks only for links on screen, only for http and https addresses, and never for addresses on your own network. The site sees your IP address and a request like a browser's. Previews are kept for 7 days in <code>~/Library/Caches/dev.arkwerx.dewline/LinkPreviews</code>. Turn them off in Settings &gt; Editor &gt; Link previews, which also deletes the saved ones.</dd>
+        <dd>Only while Settings &gt; Editor &gt; Link previews is on, which it is not by default. When a note shows a web link, Dewline asks that site for the page's title, icon and picture, as Messages does. It asks only for links on screen, only for http and https addresses, and never for addresses on your own network. The site sees your IP address and a request like a browser's. Previews are kept for 7 days in <code>~/Library/Caches/dev.arkwerx.dewline/LinkPreviews</code>. Turning previews off deletes the saved ones.</dd>
       </dl>
       <p>Images in a note load from relative paths on disk only; an image given as a URL is never fetched. Links you click open in your browser.</p>
-
-      <h2 id="agent-panel">The agent panel</h2>
-      <p>The panel starts the agent program you chose, on your Mac. Dewline sends it what you type and the note you attach, and lets it read and write files only inside the open folder. Where the agent sends your text is up to that agent.</p>
 
       <h2 id="on-disk">What stays on disk</h2>
       <dl>

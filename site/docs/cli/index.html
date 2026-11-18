@@ -117,7 +117,7 @@ dewline 0.1.0</code></pre>
             <tr><td><a href="#notify"><code>notify</code></a></td><td>Tells Dewline which file an agent's tool is changing. Agent hooks run it.</td></tr>
             <tr><td><a href="#changes"><code>changes</code></a></td><td>Lists the agent changes you kept and reverted, oldest first.</td></tr>
             <tr><td><a href="#capture"><code>capture</code></a></td><td>Adds a dated entry to your inbox note.</td></tr>
-            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, plain text or PNG.</td></tr>
+            <tr><td><a href="#export"><code>export</code></a></td><td>Writes a Markdown file as PDF, DOCX, HTML, RTF, ODT, EPUB, LaTeX, portable Markdown, plain text or PNG.</td></tr>
             <tr><td><a href="#mcp"><code>mcp</code></a></td><td>Serves a folder's notes to an agent over MCP on stdio.</td></tr>
             <tr><td><a href="#doctor"><code>doctor</code></a></td><td>Checks the app's version, the agent hooks and the companion tools.</td></tr>
           </tbody>
@@ -206,7 +206,7 @@ set -gx EDITOR "dewline open --wait"</code></pre>
       <div class="code" data-lang="Usage">
 <pre tabindex="0"><code>dewline capture [TEXT]...</code></pre>
       </div>
-      <p>Adds one dated entry to the end of your inbox note. The words become the entry; with no words, the command reads stdin. The inbox is <code>~/Documents/Dewline/Inbox.md</code> unless you pick another file in Settings &gt; Files &gt; Inbox. The command makes the file and its folders when they are missing.</p>
+      <p>Adds one dated entry to the end of your inbox note. The words become the entry; with no words, the command reads stdin. The inbox is <code>~/Documents/Dewline/Inbox.md</code> unless you pick another file in Settings &gt; General &gt; Inbox. The command makes the file and its folders when they are missing.</p>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline capture Call the notary about the DMG
 <span class="p">$ </span>echo "- [ ] Check the appcast before tagging" | dewline capture
@@ -225,16 +225,16 @@ dewline: /Users/you/Documents/Dewline/Inbox.md: there is nothing to capture</cod
 
       <h2 id="export"><code>dewline export</code></h2>
       <div class="code" data-lang="Usage">
-<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;pdf|docx|html|rtf|odt|epub|tex|txt|png&gt; [-o &lt;OUT&gt;]</code></pre>
+<pre tabindex="0"><code>dewline export &lt;FILE&gt; --to &lt;pdf|docx|html|rtf|odt|epub|tex|md|txt|png&gt; [-o &lt;OUT&gt;]</code></pre>
       </div>
       <dl>
-        <dt><code>--to &lt;pdf|docx|html|rtf|odt|epub|tex|txt|png&gt;</code></dt>
+        <dt><code>--to &lt;pdf|docx|html|rtf|odt|epub|tex|md|txt|png&gt;</code></dt>
         <dd>The format, named by its extension. Required.</dd>
         <dt><code>-o &lt;OUT&gt;</code></dt>
         <dd>Where the export goes. By default it goes beside <code>FILE</code> with the format's extension. The folder must exist.</dd>
       </dl>
       <p>The command writes HTML and DOCX itself, with no window. <a href="/docs/export/#command-line">Export</a> says how that output differs from the app's.</p>
-      <p>Every other format goes to the app over the control socket, starting the app if it isn't running, and the command returns once the file is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in the format's extension. The app writes that one file and nothing else, except that <code>--to tex</code> also writes a folder beside it named after <code>OUT</code>, such as <code>reading-files</code>, holding the diagrams and images.</p>
+      <p>Every other format goes to the app over the control socket, starting the app if it isn't running, and the command returns once the file is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in the format's extension. The app writes that one file and nothing else, except that <code>--to tex</code> and <code>--to md</code> also write a folder beside it named after <code>OUT</code>, such as <code>reading-files</code>, holding the diagrams and images.</p>
       <aside class="callout caution">
         <p class="callout-title">PDF from the command line fails in 0.1.0</p>
         <p>In 0.1.0 the command hands a PDF export over through a link that names the wrong field, so no PDF is written and the command still exits 0. Export PDF from the app instead.</p>
@@ -253,6 +253,7 @@ launch-plan.md
 <pre tabindex="0"><code><span class="p">$ </span>dewline export reading.md --to html -o reading.md
 dewline: /Users/you/Notes/reading.md: the export would replace its own source</code></pre>
       </div>
+      <p>So <code>--to md</code> needs <code>-o</code>, as in <code>dewline export reading.md --to md -o share/reading.md</code>.</p>
       <p><a href="/docs/export/#what-exports">Export</a> lists what each format keeps.</p>
 
       <h2 id="mcp"><code>dewline mcp</code></h2>
@@ -317,7 +318,7 @@ dewline: 1 broken link</code></pre>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline export reading.md --to pages
 error: invalid value 'pages' for '--to &lt;TO&gt;'
-  [possible values: pdf, docx, html, rtf, odt, epub, tex, txt, png]
+  [possible values: pdf, docx, html, rtf, odt, epub, tex, md, txt, png]
 
 For more information, try '--help'.
 <span class="p">$ </span>echo $?
@@ -336,13 +337,13 @@ For more information, try '--help'.
           </tbody>
         </table>
       </div>
-      <p>The inbox location is not an environment variable. <code>capture</code> and <code>mcp</code> read Settings &gt; Files &gt; Inbox from the <code>DewlineInboxPath</code> default in <code>dev.arkwerx.dewline</code>.</p>
+      <p>The inbox location is not an environment variable. <code>capture</code> and <code>mcp</code> read Settings &gt; General &gt; Inbox from the <code>DewlineInboxPath</code> default in <code>dev.arkwerx.dewline</code>.</p>
 
       <h2 id="files">Files</h2>
       <p>The app's own folder is <code>~/Library/Application Support/dev.arkwerx.dewline</code>, shortened here to <code>…/dev.arkwerx.dewline</code>.</p>
       <dl>
         <dt><code>~/Documents/Dewline/Inbox.md</code></dt>
-        <dd><code>capture</code> and the MCP <code>append_to_inbox</code> tool append to it, unless Settings &gt; Files &gt; Inbox names another file.</dd>
+        <dd><code>capture</code> and the MCP <code>append_to_inbox</code> tool append to it, unless Settings &gt; General &gt; Inbox names another file.</dd>
         <dt><code>…/dev.arkwerx.dewline/snapshots/decisions.jsonl</code></dt>
         <dd>The app appends one line per Keep or Revert of an agent's change, readable only by you. <code>changes</code> and the MCP <code>decisions</code> tool read it.</dd>
         <dt><code>…/dev.arkwerx.dewline/run/control.sock</code></dt>

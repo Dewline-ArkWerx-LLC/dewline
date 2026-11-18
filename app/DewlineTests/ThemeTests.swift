@@ -28,7 +28,7 @@ struct ThemeTests {
     }
 
     @Test func everyThemeDefinesEveryToken() {
-        #expect(Theme.all.map(\.name) == ["Tidewater", "Aurora", "Dawnline", "Dusk", "Nightwatch", "Carbon"])
+        #expect(Theme.all.map(\.name) == ["Tidewater", "Onionskin", "Nightwatch", "Carbon"])
         for theme in Theme.all {
             for (appearance, tokens) in [("light", theme.light), ("dark", theme.dark)] {
                 for token in Token.required {
@@ -57,8 +57,8 @@ struct ThemeTests {
         }
     }
 
-    @Test func theDefaultsReadAtWCAGLevels() {
-        for theme in [Theme.tidewater, .nightwatch] {
+    @Test func everyThemeReadsAtWCAGLevels() {
+        for theme in Theme.all {
             for (dark, tokens) in [(false, theme.light), (true, theme.dark)] {
                 let label = "\(theme.name) \(dark ? "dark" : "light")"
                 for ground in [Token.paper, .chrome] {
@@ -121,14 +121,51 @@ struct ThemeTests {
         #expect(store.lightTheme == .tidewater && store.darkTheme == .nightwatch && store.appearance == .auto)
         let listener = Listener()
         NotificationCenter.default.addObserver(listener, selector: #selector(Listener.changed), name: ThemeStore.didChange, object: store)
-        store.lightTheme = .dawnline
+        store.lightTheme = .onionskin
         store.darkTheme = .carbon
         store.bodySize = 40
         store.columnWidth = 76
         #expect(listener.posts == 4)
         let reloaded = ThemeStore(defaults: defaults)
-        #expect(reloaded.lightTheme == .dawnline && reloaded.darkTheme == .carbon)
+        #expect(reloaded.lightTheme == .onionskin && reloaded.darkTheme == .carbon)
         #expect(reloaded.bodySize == ThemeStore.bodySizes.upperBound && reloaded.columnWidth == 76)
+    }
+
+    /// A theme saved before there were four reads as the nearest one, and a theme saved in the other slot as its partner.
+    @MainActor @Test func retiredThemesMapToTheFour() throws {
+        let suite = "dev.arkwerx.dewline.tests.themes.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for (light, dark, expected) in [
+            ("Aurora", "Solarized", (Theme.tidewater, Theme.nightwatch)), ("Gruvbox", "Gruvbox", (.tidewater, .carbon)),
+            ("Dawnline", "Tokyo Night", (.onionskin, .carbon)), ("Nightwatch", "Onionskin", (.tidewater, .carbon)),
+            ("Nothing", "Nothing", (.tidewater, .nightwatch)),
+        ] {
+            defaults.set(light, forKey: "DewlineLightTheme")
+            defaults.set(dark, forKey: "DewlineDarkTheme")
+            let store = ThemeStore(defaults: defaults)
+            #expect(store.lightTheme == expected.0 && store.darkTheme == expected.1, "\(light), \(dark)")
+        }
+    }
+
+    @MainActor @Test func savedFacesKeepOnlyFamiliesThatExist() throws {
+        let suite = "dev.arkwerx.dewline.tests.themes.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("JetBrains Mono", forKey: "DewlineBodyFace")
+        defaults.set("No Such Family", forKey: "DewlineHeadingFace")
+        let store = ThemeStore(defaults: defaults)
+        #expect(store.bodyFace == "JetBrains Mono" && store.headingFace == Faces.heading)
+    }
+
+    @MainActor @Test func headingsDefaultToBricolageAndKeepAChosenFace() throws {
+        let suite = "dev.arkwerx.dewline.tests.themes.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(ThemeStore(defaults: defaults).heading(1).font.familyName == "Bricolage Grotesque")
+        defaults.set("SF Pro", forKey: "DewlineHeadingFace")
+        let heading = ThemeStore(defaults: defaults).heading(2).font
+        #expect(heading.familyName == NSFont.systemFont(ofSize: heading.pointSize).familyName)
     }
 }
 

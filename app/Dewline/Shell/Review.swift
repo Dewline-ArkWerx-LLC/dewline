@@ -1,18 +1,9 @@
 import AppKit
 import MdCore
 
-/// The Changes tab and Follow Changes: the marked changes in a window's open notes, and the notes changed while closed.
+/// The Changes tab: the marked changes in a window's open notes, and the notes changed while closed.
 @MainActor
 enum Review {
-    private static let followKey = "FollowChanges"
-    private static var following: (live: LiveFile, change: UInt64)?
-
-    /// Follow Changes: while you are idle, each new marked landing scrolls into view.
-    static var follows: Bool {
-        get { UserDefaults.standard.bool(forKey: followKey) }
-        set { UserDefaults.standard.set(newValue, forKey: followKey) }
-    }
-
     /// The window's tabs' files.
     static func files(in window: NSWindow?) -> [LiveFile] {
         documents(in: window).compactMap(\.live)
@@ -43,19 +34,9 @@ enum Review {
         return (counts.reduce(0, +), counts.count { $0 > 0 })
     }
 
-    /// A marked change landed; Follow Changes scrolls to it once you have not typed for 5 s.
+    /// A marked change landed: its session's latest time.
     static func landed(_ live: LiveFile, _ change: UInt64) {
         if let origin = live.changes[change]?.origin { times[key(origin)] = Date() }
-        guard follows, ContinuousClock.now - LiveFile.lastEdit >= .seconds(5) else { return }
-        // A landing's relabels arrive together; the last one is followed.
-        let waiting = following != nil
-        following = (live, change)
-        guard !waiting else { return }
-        DispatchQueue.main.async {
-            guard let (live, change) = following else { return }
-            following = nil
-            live.reveal(change, caret: false)
-        }
     }
 
     /// Next Change and Previous Change: reveals the marked change after or before the caret, then the first or last
@@ -110,10 +91,11 @@ enum Review {
     }
 }
 
-/// A note an outside writer changed while it was closed.
+/// A note an outside writer changed while it was closed, in `count` places.
 struct ClosedNote: Equatable {
     let url: URL
     let origin: ChangeEngine.Origin
+    let count: Int
     let time: Date
 }
 
@@ -443,20 +425,5 @@ final class ChangeRow: NSTableCellView {
 
     override func mouseExited(with event: NSEvent) {
         hovering = false
-    }
-}
-
-/// View > Follow Changes: while you are idle, each new marked change scrolls into view.
-@MainActor
-final class FollowChanges: NSObject, NSMenuItemValidation {
-    static let shared = FollowChanges()
-
-    @objc func toggleFollow(_ sender: Any?) {
-        Review.follows.toggle()
-    }
-
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        menuItem.state = Review.follows ? .on : .off
-        return true
     }
 }

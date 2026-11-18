@@ -20,6 +20,7 @@ mod markdown;
 mod notelinks;
 mod save;
 mod search;
+#[cfg(feature = "collab")]
 mod sync;
 mod system;
 
@@ -441,6 +442,20 @@ pub fn export_latex(
         &name,
         folder.as_deref().map(std::path::Path::new),
         &diagram,
+    ))
+}
+
+/// `text`, a note in `folder`, as portable Markdown named `name`, with the images it copies beside it.
+#[uniffi::export]
+pub fn export_portable_markdown(
+    text: String,
+    name: String,
+    folder: Option<String>,
+) -> TextWithFiles {
+    TextWithFiles::new(export::portable::portable(
+        &text,
+        &name,
+        folder.as_deref().map(std::path::Path::new),
     ))
 }
 

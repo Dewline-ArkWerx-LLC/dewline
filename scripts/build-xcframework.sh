@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds Packages/MdCore/DewlineFFI.xcframework and the Swift bindings for it. The engine is a dynamic framework, so
 # the app and its Quick Look preview share one copy from Dewline.app/Contents/Frameworks.
-# Usage: scripts/build-xcframework.sh [--universal]
+# Usage: [COLLAB=1] scripts/build-xcframework.sh [--universal]
+# COLLAB=1 builds in live collaboration; the app then builds with SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) COLLAB'.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,7 +20,7 @@ esac
 cd "$root/core"
 libs=()
 for target in "${targets[@]}"; do
-  cargo build --release --locked -p dewline-ffi --lib --target "$target"
+  cargo build --release --locked -p dewline-ffi --lib --target "$target" ${COLLAB:+--features=collab}
   libs+=("$CARGO_TARGET_DIR/$target/release/libdewline_ffi.dylib")
 done
 

@@ -26,8 +26,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     let statusBar = StatusBar()
     let pane = RightPane()
     private let paneItem: NSSplitViewItem
-    /// Whether the editor showed its source before Preview switched it there.
-    private var sourceBeforePreview: Bool?
     /// The right pane collapsed the sidebar to make room, so closing the pane brings it back.
     private var paneHidSidebar = false
     private(set) var textView: EditorTextView?
@@ -119,7 +117,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         sidebar.jump = { [weak self] heading in self?.jump(to: heading) }
         sidebar.reveal = { [weak self] url, match, newTab in self?.reveal(match, in: url, newTab: newTab) }
         pane.picked = { [weak self] tab in self?.tabs.tabs.forEach { $0.showPane(tab) } }
+        #if COLLAB
         NotificationCenter.default.addObserver(self, selector: #selector(updatePresence), name: Collaboration.changed, object: nil)
+        #endif
         NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: LiveFile.changesDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
         Self.all.insert(self)
@@ -237,6 +237,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if document == nil, pageContent != nil, folder == nil { window.title = "Dewline" }
     }
 
+    #if COLLAB
     /// The people editing the note with you, which File > Share counts.
     private var peers: Int {
         (document as? NSDocument).flatMap { Collaboration.of($0)?.share.peers.count } ?? 0
@@ -258,6 +259,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             .init(title: "Deny") { _ in collaboration.share.deny(peer.id) },
         ]))
     }
+    #endif
 
     @objc private func changesChanged() {
         updateState()
@@ -407,12 +409,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(updateOutline), name: BlockMap.didParse, object: textView.styler.map)
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         self.textView = textView
-        if !paneItem.isCollapsed, pane.tab == .preview {
-            sourceBeforePreview = textView.styler.showsSource
-            if !textView.styler.showsSource { textView.toggleSource(nil) }
-            pane.preview.show(textView)
-        }
+        #if COLLAB
         updatePresence()
+        #endif
         changesChanged()
         if let url = document.fileURL { ReviewInbox.noteOpened(url) }
         sidebar.show(document.fileURL, headings: outline(of: textView.textStorage!.mutableString, in: textView.styler.map))
@@ -589,7 +588,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         case #selector(findInFiles(_:)): folder != nil
         case #selector(showNextTab(_:)), #selector(showPreviousTab(_:)): tabs.tabs.count > 1
         case #selector(reopenClosedTab(_:)): !Self.closed.isEmpty
+        #if COLLAB
         case #selector(shareDocument(_:)), #selector(shareNote(_:)): (document as? NSDocument)?.fileURL != nil
+        #endif
         default: true
         }
     }
@@ -597,10 +598,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let open = !paneItem.isCollapsed
         switch menuItem.action {
-        case #selector(togglePreview(_:)): menuItem.state = open && pane.tab == .preview ? .on : .off
-        case #selector(toggleAgent(_:)): menuItem.state = open && pane.tab == .agent ? .on : .off
         case #selector(toggleChanges(_:)): menuItem.state = open && pane.tab == .changes ? .on : .off
+        #if COLLAB
         case #selector(shareNote(_:)): menuItem.title = peers > 0 ? "Share\u{2026} (\(peers) editing)" : "Share\u{2026}"
+        #endif
         default: break
         }
         return validates(menuItem.action)
@@ -611,14 +612,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     // MARK: Right pane
-
-    @objc func togglePreview(_ sender: Any?) {
-        togglePane(.preview)
-    }
-
-    @objc func toggleAgent(_ sender: Any?) {
-        togglePane(.agent)
-    }
 
     @objc func toggleChanges(_ sender: Any?) {
         togglePane(.changes)
@@ -647,7 +640,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             paneItem.isCollapsed = false
             split.splitView.setPosition(split.splitView.bounds.width - RightPane.width, ofDividerAt: 1)
         }
-        previewShown(pane.tab == .preview)
     }
 
     func hidePane() {
@@ -656,7 +648,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             paneHidSidebar = false
             split.splitViewItems[0].isCollapsed = false
         }
-        previewShown(false)
     }
 
     /// Writes what the window shares from this tab, the one going out.
@@ -704,21 +695,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         pane.select(other.pane.tab)
         if paneItem.isCollapsed { paneItem.isCollapsed = false }
         split.splitView.setPosition(split.splitView.bounds.width - other.pane.view.frame.width, ofDividerAt: 1)
-        previewShown(pane.tab == .preview)
-    }
-
-    /// While Preview shows, the editor shows the source; closing it puts back the mode the editor had.
-    private func previewShown(_ shown: Bool) {
-        guard let textView else { return }
-        if shown, sourceBeforePreview == nil {
-            sourceBeforePreview = textView.styler.showsSource
-            if !textView.styler.showsSource { textView.toggleSource(nil) }
-            pane.preview.show(textView)
-        } else if !shown, let was = sourceBeforePreview {
-            sourceBeforePreview = nil
-            if textView.styler.showsSource != was { textView.toggleSource(nil) }
-            pane.preview.show(nil)
-        }
     }
 
     // MARK: Resume
@@ -826,13 +802,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
-    /// Lists the headings 300 ms after typing stops, or once a whole parse lands. The preview takes the text, and a
-    /// result shown until the next keystroke goes.
+    /// Lists the headings 300 ms after typing stops, or once a whole parse lands. A result shown until the next keystroke
+    /// goes.
     @objc private func textChanged() {
         countWords()
         statusBar.typed()
         if let event = NSApp.currentEvent, event.type == .keyDown, !event.modifierFlags.contains(.command) { toolbar.typed() }
-        if !paneItem.isCollapsed, pane.tab == .preview { pane.preview.textChanged() }
         outlineUpdate?.cancel()
         outlineUpdate = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
@@ -876,9 +851,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         sidebar.updateOutline(outline(of: textView.textStorage!.mutableString, in: textView.styler.map))
     }
 
-    /// The preview follows the page at once; the outline marks the section at the top 160 ms after scrolling stops.
+    /// The outline marks the section at the top 160 ms after scrolling stops.
     @objc private func scrolled() {
-        if !paneItem.isCollapsed, pane.tab == .preview { pane.preview.follow() }
         sectionUpdate?.cancel()
         sectionUpdate = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(160))
@@ -942,6 +916,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     }
 
+    #if COLLAB
     /// Shares the note live (D13): a popover at the window's top trailing corner, where nothing is shared until Copy
     /// Invite Link.
     @objc func shareDocument(_ sender: Any?) {
@@ -957,6 +932,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc func shareNote(_ sender: Any?) {
         shareDocument(sender)
     }
+    #endif
 }
 
 /// What agents load for the note's folder, under Activity: each agent with its total, then its files.

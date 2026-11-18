@@ -5,14 +5,15 @@ import UniformTypeIdentifiers
 import WebKit
 
 /// A document as a standalone HTML page, a paged PDF, an EPUB book or one tall PNG in the current theme, or as a Word,
-/// rich text, OpenDocument, LaTeX or plain text file: the PDF, book and PNG in the light palette, as paper is, and the
-/// HTML in both, switched by the reader's appearance. LaTeX writes its diagrams and images into a folder beside it. The source file is never read
+/// rich text, OpenDocument, LaTeX, portable Markdown or plain text file: the PDF, book and PNG in the light palette, as
+/// paper is, and the HTML in both, switched by the reader's appearance. LaTeX and Markdown write their diagrams and
+/// images into a folder beside them. The source file is never read
 /// or written: the page comes from the text passed in, and images inline from the document's folder.
 @MainActor
 enum Export {
     enum Format: Int, CaseIterable {
         /// The raw values are stored in the defaults; the order is the Format menu's.
-        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, epub = 7, latex = 8, text = 3, png = 6
+        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, epub = 7, latex = 8, markdown = 9, text = 3, png = 6
 
         var fileExtension: String {
             switch self {
@@ -23,6 +24,7 @@ enum Export {
             case .odt: "odt"
             case .epub: "epub"
             case .latex: "tex"
+            case .markdown: "md"
             case .text: "txt"
             case .png: "png"
             }
@@ -41,6 +43,7 @@ enum Export {
             case .odt: "OpenDocument"
             case .epub: "EPUB"
             case .latex: "LaTeX"
+            case .markdown: "Markdown (portable)"
             case .text: "Plain Text"
             case .png: "PNG Image"
             }
@@ -94,6 +97,10 @@ enum Export {
             let article = exportLaTeX(text, name: url.deletingPathExtension().lastPathComponent, folder: folder, colors: Palette(.aqua).colors)
             try write(article.files, beside: url)
             data = Data(article.tex.utf8)
+        case .markdown:
+            let copy = exportPortableMarkdown(text, name: url.deletingPathExtension().lastPathComponent, folder: folder)
+            try write(copy.files, beside: url)
+            data = Data(copy.text.utf8)
         case .html, .pdf, .png:
             let light = Palette(.aqua)
             let dark = format == .html ? Palette(.darkAqua) : nil
@@ -240,6 +247,9 @@ enum Export {
             UserDefaults.standard.set(format.rawValue, forKey: formatKey)
             Task { @MainActor in
                 do {
+                    if let source = document.fileURL, url.resolvingSymlinksInPath() == source.resolvingSymlinksInPath() {
+                        throw replacesSource
+                    }
                     try await write(text, title: title, as: format, to: url, folder: folder)
                     exported(url)
                 } catch {
@@ -248,6 +258,8 @@ enum Export {
             }
         }
     }
+
+    static let replacesSource = Failure(errorDescription: "The export would replace the note itself. Choose another name.")
 
     /// An export finished: a notice says "Exported “Launch plan.pdf”" with Show in Finder.
     static func exported(_ url: URL) {

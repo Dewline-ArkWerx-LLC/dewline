@@ -1,3 +1,4 @@
+#if COLLAB
 import AppKit
 import MdCore
 import Testing
@@ -100,3 +101,4 @@ struct CollaborationTests {
         }
     }
 }
+#endif

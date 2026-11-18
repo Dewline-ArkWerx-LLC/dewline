@@ -52,8 +52,10 @@ private final class SettingsTabs: NSTabViewController {
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general = "General", editor = "Editor", appearance = "Appearance", files = "Files", agents = "Agents"
+    case general = "General", editor = "Editor", appearance = "Appearance", agents = "Agents"
+    #if COLLAB
     case sharing = "Sharing"
+    #endif
 
     var id: Self { self }
 
@@ -62,9 +64,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .editor: "character.cursor.ibeam"
         case .appearance: "paintpalette"
-        case .files: "folder"
         case .agents: "terminal"
+        #if COLLAB
         case .sharing: "person.2"
+        #endif
         }
     }
 }
@@ -83,11 +86,12 @@ private struct SettingsPaneView: View {
         let store = ThemeStore.shared
         switch pane {
         case .general: GeneralPane(preferences: .shared, updates: .shared)
-        case .appearance: AppearancePane(store: store, library: .shared)
+        case .appearance: AppearancePane(store: store)
         case .editor: EditorPane(store: store)
-        case .files: FilesPane(preferences: .shared)
         case .agents: AgentsPane(store: store)
+        #if COLLAB
         case .sharing: CollaborationPane(preferences: .shared, store: store)
+        #endif
         }
     }
 }

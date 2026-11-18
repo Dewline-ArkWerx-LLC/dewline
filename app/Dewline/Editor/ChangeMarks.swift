@@ -501,7 +501,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         guard let tip = tips.first(where: { $0.rect.contains(point) }), let change = changes[tip.change] else { return "" }
         let time = (landed[tip.change] ?? .now).formatted(date: .omitted, time: .shortened)
-        return change.conflict ? "\(MarkWriter(change.origin).name) \u{00B7} two versions" : "\(MarkWriter(change.origin).name) \u{00B7} \(time)"
+        if change.conflict { return "\(MarkWriter(change.origin).name) \u{00B7} two versions" }
+        return "\(MarkWriter(change.origin).name) \u{00B7} \(time)" + (change.origin == .external && change.shell ? " \u{00B7} \(ChangeStamp.duringShell)" : "")
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -585,7 +586,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             return stamp
         }()
         let count = group(of: id).count
-        stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: change.origin == .external)
+        let external = change.origin == .external
+        stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: external, shell: external && change.shell)
         if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
             setReach(0)

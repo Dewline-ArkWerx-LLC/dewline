@@ -16,6 +16,8 @@ final class LiveFile {
         var removed = ""
         /// A conflict's other version.
         var theirs = ""
+        /// Landed unnamed while Claude Code ran a shell command.
+        var shell = false
     }
 
     let engine: ChangeEngine
@@ -190,14 +192,19 @@ final class LiveFile {
     /// Sends a hook's claim to `engine` and acts on what it changed.
     static func claim(_ claim: ControlSocket.Claim, engine: ChangeEngine) {
         // The engine parses the line's fields again; Stop stands for every turn's end.
-        let (event, use, path): (String, ControlSocket.Claim.ToolUse?, String?) =
-            switch claim.event {
-            case .preToolUse(let use): ("PreToolUse", use, use.path)
-            case .postToolUse(let use): ("PostToolUse", use, use.path)
-            case .instructionsLoaded(let path): ("InstructionsLoaded", nil, path)
-            case .turnEnd: ("Stop", nil, nil)
-            case .sessionEnd: ("SessionEnd", nil, nil)
-            }
+        let (event, use, path): (String, ControlSocket.Claim.ToolUse?, String?)
+        switch claim.event {
+        case .preToolUse(let call): (event, use, path) = ("PreToolUse", call, call.path)
+        case .postToolUse(let call): (event, use, path) = ("PostToolUse", call, call.path)
+        case .instructionsLoaded(let file): (event, use, path) = ("InstructionsLoaded", nil, file)
+        case .shell(let id, let ended): return shell(id, session: claim.session, ended: ended)
+        case .turnEnd: (event, use, path) = ("Stop", nil, nil)
+        case .sessionEnd: (event, use, path) = ("SessionEnd", nil, nil)
+        }
+        if claim.event == .turnEnd || claim.event == .sessionEnd {
+            let now = ContinuousClock.now
+            for (id, shell) in shells where shell.session == claim.session && shell.end == nil { shells[id]?.end = now }
+        }
         claims.async {
             // A Read declares nothing and writes nothing.
             if case .preToolUse(let use) = claim.event, use.tool != .read, let hash = use.hash, let declared = use.declared {
@@ -224,6 +231,36 @@ final class LiveFile {
                 }
                 if finished { Review.finished(vendor: claim.vendor, session: claim.session) }
             }
+        }
+    }
+
+    /// A Claude Code Bash call, from its hooks' timing alone: when it started and, once its PostToolUse or the turn's
+    /// end came, when it ended.
+    private struct Shell {
+        let session: String
+        let start: ContinuousClock.Instant
+        var end: ContinuousClock.Instant?
+    }
+
+    /// Shell commands by call id. A change that lands while one runs, or within a second after, stays unnamed and says
+    /// so (X2); one that never ends counts for ten minutes, Claude Code's longest Bash timeout.
+    private static var shells: [String: Shell] = [:]
+
+    private static func shell(_ id: String, session: String, ended: Bool) {
+        let now = ContinuousClock.now
+        shells = shells.filter { now - ($0.value.end ?? $0.value.start) < .seconds(600) }
+        if ended {
+            shells[id]?.end = now
+        } else if shells[id] == nil {
+            shells[id] = Shell(session: session, start: now)
+        }
+    }
+
+    /// Whether a change landing now lands during a shell command.
+    private static var duringShell: Bool {
+        let now = ContinuousClock.now
+        return shells.values.contains { shell in
+            shell.end.map { now - $0 <= .seconds(1) } ?? (now - shell.start < .seconds(600))
         }
     }
 
@@ -478,11 +515,12 @@ final class LiveFile {
             return change
         }
         var shift = 0
+        let shell = landing.origin == .external && Self.duringShell
         for (index, edit) in edits.enumerated() {
             let length = edit.text.utf16.count
             changes[edit.change] = Change(
                 range: NSRange(location: edit.range.location + shift, length: length), origin: landing.origin,
-                marked: landing.marked, conflict: false, removed: removed[index])
+                marked: landing.marked, conflict: false, removed: removed[index], shell: shell)
             shift += length - edit.range.length
         }
         for conflict in landing.conflicts {

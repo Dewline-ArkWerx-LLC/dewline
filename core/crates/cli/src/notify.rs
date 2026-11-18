@@ -109,8 +109,9 @@ fn encode(fields: Fields) -> Option<Vec<u8>> {
     Some(line)
 }
 
-/// Every line `event` calls for: one per file a tool use names, one for the file InstructionsLoaded loads, one for
-/// the end of a turn or session, and none for anything claims.rs doesn't take.
+/// Every line `event` calls for: one per file a tool use names, one for a Claude Code Bash call's timing, two for
+/// Cursor's afterFileEdit, one for the file InstructionsLoaded loads, one for the end of a turn or session, and none
+/// for anything claims.rs doesn't take.
 fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
     let (Some(name), Some(session)) = (event.name.as_deref(), event.session.as_deref()) else {
         return Vec::new();
@@ -121,6 +122,7 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
         (Vendor::Cursor, "postToolUse") => "PostToolUse",
         (Vendor::Cursor, "stop") => "Stop",
         (Vendor::Cursor, "sessionEnd") => "SessionEnd",
+        (Vendor::Cursor, "afterFileEdit") => return after_file_edit(event, session),
         (Vendor::Cursor, _) => return Vec::new(),
         _ => name,
     };
@@ -156,8 +158,12 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
         ..fields
     };
     let files = match (vendor, tool) {
-        // Cursor's docs (checked 2026-10-30) give no tool_input fields for its Write tool, so its calls name no file.
-        (Vendor::Claude, "Read" | "Edit" | "MultiEdit" | "Write") => claude(event, tool, pre),
+        // A shell command's hooks give its timing alone.
+        (Vendor::Claude, "Bash") => return encode(fields).into_iter().collect(),
+        // cursor-agent's Write sends `{file_path, content}` as Claude Code's does (docs/hooks.md).
+        (Vendor::Claude, "Read" | "Edit" | "MultiEdit" | "Write") | (Vendor::Cursor, "Write") => {
+            claude(event, tool, pre)
+        }
         (Vendor::Codex, "apply_patch") => codex(event, pre),
         _ => Vec::new(),
     };
@@ -174,6 +180,76 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
             })
         })
         .collect()
+}
+
+/// Cursor's afterFileEdit, which comes after its agent wrote the file, with hunks and no call id, as a PostToolUse and
+/// PreToolUse pair of its own: the file's hash now, and the hash of what the hunks, put back, say it held before.
+/// claims.rs links the pair only to a change between those two hashes, so hunks put back in the wrong place, or a
+/// file written again since, name nothing. The PostToolUse goes first, so no call stands open between the two.
+fn after_file_edit(event: &Event, session: &str) -> Vec<Vec<u8>> {
+    let Some((
+        path,
+        Disk::File {
+            hash,
+            bytes: Some(bytes),
+        },
+    )) = event
+        .file_path
+        .as_deref()
+        .and_then(|path| named(event.cwd.as_deref(), path))
+        .and_then(|path| look(&path, true))
+    else {
+        return Vec::new();
+    };
+    let Some(before) = event
+        .input
+        .edits
+        .as_deref()
+        .and_then(|edits| unedited(&bytes, edits))
+    else {
+        return Vec::new();
+    };
+    let (from, to) = (blake3::hash(before.as_bytes()).to_hex(), hash.to_hex());
+    let id = format!("afterFileEdit:{to}");
+    let post = Fields {
+        event: "PostToolUse",
+        vendor: Vendor::Cursor.name(),
+        session,
+        tool_use_id: Some(&id),
+        tool: Some("Write"),
+        path: path.to_str(),
+        hash: Some(&to),
+        declared: None,
+    };
+    let pre = Fields {
+        event: "PreToolUse",
+        hash: Some(&from),
+        declared: Some(&to),
+        ..post
+    };
+    [post, pre].into_iter().filter_map(encode).collect()
+}
+
+/// The text Cursor's `edits` started from, given the text they made. A hunk is whole lines with no position: each
+/// goes back at the first line start after the hunk before where its new lines are found. None for no hunks, a hunk
+/// with no new lines to find, or one that isn't found.
+fn unedited(after: &[u8], edits: &[hook::Edit]) -> Option<String> {
+    let after = std::str::from_utf8(after).ok()?;
+    (!edits.is_empty()).then_some(())?;
+    let (mut before, mut at) = (String::new(), 0);
+    for edit in edits {
+        let (old, new) = (edit.old_string.as_deref()?, edit.new_string.as_deref()?);
+        (!new.is_empty()).then_some(())?;
+        let found = after[at..]
+            .match_indices(new)
+            .map(|(index, _)| at + index)
+            .find(|&index| index == 0 || after[..index].ends_with('\n'))?;
+        before.push_str(&after[at..found]);
+        before.push_str(old);
+        at = found + new.len();
+    }
+    before.push_str(&after[at..]);
+    Some(before)
 }
 
 /// A claimed file: its realpath, its hash (None: no file) and, at PreToolUse, the declared hash.
@@ -551,6 +627,32 @@ mod tests {
 
     fn edit(text: Option<&str>, old: &str, new: &str, all: bool) -> Option<String> {
         edited(text, &[(old, new, all)])
+    }
+
+    #[test]
+    fn cursor_hunks_go_back_where_their_lines_are_found() {
+        let hunk = |old: &str, new: &str| hook::Edit {
+            old_string: Some(old.into()),
+            new_string: Some(new.into()),
+            replace_all: None,
+        };
+        assert_eq!(
+            unedited(
+                b"# Plan\n\nShip it on Friday.\nThen rest.\n",
+                &[hunk("Ship it.\n", "Ship it on Friday.\n")]
+            )
+            .as_deref(),
+            Some("# Plan\n\nShip it.\nThen rest.\n")
+        );
+        // An added line goes, and hunks go back in order.
+        assert_eq!(
+            unedited(b"a\nb\nc\nd\n", &[hunk("", "b\n"), hunk("x\n", "d\n")]).as_deref(),
+            Some("a\nc\nx\n")
+        );
+        // New lines found only inside a line, a deletion, and no hunks give nothing.
+        assert_eq!(unedited(b"ab\n", &[hunk("x\n", "b\n")]), None);
+        assert_eq!(unedited(b"a\n", &[hunk("b\n", "")]), None);
+        assert_eq!(unedited(b"a\n", &[]), None);
     }
 
     #[test]

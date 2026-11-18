@@ -178,19 +178,19 @@ and don't redo a change the user reverted.</code></pre>
         <table>
           <thead><tr><th scope="col">Agent</th><th scope="col">Named changes</th><th scope="col">Hook events</th></tr></thead>
           <tbody>
-            <tr><th scope="row">Claude Code</th><td>Edit, MultiEdit, Write. Read holds the file and changes nothing.</td><td>PreToolUse and PostToolUse for <code>Read|Edit|MultiEdit|Write</code>; Stop, StopFailure, UserPromptSubmit, SessionEnd, InstructionsLoaded</td></tr>
+            <tr><th scope="row">Claude Code</th><td>Edit, MultiEdit, Write. Read holds the file and changes nothing.</td><td>PreToolUse and PostToolUse for <code>Read|Edit|MultiEdit|Write|Bash</code> (Bash for its timing alone); Stop, StopFailure, UserPromptSubmit, SessionEnd, InstructionsLoaded</td></tr>
             <tr><th scope="row">Codex</th><td><code>apply_patch</code>, one claim per file the patch adds, updates, deletes or moves</td><td>PreToolUse and PostToolUse for <code>^apply_patch$</code></td></tr>
-            <tr><th scope="row">Cursor</th><td>None. Its edits show as from another app.</td><td>None</td></tr>
+            <tr><th scope="row">Cursor</th><td><code>cursor-agent</code> Write; an agent edit <code>afterFileEdit</code> reports, when its hunks and the file on disk match the change</td><td>preToolUse and postToolUse for <code>Write</code>; afterFileEdit, stop</td></tr>
             <tr><th scope="row">Gemini CLI</th><td>None from Terminal. Its hooks carry no call id.</td><td>None</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Cursor's tool hooks carry call ids, but as of 16 November 2026 Cursor documents no <code>tool_input</code> for its <code>Write</code> tool, and its <code>afterFileEdit</code> hook has no call id. Nothing can declare what an edit wrote, so Dewline installs no Cursor hooks.</p>
+      <p><code>afterFileEdit</code> has no call id, so Dewline names its edit after the fact: the hook puts each hunk back, hashes the file before and after, and the change is named only when its bytes match both hashes.</p>
       </details>
       <details id="unknown">
         <summary>What shows as another app</summary>
       <ul>
-        <li>Edits through a shell: Claude Code's Bash tool, Codex's shell, Cursor's terminal and agent, <code>codex exec</code>, and any edit that skips the hooks.</li>
+        <li>Edits through a shell: Claude Code's Bash tool, Codex's shell, Cursor's terminal, <code>codex exec</code>, and any edit that skips the hooks. A change that lands while Claude Code runs a shell command says so on its mark.</li><li>Cursor Tab edits, a Cursor edit that only deletes lines, and any Cursor edit <code>afterFileEdit</code> doesn't report.</li>
         <li>A call whose result Dewline can't compute exactly. That includes an Edit of a file with CR or CRLF line endings, or of a file that isn't plain UTF-8. It also includes a Codex patch that would stop partway. A file over 64 MB gets no declared hash.</li>
         <li>Sync apps, scripts and every other app.</li>
       </ul>

@@ -84,6 +84,7 @@ struct SettingsPaneTests {
         #expect(HookStatus.read(home: home).codex == false)
         try hooks("codex", ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]).write(to: home.appending(path: ".codex/hooks.json"))
         #expect(HookStatus.read(home: home).agents == [true, true])
+        #expect(HookStatus.read(home: home).codexNeedsTrust)
     }
 
     /// Hooks that run a Dewline the user moved or deleted name nothing, so they don't read as installed.

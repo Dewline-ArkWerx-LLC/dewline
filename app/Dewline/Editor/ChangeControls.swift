@@ -227,14 +227,18 @@ final class ChangeStamp: NSView {
     static let gutter: CGFloat = 24
     /// Between Revert and Keep.
     private static let gap: CGFloat = 10
+    /// What an unnamed change that landed while Claude Code ran a shell command says (X2).
+    static let duringShell = "During Claude Code\u{2019}s shell command"
 
     private let revert: StampButton
     private let keep: StampButton
     private let setUp: StampButton
+    private let note = NSTextField(labelWithString: duringShell)
     private var writer: MarkWriter?
     private var time = ""
     private var count = 0
     private var external = false
+    private var shell = false
     private(set) var folded = false
     /// Line 1's baseline and left edge, in this view.
     private var baseline: CGFloat = 0
@@ -257,7 +261,11 @@ final class ChangeStamp: NSView {
         self.keep.toolTip = "Keep (\u{2318}\u{21A9})"
         setUp.toolTip = "Name this writer: set up agent hooks"
         setUp.isHidden = true
-        for button in [self.revert, self.keep, setUp] { addSubview(button) }
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = ThemeStore.shared.color(.ink2)
+        note.lineBreakMode = .byTruncatingTail
+        note.isHidden = true
+        for view in [self.revert, self.keep, setUp, note] { addSubview(view) }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
@@ -274,26 +282,30 @@ final class ChangeStamp: NSView {
     }
 
     @objc private func themeDidChange() {
+        note.textColor = ThemeStore.shared.color(.ink2)
         for view in [self, revert, keep, setUp] { view.needsDisplay = true }
         resized()
     }
 
-    /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`; Keep and Revert
-    /// decide them all.
-    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool) {
+    /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`, during Claude
+    /// Code's shell command when `shell`; Keep and Revert decide them all.
+    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
         self.writer = writer
         self.time = time
         self.count = count
         self.external = external
-        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")")
+        self.shell = shell
+        note.isHidden = !shell
+        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (shell ? ", \(Self.duringShell)" : ""))
         let changes = count == 1 ? "change" : "\(count) changes"
         revert.setAccessibilityLabel("Revert \(writer.possessive) \(changes)")
         keep.setAccessibilityLabel("Keep \(writer.possessive) \(changes)")
-        setUp.isHidden = !(offering && external)
+        // Set Up names no shell command's change, so a change during one doesn't offer it.
+        setUp.isHidden = !(offering && external && !shell)
         if changed { needsDisplay = true }
-        if external { offerHooks() }
+        if external && !shell { offerHooks() }
     }
 
     private func offerHooks() {
@@ -303,7 +315,7 @@ final class ChangeStamp: NSView {
             let report = await HookSetup.run(HookSetup.command(), ["doctor"], answers: 0)
             Self.checkingHooks = false
             guard report.ran, !HookSetup.missing(in: report.output).isEmpty else { return Self.offeredHooks = true }
-            guard let self, self.external, self.superview != nil else { return }
+            guard let self, self.external, !self.shell, self.superview != nil else { return }
             Self.offeredHooks = true
             self.offering = true
             self.setUp.isHidden = false
@@ -338,7 +350,9 @@ final class ChangeStamp: NSView {
 
     /// The width the stamp takes in the margin.
     var marginWidth: CGFloat {
-        ceil(max(line.size().width, buttonsWidth, setUp.isHidden ? 0 : setUp.intrinsicContentSize.width))
+        ceil(max(
+            line.size().width, buttonsWidth, setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
+            note.isHidden ? 0 : note.intrinsicContentSize.width))
     }
 
     /// In the margin, its right edge at `right`: line 1 on `first`, the buttons' labels on `second`, both baselines
@@ -356,6 +370,11 @@ final class ChangeStamp: NSView {
         let revertWidth = revert.intrinsicContentSize.width
         revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: buttons, width: revertWidth, height: StampButton.height)
         var bottom = keep.frame.maxY
+        if !note.isHidden {
+            let size = note.intrinsicContentSize
+            note.frame = NSRect(x: width - ceil(size.width), y: bottom + 4, width: ceil(size.width), height: size.height)
+            bottom = note.frame.maxY
+        }
         if !setUp.isHidden {
             let size = setUp.intrinsicContentSize
             setUp.frame = NSRect(x: width - size.width, y: bottom + 4, width: size.width, height: size.height)
@@ -376,6 +395,11 @@ final class ChangeStamp: NSView {
         keep.frame = NSRect(x: rect.width - y - keepWidth, y: y, width: keepWidth, height: StampButton.height)
         let revertWidth = revert.intrinsicContentSize.width
         revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: y, width: revertWidth, height: StampButton.height)
+        if !note.isHidden {
+            let size = note.intrinsicContentSize
+            let x = textX + ceil(line.size().width) + 8
+            note.frame = NSRect(x: x, y: (Self.barHeight - size.height) / 2, width: max(min(ceil(size.width), revert.frame.minX - 8 - x), 0), height: size.height)
+        }
         if !setUp.isHidden {
             let size = setUp.intrinsicContentSize
             setUp.frame = NSRect(x: textX + ceil(line.size().width) + 8, y: (Self.barHeight - size.height) / 2, width: size.width, height: size.height)

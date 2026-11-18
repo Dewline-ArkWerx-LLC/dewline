@@ -61,6 +61,7 @@ enum MainMenu {
         menu.addItem(withTitle: "Open\u{2026}", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
         let folder = menu.addItem(withTitle: "Open Folder\u{2026}", action: #selector(AppDelegate.openFolder(_:)), keyEquivalent: "o")
         folder.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = RecentMenu.menu()
         menu.addItem(withTitle: "Quick Open\u{2026}", action: #selector(AppDelegate.quickOpen(_:)), keyEquivalent: "O")
         menu.addItem(withTitle: "Open Inbox", action: #selector(AppDelegate.openInbox(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Today\u{2019}s Note", action: #selector(AppDelegate.openTodaysNote(_:)), keyEquivalent: "")

@@ -34,9 +34,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open files in Dewline, starting it if it isn't running
+    /// Open files or folders in Dewline, starting it if it isn't running
     Open {
-        /// A file, with the caret at LINE and COLUMN when given (both count from 1)
+        /// A file, with the caret at LINE and COLUMN when given (both count from 1), or a folder
         #[arg(required = true, value_name = "FILE[:LINE[:COLUMN]]")]
         files: Vec<OsString>,
         /// Return once every file's window has closed, as EDITOR="dewline open --wait" needs
@@ -145,6 +145,10 @@ fn open(files: &[OsString], wait: bool) -> Result<(), String> {
     let mut errors = Vec::new();
     for file in files {
         match target::resolve(file, &cwd, home.as_deref()) {
+            Ok(target) if wait && target.folder => errors.push(format!(
+                "{}: is a folder; --wait takes files",
+                file.to_string_lossy()
+            )),
             Ok(target) => targets.push(target),
             Err(error) => errors.push(error),
         }

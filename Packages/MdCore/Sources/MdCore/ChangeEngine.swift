@@ -85,15 +85,26 @@ public final class ChangeEngine: Sendable {
 
     public struct Opened: Sendable {
         public let doc: UInt64
-        /// An agent wrote the file while it was closed: `text` is what the write replaced, and the next landing brings
-        /// the write in, marked.
+        /// The file changed since Dewline last saw it: `text` is what it saw, and the next landing brings the change
+        /// in, marked.
         public let closed: Bool
+        /// The changes left undecided when the file last closed, in `text`.
+        public let marks: [Mark]
         /// None when the file is not UTF-8 text.
         public let text: String?
         /// Whether the file starts with a byte-order mark, which `text` leaves out.
         public let bom: Bool
         /// The repository's gitdir, to watch and pass to `gitChanged`.
         public let gitdir: URL?
+    }
+
+    /// A change left undecided when its file last closed: its range in the text the file opens with, and the text it
+    /// replaced.
+    public struct Mark: Sendable, Equatable {
+        public let change: UInt64
+        public let origin: Origin
+        public let range: NSRange
+        public let removed: String
     }
 
     /// Replaces `range` with `text`; `change` names the pending change it makes.
@@ -141,28 +152,42 @@ public final class ChangeEngine: Sendable {
         let opened = try Self.call { try engine.open(path: url.path) }
         let gitdir = opened.gitdir.map { URL(fileURLWithPath: $0, isDirectory: true) }
         guard case .text(let bom) = opened.contents else {
-            return Opened(doc: opened.doc, closed: false, text: nil, bom: false, gitdir: gitdir)
+            return Opened(doc: opened.doc, closed: false, marks: [], text: nil, bom: false, gitdir: gitdir)
         }
         let text = try Self.call { try engine.text(doc: opened.doc) }
-        return Opened(doc: opened.doc, closed: opened.closed, text: text, bom: bom, gitdir: gitdir)
+        let marks = opened.marks.map {
+            Mark(change: $0.change, origin: Origin($0.origin), range: NSRange(location: Int($0.start), length: Int($0.end - $0.start)), removed: $0.removed)
+        }
+        return Opened(doc: opened.doc, closed: opened.closed, marks: marks, text: text, bom: bom, gitdir: gitdir)
     }
 
-    /// A file an agent wrote while no document had it open.
+    /// A file no document has open that changed since Dewline last saw it: who wrote it, how many places changed, and
+    /// when it was noticed.
     public struct ClosedChange: Sendable, Equatable {
         public let url: URL
         public let origin: Origin
+        public let count: Int
         public let time: Date
     }
 
-    /// `origin` is about to write the file at `url`, which holds `before`. Unless the file is open, it is listed in
-    /// `closedChanges` until it opens, and opening it lands the write as marked changes.
-    public func closedWrite(_ url: URL, origin: Origin, before: Data) throws(Failure) {
-        try Self.call { try engine.closedWrite(path: url.path, origin: origin.ffi, before: before) }
+    /// `origin` is about to write the file at `url`, which holds `before`, making bytes whose BLAKE3 hex is
+    /// `declared`. Unless the file is open, it is listed in `closedChanges` until it opens, and opening it lands the
+    /// write as marked changes, named only if the file holds `declared`.
+    public func closedWrite(_ url: URL, origin: Origin, before: Data, declared: String) throws(Failure) {
+        try Self.call { try engine.closedWrite(path: url.path, origin: origin.ffi, before: before, declared: declared) }
     }
 
-    /// Files written while closed, oldest first.
+    /// Notes the Markdown files in `folder`, and its subfolders when `deep`, so one changed while closed, or while
+    /// the app was quit, is in `closedChanges`. Off the main thread.
+    public func scan(_ folder: URL, deep: Bool) throws(Failure) {
+        try Self.call { try engine.scan(folder: folder.path, deep: deep) }
+    }
+
+    /// Files no document has open that changed since Dewline last saw them, oldest first.
     public func closedChanges() -> [ClosedChange] {
-        engine.closedChanges().map { ClosedChange(url: URL(fileURLWithPath: $0.path), origin: Origin($0.origin), time: $0.time) }
+        engine.closedChanges().map {
+            ClosedChange(url: URL(fileURLWithPath: $0.path), origin: Origin($0.origin), count: Int($0.count), time: $0.time)
+        }
     }
 
     /// Whether the file differs from the base.
@@ -300,6 +325,13 @@ public final class ChangeEngine: Sendable {
     /// Once, after the documents of the last session are open again.
     public func prune() throws(Failure) {
         try Self.call { try engine.prune() }
+    }
+
+    /// Keeps the document's undecided changes, by their ranges in `buffer`, for the next time its file opens. Before
+    /// `close`.
+    public func keepMarks(_ doc: UInt64, buffer: String, ranges: [UInt64: NSRange]) throws(Failure) {
+        let marks = ranges.map { MarkRange(change: $0.key, start: UInt32($0.value.location), end: UInt32(NSMaxRange($0.value))) }
+        try Self.call { try engine.keepMarks(doc: doc, buffer: buffer, marks: marks) }
     }
 
     public func close(_ doc: UInt64) {

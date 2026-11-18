@@ -146,7 +146,7 @@ enum Export {
         h1, h2, h3, h4, h5, h6 { font-family: \(face(store.headingFace, "serif")); }
         code, pre { font-family: \(face(store.codeFace, "monospace")); }
         """
-        let page = previewPage(text, title: title, css: css)
+        let page = previewPage(text, title: title, css: css, syntaxes: nil)
             .replacing("<input type=\"checkbox\" disabled checked>", with: "\u{2611}")
             .replacing("<input type=\"checkbox\" disabled>", with: "\u{2610}")
             .replacing(/<img [^>]*?alt="([^"]*)"[^>]*>/) { $0.1.isEmpty ? "[image]" : "[image: \($0.1)]" }

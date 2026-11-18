@@ -268,6 +268,7 @@ mod tests {
                         base64(b"\x89PNG math")
                     ))
                 },
+                code: &|_, _| None,
                 folder: None,
             },
         );

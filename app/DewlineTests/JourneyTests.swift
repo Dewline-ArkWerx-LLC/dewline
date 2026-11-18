@@ -266,6 +266,31 @@ struct JourneyTests {
         #expect(controller.window?.isVisible == false)
     }
 
+    /// View > Backlinks lists the notes that link to the open one; a click opens the linking note with the link
+    /// selected, and the pane follows to that note, which nothing links to.
+    @Test func j2BacklinksListTheNotesLinkingHereAndOpenAtTheLink() async throws {
+        let vault = try Vault(Self.obsidianVault)
+        defer { vault.remove() }
+        let controller = MainWindowController(folder: Folder(vault.notes))
+        defer { Self.close(controller) }
+        controller.open(vault.url("Projects/Project Plan.md"), newTab: false)
+        let item = NSMenuItem(title: "", action: #selector(MainWindowController.toggleBacklinks(_:)), keyEquivalent: "")
+        controller.toggleBacklinks(nil)
+        #expect(controller.validateMenuItem(item) && item.state == .on)
+        let backlinks = controller.pane.backlinks
+        try await Self.until { !backlinks.links.isEmpty }
+        let link = try #require(backlinks.links.first)
+        #expect(backlinks.links.count == 1)
+        #expect(link.url.lastPathComponent == "Home.md" && link.line == 3)
+        let home = try #require(Self.obsidianVault["Home.md"])
+        #expect((home as NSString).substring(with: link.range) == "[[Project Plan]]")
+
+        backlinks.open(link.url, link.range)
+        #expect((controller.document as? NSDocument)?.fileURL?.lastPathComponent == "Home.md")
+        #expect(controller.textView?.selectedRange() == link.range)
+        try await Self.until { backlinks.links.isEmpty }
+    }
+
     /// The sidebar's file commands, with ⌘Z: New Folder, Rename (the open note follows), Move, Duplicate, and Move
     /// to Trash, which closes the note and comes back from the Trash on undo.
     @Test func j2FileActionsMakeRenameMoveDuplicateAndTrashUndoably() async throws {

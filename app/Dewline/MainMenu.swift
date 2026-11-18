@@ -188,6 +188,7 @@ enum MainMenu {
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Sidebar Outline", action: #selector(SidebarOutline.toggle(_:)), keyEquivalent: "").target = SidebarOutline.self
+        menu.addItem(withTitle: "Backlinks", action: #selector(MainWindowController.toggleBacklinks(_:)), keyEquivalent: "")
         return menu
     }
 

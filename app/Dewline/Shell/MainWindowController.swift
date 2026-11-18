@@ -24,7 +24,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private let page = NSView()
     private var pageContent: NSView?
     let statusBar = StatusBar()
-    let pane = RightPane()
+    let pane: RightPane
     private let paneItem: NSSplitViewItem
     /// The right pane collapsed the sidebar to make room, so closing the pane brings it back.
     private var paneHidSidebar = false
@@ -52,6 +52,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         self.folder = folder
         index = folder.map(FolderIndex.of)
         sidebar = SidebarViewController(folder: folder)
+        pane = RightPane(folder: folder)
         // A plain item, so no system sidebar glass draws under it; it keeps its width as the window resizes.
         let sidebarItem = NSSplitViewItem(viewController: sidebar)
         sidebarItem.canCollapse = true
@@ -117,6 +118,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         sidebar.jump = { [weak self] heading in self?.jump(to: heading) }
         sidebar.reveal = { [weak self] url, match, newTab in self?.reveal(match, in: url, newTab: newTab) }
         pane.picked = { [weak self] tab in self?.tabs.tabs.forEach { $0.showPane(tab) } }
+        pane.backlinks.open = { [weak self] url, range in self?.open(url, selecting: range) }
         #if COLLAB
         NotificationCenter.default.addObserver(self, selector: #selector(updatePresence), name: Collaboration.changed, object: nil)
         #endif
@@ -414,6 +416,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         #endif
         changesChanged()
         if let url = document.fileURL { ReviewInbox.noteOpened(url) }
+        pane.note = document.fileURL
         sidebar.show(document.fileURL, headings: outline(of: textView.textStorage!.mutableString, in: textView.styler.map))
         markBrokenLinks()
         if let url = document.fileURL {
@@ -599,6 +602,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let open = !paneItem.isCollapsed
         switch menuItem.action {
         case #selector(toggleChanges(_:)): menuItem.state = open && pane.tab == .changes ? .on : .off
+        case #selector(toggleBacklinks(_:)): menuItem.state = open && pane.tab == .backlinks ? .on : .off
         #if COLLAB
         case #selector(shareNote(_:)): menuItem.title = peers > 0 ? "Share\u{2026} (\(peers) editing)" : "Share\u{2026}"
         #endif
@@ -615,6 +619,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func toggleChanges(_ sender: Any?) {
         togglePane(.changes)
+    }
+
+    @objc func toggleBacklinks(_ sender: Any?) {
+        togglePane(.backlinks)
     }
 
     private func togglePane(_ tab: RightPane.Tab) {
@@ -753,6 +761,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard NSMaxRange(match.range) <= text.length, text.substring(with: match.range) == found else { return }
         tab.window?.makeFirstResponder(textView)
         textView.jump(to: match.range)
+    }
+
+    /// Opens `url` as a link does and selects `range` where the file's text still reaches it.
+    private func open(_ url: URL, selecting range: NSRange) {
+        open(url, newTab: false)
+        guard let tab = NSDocumentController.shared.document(for: url)?.windowControllers.first as? MainWindowController,
+            let textView = tab.textView, NSMaxRange(range) <= textView.textStorage!.length
+        else { return }
+        tab.window?.makeFirstResponder(textView)
+        textView.jump(to: range)
     }
 
     @objc func findInFiles(_ sender: Any?) {

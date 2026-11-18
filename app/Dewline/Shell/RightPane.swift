@@ -1,14 +1,16 @@
 import AppKit
 
-/// The pane on the window's right, 380 pt by default: one of its tabs under a segmented header. A tab shows once its
-/// part of the app registers what it draws.
+/// The pane on the window's right, 380 pt by default: one of its tabs under a segmented header. Changes shows once
+/// its part of the app registers what it draws.
 final class RightPane: NSViewController {
     enum Tab: Int, CaseIterable {
         case changes
+        case backlinks
 
         var title: String {
             switch self {
             case .changes: "Changes"
+            case .backlinks: "Backlinks"
             }
         }
     }
@@ -32,16 +34,40 @@ final class RightPane: NSViewController {
         didSet { if changesCount != oldValue { labelSegments() } }
     }
 
+    /// The tab's note, whose backlinks the Backlinks tab lists.
+    var note: URL? {
+        didSet { if note != oldValue, showsBacklinks { backlinks.show(note, in: folder) } }
+    }
+    let backlinks = BacklinksPane()
+
+    private let folder: URL?
     private let segments = NSSegmentedControl()
     private let content = NSView()
     private var built: [Tab: NSViewController] = [:]
+
+    init(folder: Folder?) {
+        self.folder = folder?.url
+        super.init(nibName: nil, bundle: nil)
+        if let folder {
+            NotificationCenter.default.addObserver(self, selector: #selector(folderChanged), name: FolderIndex.changed, object: FolderIndex.of(folder))
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("RightPane is built in code")
+    }
 
     private var tabs: [Tab] {
         Tab.allCases.filter { tab in
             switch tab {
             case .changes: Self.makeChanges != nil
+            case .backlinks: true
             }
         }
+    }
+
+    private var showsBacklinks: Bool {
+        isViewLoaded && tab == .backlinks && built[.backlinks] != nil && !view.isHiddenOrHasHiddenAncestor
     }
 
     override func loadView() {
@@ -108,12 +134,19 @@ final class RightPane: NSViewController {
             controller.view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             controller.view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
+        if tab == .backlinks { backlinks.show(note, in: folder) }
+    }
+
+    /// Lists the backlinks again when a note in the folder changes, in the window on screen.
+    @objc private func folderChanged() {
+        if showsBacklinks, view.window?.isVisible == true { backlinks.show(note, in: folder) }
     }
 
     private func controller(for tab: Tab) -> NSViewController? {
         if let built = built[tab] { return built }
         let made: NSViewController? = switch tab {
         case .changes: view.window.flatMap { window in Self.makeChanges?(window) }
+        case .backlinks: backlinks
         }
         if let made {
             addChild(made)
@@ -125,7 +158,11 @@ final class RightPane: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         // Tabs need the window to build.
-        if built[tab] == nil { select(tab) }
+        if built[tab] == nil {
+            select(tab)
+        } else if showsBacklinks {
+            backlinks.show(note, in: folder)
+        }
     }
 }
 

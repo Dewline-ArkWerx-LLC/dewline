@@ -43,21 +43,11 @@ final class CodeHighlights {
         }
     }
 
-    /// The index of the first entry that ends at or after `offset`; the entries before it end before `offset`.
-    private func first(endingFrom offset: Int) -> Int {
-        var (low, high) = (0, entries.count)
-        while low < high {
-            let middle = (low + high) / 2
-            if NSMaxRange(entries[middle].range) < offset { low = middle + 1 } else { high = middle }
-        }
-        return low
-    }
-
     /// Moves the entries past an edit. An edit inside a block's code keeps the spans it missed until the new ones come.
     func textDidChange(edited: NSRange, delta: Int) {
         let oldEnd = NSMaxRange(edited) - delta
         var gone = IndexSet()
-        for index in first(endingFrom: edited.location)..<entries.count {
+        for index in entries.indices {
             let range = entries[index].range
             if NSMaxRange(range) <= edited.location, range.length > 0 { continue }
             if edited.location < range.location, oldEnd <= range.location {
@@ -91,10 +81,7 @@ final class CodeHighlights {
                 seen.insert(want(range, language: language, code: text.substring(with: range)))
             }
         }
-        let start = first(endingFrom: paragraphs.location)
-        var end = start
-        while end < entries.count, entries[end].range.location < NSMaxRange(paragraphs) { end += 1 }
-        entries[start..<end].removeAll { entry in
+        entries.removeAll { entry in
             let gone = NSIntersectionRange(entry.range, paragraphs).length > 0 && !seen.contains(entry.id)
             if gone { forget(entry) }
             return gone
@@ -112,8 +99,7 @@ final class CodeHighlights {
 
     /// The entry for the code at `range`, which asks for new spans when its code or language changed.
     private func want(_ range: NSRange, language: String, code: String) -> UInt64 {
-        let index = (first(endingFrom: range.location)..<entries.count).lazy.prefix { self.entries[$0].range.location <= NSMaxRange(range) }
-            .first { NSIntersectionRange(self.entries[$0].range, range).length > 0 || self.entries[$0].range.location == range.location }
+        let index = entries.firstIndex { NSIntersectionRange($0.range, range).length > 0 || $0.range.location == range.location }
         if let index, entries[index].text == code, entries[index].language == language {
             entries[index].range = range
             return entries[index].id
@@ -127,9 +113,7 @@ final class CodeHighlights {
             Self.lastID += 1
             entry = Entry(id: Self.lastID, range: range, language: language, text: code, spans: [])
         }
-        var at = first(endingFrom: range.location)
-        while at < entries.count, entries[at].range.location <= range.location { at += 1 }
-        entries.insert(entry, at: at)
+        entries.insert(entry, at: entries.firstIndex { $0.range.location > range.location } ?? entries.endIndex)
         request(entry)
         return entry.id
     }
@@ -146,11 +130,7 @@ final class CodeHighlights {
         let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
         let range = NSRange(location: start, length: content.offset(from: fragment.rangeInElement.location, to: fragment.rangeInElement.endLocation))
         layout.removeRenderingAttribute(.foregroundColor, for: fragment.rangeInElement)
-        var index = first(endingFrom: range.location)
-        while index < entries.count, entries[index].range.location < NSMaxRange(range) {
-            let entry = entries[index]
-            index += 1
-            guard NSIntersectionRange(entry.range, range).length > 0 else { continue }
+        for entry in entries where NSIntersectionRange(entry.range, range).length > 0 {
             let local = range.location - entry.range.location
             var low = 0, high = entry.spans.count
             while low < high {

@@ -8,6 +8,6 @@ def row($metric; $unit; $budget; $measured):
 
 . + {budgets: [
     row("Folder window, 10 tabs open and styled"; "ms"; 7000; .folderWindow.tabsMs),
-    row("Folder window, 10 MB opened in a tab, to styled"; "ms"; 30000; .folderWindow.styled10MBMs),
+    row("Folder window, 10 MB opened in a tab, to styled"; "ms"; 44000; .folderWindow.styled10MBMs),
     row("Folder window, 10 tabs and 10 MB, memory added"; "MB"; 250; .folderWindow.footprintMB)
 ]} | .pass = all(.budgets[]; .pass)

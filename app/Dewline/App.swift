@@ -9,7 +9,6 @@ enum DewlineApp {
         // mermaid-rs-renderer copies a system font into XDG_CACHE_HOME, or into ~/.cache without it.
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         setenv("XDG_CACHE_HOME", caches.appending(path: "dev.arkwerx.dewline").path, 1)
-        FontLibrary.registerAtLaunch()
         let app = NSApplication.shared
         // The first document controller made is the shared one.
         _ = DocumentController()
@@ -128,10 +127,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isTestHost else { return }
         Preferences.shared.keepWindows()
         if let failure = MarkdownDocument.engineFailure { Tracking.report(.noEngine(failure)) }
-        Capture.shared.register(Preferences.shared.captureShortcut)
-        NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Capture.shared.register(Preferences.shared.captureShortcut) }
-        }
         Export.publishPreviewStylesheet()
         CodeHighlights.publishForPreview()
         NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { _ in
@@ -141,8 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defaults.set(true, forKey: Welcome.shownKey)
             // Opened before AppKit asks for an untitled file, so the notes folder shows in place of the launch window.
             firstLaunch(in: FileActions.notesFolder)
-        } else if DailyNote.opensAtLaunch(defaults: defaults) {
-            openTodaysNote(nil)
         }
         let engine = MarkdownDocument.sharedEngine
         let control = ControlSocket(path: ControlSocket.standardPath, notify: { claim in
@@ -493,16 +486,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// File > Today's Note: today's file in the notes folder's Daily folder, made if it isn't there yet.
-    @objc func openTodaysNote(_ sender: Any?) {
-        do {
-            try openMarkdown(at: DailyNote.today(in: FileActions.notesFolder))
-            DailyNote.noteOpened(defaults: defaults)
-        } catch {
-            NSApp.presentError(error)
-        }
-    }
-
     @objc func capture(_ sender: Any?) {
         Capture.show()
     }
@@ -554,10 +537,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
         menu.addItem(withTitle: "New Note", action: #selector(newNote(_:)), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Capture\u{2026}", action: #selector(capture(_:)), keyEquivalent: "").target = self
-        if DailyNote.isOn(defaults: defaults) {
-            menu.addItem(withTitle: "Today\u{2019}s Note", action: #selector(openTodaysNote(_:)), keyEquivalent: "").target = self
-        }
         return menu
     }
 }
@@ -565,9 +544,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(openTodaysNote(_:)):
-            item.isHidden = !DailyNote.isOn(defaults: defaults)
-            return !item.isHidden
         case #selector(duplicateNote(_:)), #selector(trashNote(_:)), #selector(printNote(_:)):
             return frontNote?.fileURL != nil
         case #selector(showEarlierVersions(_:)):

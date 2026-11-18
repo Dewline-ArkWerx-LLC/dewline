@@ -269,17 +269,20 @@ struct Theme: Identifiable, Hashable, Sendable {
         hasher.combine(name)
     }
 
-    static func named(_ name: String) -> Theme? {
-        (all + devPack).first { $0.name == name }
+    /// The theme for the light or dark slot saved under `name`. A theme from before there were four maps to the nearest
+    /// one, and a theme saved in the other slot to its partner there.
+    static func named(_ name: String, dark: Bool) -> Theme? {
+        switch name {
+        case "Tidewater", "Nightwatch", "Aurora", "Solarized": dark ? .nightwatch : .tidewater
+        case "Gruvbox": dark ? .carbon : .tidewater
+        case "Onionskin", "Carbon", "Dawnline", "Dusk", "Nord", "Tokyo Night": dark ? .carbon : .onionskin
+        default: nil
+        }
     }
 
-    static let all = [tidewater, aurora, dawnline, dusk, nightwatch, carbon]
-
-    /// Ports of editor themes, code colors included, from each original palette. Nord has no light version, so its
-    /// dark one fills both slots.
-    static let devPack = [solarized, gruvbox, nord, tokyoNight]
-
-    var isDarkOnly: Bool { light[.paper]!.l < 0.5 }
+    static let light = [tidewater, onionskin]
+    static let dark = [nightwatch, carbon]
+    static let all = light + dark
 
     /// The defaults' palette: warm paper and green-black ink by day, green-black paper and cream ink at night, a cool
     /// green-gray chrome, and the brand's green as the accent. Selection is the green at 15% over the paper, the rule
@@ -303,139 +306,28 @@ struct Theme: Identifiable, Hashable, Sendable {
 
     static let tidewater = Theme("Tidewater", "Warm paper, green-black ink, a green accent.", brand)
 
-    static let aurora = Theme("Aurora", "Sage paper by day; polar-night navy with green links after dark.", """
-        paper           0.988 0.008 160   0.19  0.02  250
-        ink             0.25  0.02  165   0.92  0.015 160
-        ink2            0.47  0.025 165   0.77  0.02  165
-        syntax          0.655 0.02  165   0.50  0.02  220
-        heading         0.34  0.07  158   0.88  0.09  155
-        accent          0.55  0.14  152   0.80  0.15  155
-        link            0.50  0.13  152   0.84  0.13  152
-        selection       0.89  0.05  235   0.36  0.06  235
-        sidebarTint     0.93  0.035 155   0.25  0.035 230
-        codeBackground  0.96  0.015 160   0.23  0.025 240
-        quoteRule       0.66  0.12  152   0.66  0.13  155
-        frame           -                 0.247 0.028 176
-        islandSide      -                 0.216 0.022 175
-        """)
+    /// Chrome B's lightness steps without the green: gray paper and ink, the brand's green as the accent, links in the
+    /// ink. Selection is the green at 15% over the paper.
+    private static let neutral = """
+        paper           0.975  0.002  255     0.19   0.003  260
+        chrome          0.938  0.003  255     0.242  0.003  260
+        ink             0.215  0.004  260     0.915  0.003  250
+        ink2            0.465  0.004  260     0.735  0.004  255
+        ink3            0.555  0.004  260     0.605  0.004  255
+        rule            0.862  0.003  255     0.32   0.003  260
+        codeBackground  0.948  0.003  255     0.216  0.003  260
+        heading         0.215  0.004  260     0.915  0.003  250
+        link            0.215  0.004  260     0.915  0.003  250
+        selection       0.9039 0.014  181.4   0.2769 0.0124 187.8
+        syntax          0.62   0.004  260     0.52   0.004  260
+        sidebarTint     0.938  0.003  255     0.242  0.003  260
+        quoteRule       0.80   0.003  255     0.40   0.003  260
+        accent          \(Brand.accent.light.l) \(Brand.accent.light.c) \(Brand.accent.light.h)   \(Brand.accent.dark.l) \(Brand.accent.dark.c) \(Brand.accent.dark.h)
+        """
 
-    static let dawnline = Theme("Dawnline", "A blush of dawn in the paper, ultramarine ink and accents; warm ink on indigo at night.", """
-        paper           0.985 0.008 20    0.21  0.022 268
-        ink             0.24  0.025 265   0.92  0.01  30
-        ink2            0.48  0.03  265   0.77  0.015 30
-        syntax          0.655 0.02  20    0.505 0.02  268
-        heading         0.32  0.08  262   0.90  0.04  40
-        accent          0.52  0.17  258   0.76  0.10  252
-        link            0.50  0.17  258   0.85  0.08  250
-        selection       0.89  0.04  258   0.37  0.06  262
-        sidebarTint     0.94  0.02  20    0.27  0.035 268
-        codeBackground  0.965 0.008 255   0.25  0.022 268
-        quoteRule       0.70  0.08  258   0.64  0.09  252
-        frame           -                 0.267 0.025 314
-        islandSide      -                 0.236 0.02  314
-        """)
-
-    static let dusk = Theme("Dusk", "Blue hour: indigo above a green afterglow, mint accents, periwinkle links.", """
-        paper           0.978 0.010 268   0.21  0.03  272
-        ink             0.25  0.03  270   0.92  0.012 262
-        ink2            0.47  0.03  268   0.77  0.02  265
-        syntax          0.65  0.02  266   0.505 0.03  270
-        heading         0.32  0.10  270   0.88  0.07  160
-        accent          0.52  0.12  158   0.80  0.12  158
-        link            0.48  0.15  264   0.84  0.09  262
-        selection       0.89  0.05  264   0.37  0.07  268
-        sidebarTint     0.935 0.025 270   0.25  0.04  272
-        codeBackground  0.96  0.012 268   0.245 0.03  272
-        quoteRule       0.66  0.11  160   0.66  0.11  160
-        frame           -                 0.267 0.051 289
-        islandSide      -                 0.236 0.043 288
-        """)
+    static let onionskin = Theme("Onionskin", "Gray paper, near-black ink, a green accent.", neutral)
 
     static let nightwatch = Theme("Nightwatch", "Green-black paper, cream ink, a green accent.", brand)
 
-    static let carbon = Theme("Carbon", "Onionskin and carbon ink, the manuscript.", """
-        paper           0.97  0.003 250   0.185 0.003 260
-        ink             0.21  0.004 260   0.92  0.003 250
-        ink2            0.45  0.004 260   0.78  0.004 255
-        syntax          0.645 0.004 260   0.495 0.004 260
-        heading         0.21  0.004 260   0.92  0.003 250
-        accent          0.46  0.17  258   0.80  0.10  258
-        link            0.46  0.17  258   0.84  0.10  258
-        selection       0.88  0.05  258   0.34  0.06  258
-        sidebarTint     0.94  0.004 250   0.215 0.003 260
-        codeBackground  0.94  0.004 250   0.225 0.003 260
-        quoteRule       0.62  0.10  258   0.60  0.09  258
-        """)
-
-    static let solarized = Theme("Solarized", "Ethan Schoonover's sixteen colors: base3 paper by day, base03 at night.", """
-        paper           0.974 0.026 90    0.267 0.049 220
-        ink             0.523 0.028 219   0.654 0.02  205
-        ink2            0.568 0.029 222   0.568 0.029 222
-        syntax          0.698 0.016 197   0.523 0.028 219
-        heading         0.309 0.052 220   0.698 0.016 197
-        accent          0.615 0.139 245   0.615 0.139 245
-        link            0.615 0.139 245   0.615 0.139 245
-        selection       0.931 0.026 92    0.309 0.052 220
-        sidebarTint     0.931 0.026 92    0.309 0.052 220
-        codeBackground  0.931 0.026 92    0.309 0.052 220
-        quoteRule       0.698 0.016 197   0.523 0.028 219
-        codeKeyword     0.644 0.151 119   0.644 0.151 119
-        codeString      0.644 0.102 187   0.644 0.102 187
-        codeType        0.654 0.134 86    0.654 0.134 86
-        codeComment     0.698 0.016 197   0.523 0.028 219
-        """)
-
-    static let gruvbox = Theme("Gruvbox", "Retro groove: warm parchment by day, charcoal and cream at night.", """
-        paper           0.956 0.055 96    0.277 0     0
-        ink             0.344 0.007 49    0.894 0.057 89
-        ink2            0.55  0.023 63    0.69  0.035 76
-        syntax          0.619 0.029 67    0.619 0.029 67
-        heading         0.513 0.162 39    0.731 0.182 52
-        accent          0.471 0.082 216   0.693 0.042 170
-        link            0.471 0.082 216   0.693 0.042 170
-        selection       0.825 0.051 85    0.411 0.012 52
-        sidebarTint     0.894 0.057 89    0.344 0.007 49
-        codeBackground  0.922 0.055 93    0.311 0.003 49
-        quoteRule       0.534 0.082 155   0.756 0.108 138
-        codeKeyword     0.437 0.179 28    0.66  0.218 30
-        codeString      0.546 0.112 106   0.765 0.158 111
-        codeType        0.618 0.128 71    0.832 0.159 83
-        codeComment     0.619 0.029 67    0.619 0.029 67
-        """)
-
-    static let nord = Theme("Nord", "Arctic: Polar Night paper, Snow Storm ink, Frost accents. Dark only.", """
-        paper           0.324 0.023 264   0.324 0.023 264
-        ink             0.899 0.016 263   0.899 0.016 263
-        ink2            0.739 0.022 262   0.739 0.022 262
-        syntax          0.537 0.044 264   0.537 0.044 264
-        heading         0.775 0.062 217   0.775 0.062 217
-        accent          0.775 0.062 217   0.775 0.062 217
-        link            0.697 0.059 249   0.697 0.059 249
-        selection       0.416 0.032 264   0.416 0.032 264
-        sidebarTint     0.379 0.029 266   0.379 0.029 266
-        codeBackground  0.379 0.029 266   0.379 0.029 266
-        quoteRule       0.594 0.077 254   0.594 0.077 254
-        codeKeyword     0.697 0.059 249   0.697 0.059 249
-        codeString      0.768 0.075 131   0.768 0.075 131
-        codeType        0.763 0.048 194   0.763 0.048 194
-        codeComment     0.537 0.044 264   0.537 0.044 264
-        """)
-
-    static let tokyoNight = Theme("Tokyo Night", "Downtown Tokyo after dark; Tokyo Night Day for the light slot.", """
-        paper           0.913 0.007 277   0.226 0.021 280
-        ink             0.512 0.156 264   0.846 0.061 275
-        ink2            0.565 0.098 271   0.767 0.054 275
-        syntax          0.649 0.062 276   0.496 0.068 274
-        heading         0.6   0.18  258   0.719 0.132 264
-        accent          0.514 0.103 231   0.82  0.105 236
-        link            0.573 0.105 174   0.822 0.1   182
-        selection       0.809 0.05  274   0.332 0.064 268
-        sidebarTint     0.873 0.02  270   0.204 0.016 285
-        codeBackground  0.873 0.02  270   0.204 0.016 285
-        quoteRule       0.732 0.045 278   0.409 0.055 274
-        codeKeyword     0.604 0.225 299   0.751 0.134 299
-        codeString      0.525 0.093 130   0.795 0.139 130
-        codeType        0.553 0.091 213   0.754 0.124 213
-        codeComment     0.649 0.062 276   0.496 0.068 274
-        """)
+    static let carbon = Theme("Carbon", "Charcoal paper, near-white ink, a green accent.", neutral)
 }

@@ -61,6 +61,7 @@ private final class Sandbox {
 
     init() {
         defaults = UserDefaults(suiteName: name)!
+        defaults.set(true, forKey: LinkPreviews.defaultsKey)
     }
 
     func previews(_ fetcher: Pages?) -> LinkPreviews {

@@ -48,15 +48,11 @@ targets:
       - path: Dewline
         excludes:
           - Fonts
-          - Specimens
           - Welcome.md
           - Syntaxes.packdump
       - path: Dewline/Welcome.md
         buildPhase: resources
       - path: Dewline/Fonts
-        type: folder
-        buildPhase: resources
-      - path: Dewline/Specimens
         type: folder
         buildPhase: resources
       - path: Dewline/Syntaxes.packdump

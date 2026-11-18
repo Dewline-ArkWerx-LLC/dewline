@@ -206,7 +206,7 @@ set -gx EDITOR "dewline open --wait"</code></pre>
       <div class="code" data-lang="Usage">
 <pre tabindex="0"><code>dewline capture [TEXT]...</code></pre>
       </div>
-      <p>Adds one dated entry to the end of your inbox note. The words become the entry; with no words, the command reads stdin. The inbox is <code>~/Documents/Dewline/Inbox.md</code> unless you pick another file in Settings &gt; Files &gt; Inbox. The command makes the file and its folders when they are missing.</p>
+      <p>Adds one dated entry to the end of your inbox note. The words become the entry; with no words, the command reads stdin. The inbox is <code>~/Documents/Dewline/Inbox.md</code> unless you pick another file in Settings &gt; General &gt; Inbox. The command makes the file and its folders when they are missing.</p>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline capture Call the notary about the DMG
 <span class="p">$ </span>echo "- [ ] Check the appcast before tagging" | dewline capture
@@ -337,13 +337,13 @@ For more information, try '--help'.
           </tbody>
         </table>
       </div>
-      <p>The inbox location is not an environment variable. <code>capture</code> and <code>mcp</code> read Settings &gt; Files &gt; Inbox from the <code>DewlineInboxPath</code> default in <code>dev.arkwerx.dewline</code>.</p>
+      <p>The inbox location is not an environment variable. <code>capture</code> and <code>mcp</code> read Settings &gt; General &gt; Inbox from the <code>DewlineInboxPath</code> default in <code>dev.arkwerx.dewline</code>.</p>
 
       <h2 id="files">Files</h2>
       <p>The app's own folder is <code>~/Library/Application Support/dev.arkwerx.dewline</code>, shortened here to <code>…/dev.arkwerx.dewline</code>.</p>
       <dl>
         <dt><code>~/Documents/Dewline/Inbox.md</code></dt>
-        <dd><code>capture</code> and the MCP <code>append_to_inbox</code> tool append to it, unless Settings &gt; Files &gt; Inbox names another file.</dd>
+        <dd><code>capture</code> and the MCP <code>append_to_inbox</code> tool append to it, unless Settings &gt; General &gt; Inbox names another file.</dd>
         <dt><code>…/dev.arkwerx.dewline/snapshots/decisions.jsonl</code></dt>
         <dd>The app appends one line per Keep or Revert of an agent's change, readable only by you. <code>changes</code> and the MCP <code>decisions</code> tool read it.</dd>
         <dt><code>…/dev.arkwerx.dewline/run/control.sock</code></dt>

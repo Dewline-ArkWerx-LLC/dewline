@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct GeneralPane: View {
     @Bindable var preferences: Preferences
@@ -18,6 +19,26 @@ struct GeneralPane: View {
                 }
                 SettingsRow(label: "New notes go in") {
                     FolderField(url: preferences.newFileFolder) { preferences.newFileFolder = $0 }
+                }
+            }
+            SettingsSection(title: "Files") {
+                SettingsRow(label: "Show files .gitignore hides", detail: "They show dimmed in the sidebar.") {
+                    OnOff(label: "Show files .gitignore hides", isOn: $preferences.showsIgnored)
+                }
+                SettingsRow(label: "Pasted images go") {
+                    TextChoice(label: "Pasted images go", selection: $preferences.attachments, options: [
+                        ("Beside the note", .beside), ("In an \u{201C}attachments\u{201D} folder beside it", .subfolder),
+                    ])
+                }
+                SettingsRow(label: "Inbox", detail: "File > Capture\u{2026}, the Services menu, Shortcuts, dewline capture and MCP add to the end of this note.") {
+                    PathField(url: preferences.inbox) {
+                        let panel = NSSavePanel()
+                        panel.allowedContentTypes = [UTType("net.daringfireball.markdown") ?? .plainText]
+                        panel.directoryURL = preferences.inbox.deletingLastPathComponent()
+                        panel.nameFieldStringValue = preferences.inbox.lastPathComponent
+                        panel.prompt = "Use"
+                        if panel.runModal() == .OK, let url = panel.url { preferences.inbox = url }
+                    }
                 }
             }
             SettingsSection(title: "Updates", note: updates.updater == nil ? "This build does not update itself." : Updates.lineText) {
@@ -57,6 +78,9 @@ struct GeneralPane: View {
                 preferences.launchBehavior = factory.launchBehavior
                 preferences.opensInSource = factory.opensInSource
                 preferences.newFileFolder = factory.newFileFolder
+                preferences.showsIgnored = factory.showsIgnored
+                preferences.attachments = factory.attachments
+                preferences.inbox = factory.inbox
                 updates.setAutomaticChecks(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool ?? false)
                 updates.setBeta(false)
             }

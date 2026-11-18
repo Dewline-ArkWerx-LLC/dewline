@@ -85,6 +85,17 @@
       <div class="hero-slot">
         <figure class="hva" role="img" aria-label="A note called Dew point, typed as plain Markdown and then shown rendered: a heading, a paragraph with a link to Station log, a table of 04:00 and 06:00 readings, a task list, and a last line where the caret sits and the bold markers stay visible.">
           <p class="hva-cap" aria-hidden="true">field-notes/Dew point.md</p>
+          <div class="hz" aria-hidden="true">
+            <div class="hz-sky">
+              <div class="hz-rise">
+                <i class="hz-halo"></i>
+                <i class="hz-band"></i><i class="hz-band"></i><i class="hz-band"></i>
+                <i class="hz-sun"></i>
+              </div>
+              <svg class="hz-dew" viewBox="0 0 400 100" preserveAspectRatio="none"><circle cx="38" cy="62" r="1.6"/><circle cx="74" cy="30" r="1.2"/><circle cx="118" cy="48" r="1.4"/><circle cx="150" cy="18" r="1"/><circle cx="252" cy="22" r="1.1"/><circle cx="290" cy="52" r="1.5"/><circle cx="330" cy="28" r="1.2"/><circle cx="362" cy="64" r="1.3"/><circle cx="204" cy="8" r="0.9"/></svg>
+            </div>
+            <i class="hz-line"></i>
+          </div>
           <div class="hva-sheet" aria-hidden="true">
             <div class="hva-stage">
               <div class="hva-src">
@@ -156,24 +167,68 @@
   </section>
 
   <section class="scene" aria-labelledby="scene-h">
-    <div class="scene-pin">
-      <div class="wrap scene-in">
-        <div class="scene-copy">
-          <h2 id="scene-h">Other things write to your notes.</h2>
-          <p>A git pull can change a note while you're typing in it. Dewline merges the change, leaves your undo history alone and marks it until you keep it (<kbd>⌘↩</kbd>) or revert it (<kbd>⌥⌘⌫</kbd>).</p>
-        </div>
-        <figure class="stage" role="img" aria-label="A note called Station log. You are typing its first line when a git pull changes the next one: Low 4.8 °C at 05:00 is struck through and Low 4.6 °C, from the grass sensor, is marked in orange, stamped git pull at 06:12, with Revert and Keep beside it.">
-          <p class="stage-cap" aria-hidden="true">notes/Station log.md</p>
-          <div class="stage-sheet" aria-hidden="true">
+    <div class="wrap scene-in">
+      <div class="scene-copy">
+        <h2 id="scene-h">Other things write to your notes.</h2>
+        <p>An agent or a git pull can change a note while you're typing in it. Dewline merges the change, leaves your undo history alone and marks it until you keep it (<kbd>⌘↩</kbd>) or revert it (<kbd>⌥⌘⌫</kbd>).</p>
+      </div>
+      <figure class="stage">
+        <p class="stage-cap" aria-hidden="true">notes/Station log.md</p>
+        <div class="stage-sheet">
+          <div aria-hidden="true">
             <h3>Station log</h3>
-            <p class="you">Dew on the rail <span class="typed"><span class="typed-t">by 05:40</span><span class="typed-track"><i></i></span></span></p>
-            <p class="chg"><del>Low 4.8 °C at 05:00.</del> <span class="ins">Low 4.6 °C, from the grass sensor.</span></p>
-            <div class="stamp-row">
-              <span class="stamp">git pull · 06:12</span>
-              <span class="acts"><span class="act">Revert</span><span class="act keep">Keep</span></span>
+            <p class="you">Dew on the rail <span class="typed">by 05:40<span class="typed-track"><i></i></span></span></p>
+          </div>
+          <div class="w-panels">
+            <div class="w-panel on" id="w-claude" role="tabpanel" tabindex="0" aria-labelledby="w-tab-claude">
+              <p class="vh">Claude Code changes Sensor 2 offline to Sensor 2 back at 05:52 at 06:10, while you type. The change is marked with its name, and Dewline kept a version of the note first.</p>
+              <div aria-hidden="true">
+                <p class="chg"><del>Sensor 2 offline.</del> <span class="ins">Sensor 2 back at 05:52.</span></p>
+                <div class="stamp-row">
+                  <span class="stamp">Claude Code · 06:10 · version kept</span>
+                  <span class="acts"><span class="act">Revert</span><span class="act keep">Keep</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="w-panel" id="w-codex" role="tabpanel" tabindex="0" aria-labelledby="w-tab-codex">
+              <p class="vh">Codex changes Rail dry by 07:00 to Rail dry by 07:25, per the logger at 06:11, while you type. The change is marked with its name, and Dewline kept a version of the note first.</p>
+              <div aria-hidden="true">
+                <p class="chg"><del>Rail dry by 07:00.</del> <span class="ins">Rail dry by 07:25, per the logger.</span></p>
+                <div class="stamp-row">
+                  <span class="stamp">Codex · 06:11 · version kept</span>
+                  <span class="acts"><span class="act">Revert</span><span class="act keep">Keep</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="w-panel" id="w-git" role="tabpanel" tabindex="0" aria-labelledby="w-tab-git">
+              <p class="vh">git pull changes Low 4.8 °C at 05:00 to Low 4.6 °C, from the grass sensor at 06:12, while you type. The change is marked with its name, and Dewline kept a version of the note first.</p>
+              <div aria-hidden="true">
+                <p class="chg"><del>Low 4.8 °C at 05:00.</del> <span class="ins">Low 4.6 °C, from the grass sensor.</span></p>
+                <div class="stamp-row">
+                  <span class="stamp">git pull · 06:12 · version kept</span>
+                  <span class="acts"><span class="act">Revert</span><span class="act keep">Keep</span></span>
+                </div>
+              </div>
             </div>
           </div>
-        </figure>
+        </div>
+      </figure>
+      <div class="writers" role="tablist" aria-label="Writers">
+        <button type="button" class="writer" role="tab" id="w-tab-claude" aria-labelledby="w-name-claude" aria-describedby="w-body-claude" aria-selected="true" aria-controls="w-claude">
+          <span class="seg" aria-hidden="true"><i></i></span>
+          <span class="writer-name" id="w-name-claude">Claude Code</span>
+          <span class="writer-body" id="w-body-claude">Its edit lands while you type, under its name. Its hooks prove the write was its own.</span>
+        </button>
+        <button type="button" class="writer" role="tab" id="w-tab-codex" aria-labelledby="w-name-codex" aria-describedby="w-body-codex" aria-selected="false" aria-controls="w-codex" tabindex="-1">
+          <span class="seg" aria-hidden="true"><i></i></span>
+          <span class="writer-name" id="w-name-codex">Codex</span>
+          <span class="writer-body" id="w-body-codex">A patch lands the same way. Dewline keeps a version of the note before it merges.</span>
+        </button>
+        <button type="button" class="writer" role="tab" id="w-tab-git" aria-labelledby="w-name-git" aria-describedby="w-body-git" aria-selected="false" aria-controls="w-git" tabindex="-1">
+          <span class="seg" aria-hidden="true"><i></i></span>
+          <span class="writer-name" id="w-name-git">git pull</span>
+          <span class="writer-body" id="w-body-git">A pull merges around your typing. A save never overwrites a newer copy.</span>
+        </button>
       </div>
     </div>
   </section>

@@ -177,6 +177,7 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.92em; }
 .get-brew { margin-top: 1.5rem; max-width: 27rem; }
 .get-brew-label { font-size: 0.8125rem; color: var(--slate); margin-bottom: 0.5rem; }
 .meta { margin-top: 1.5rem; font-size: 0.875rem; color: var(--slate); }
+.hero { overflow-x: clip; }
 .horizon { height: 3px; background: var(--dawn); transform-origin: left; }
 
 /* The hero slot holds whichever option is in hero.css and hero.js; styles.css owns only its box. */
@@ -202,7 +203,8 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.92em; }
 .chapter .fig { font: 400 0.92em/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
 kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 
-/* The scene. At rest it is the end state: the change has landed, marked, with Revert and Keep. */
+/* The scene: three writers take turns landing a change in the open note. At rest, and without a
+   script, the first writer's change has landed, marked, with Revert and Keep. */
 .scene { border-top: 1px solid var(--rule); }
 .scene-in {
   display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 35rem); justify-content: space-between;
@@ -213,6 +215,27 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   font-variation-settings: "opsz" 60; letter-spacing: -0.008em; color: var(--ink); text-wrap: balance;
 }
 .scene-copy p { margin-top: 1rem; text-wrap: pretty; }
+.w-panels { display: grid; }
+.w-panel { grid-area: 1 / 1; min-width: 0; border-radius: 0.25rem; }
+.w-panel:not(.on) { visibility: hidden; opacity: 0; }
+
+/* The writers: one tab each. Its bar is the progress segment; the others sit dimmed. */
+.writers {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem clamp(1.5rem, 4vw, 3.5rem); margin-top: clamp(0.5rem, 2vw, 1.5rem);
+}
+.writer {
+  display: block; padding: 0 0 0.25rem; border: 0; background: none; color: inherit;
+  font: 400 0.9375rem/1.55 var(--sans); text-align: left; cursor: pointer;
+}
+.writer:focus-visible { outline-offset: 6px; }
+.seg { display: block; height: 2px; margin-bottom: 1.125rem; border-radius: 1px; background: var(--rule); overflow: hidden; }
+.seg i { display: block; height: 100%; background: var(--dawn); transform: scaleX(0); transform-origin: left; }
+.writer[aria-selected="true"] .seg i { transform: none; }
+.writer-name { display: block; margin-bottom: 0.25rem; font-weight: 600; color: var(--ink); }
+.writer-body { display: block; max-width: 22rem; text-wrap: pretty; }
+.writer[aria-selected="false"] > * { color: var(--slate); }
+.writer[aria-selected="false"]:hover .writer-name { color: var(--ink); }
 .scene-copy kbd { font: 400 0.95em/1 var(--chrome); }
 .stage-cap { margin: 0 0 0.75rem 0.125rem; font: 400 0.75rem/1 var(--mono); color: var(--slate); }
 .stage-sheet {
@@ -225,7 +248,7 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 .typed { position: relative; display: inline-block; }
 .typed-track { position: absolute; inset: 0; }
 .typed-track i {
-  position: absolute; right: -3px; top: 50%; width: 2px; height: 1.15em; margin-top: -0.6em;
+  position: absolute; right: -4px; top: 50%; width: 2px; height: 1.15em; margin-top: -0.6em;
   border-radius: 1px; background: var(--dawn);
 }
 .chg { position: relative; }
@@ -342,6 +365,7 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   .hero-slot { justify-self: center; }
   .scene-in { grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
   .stage { width: 100%; max-width: 35rem; justify-self: center; }
+  .writers { max-width: 35rem; width: 100%; justify-self: center; }
 }
 @media (max-width: 40rem) {
   .top nav .opt { display: none; }
@@ -351,6 +375,8 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   .stage-sheet h3 { font-size: 1.625rem; }
   .chg::before { left: -0.875rem; }
   .stamp-row { margin-inline: -1.25rem -0.5rem; padding-inline: 1.25rem 0.5rem; }
+  .writers { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .seg { margin-bottom: 0.75rem; }
   .compare, .compare tbody, .compare tr, .compare th, .compare td { display: block; }
   .compare thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .compare tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--rule); padding-block: 0.875rem; }
@@ -421,34 +447,24 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   }
 }
 
-/* The scene: a 240svh track pins the stage while scroll plays it, start to finish, over the
-   track's contain range. Short viewports keep the still version, since the pin would not fit. */
-@media screen and (prefers-reduced-motion: no-preference) and (min-height: 36rem) {
-  @supports (animation-timeline: view()) {
-    .scene { height: 240svh; view-timeline: --scene block; }
-    .scene-pin {
-      position: sticky; top: calc(var(--top-bar) + env(safe-area-inset-top, 0px));
-      display: grid; align-items: center; min-height: calc(100svh - var(--top-bar));
-    }
-    .scene-in { padding-block: 2rem; }
-    .typed-t, .typed-track, .chg del::after, .ins, .chg::before, .stamp, .acts, .act.keep {
-      animation-timing-function: linear; animation-fill-mode: both;
-      animation-duration: 1ms; animation-timeline: --scene;
-    }
-    .typed-t { animation-name: s-clip; animation-timing-function: steps(8); animation-range: contain 5% contain 30%; }
-    .typed-track { animation-name: s-track; animation-timing-function: steps(8); animation-range: contain 5% contain 30%; }
-    .chg del::after { animation-name: s-strike; animation-range: contain 32% contain 46%; }
-    .ins { animation-name: s-clip; animation-range: contain 36% contain 52%; }
-    .chg::before { animation-name: s-bar; animation-range: contain 36% contain 46%; }
-    .stamp { animation-name: s-stamp; animation-range: contain 44% contain 56%; }
-    .acts { animation-name: s-acts; animation-range: contain 56% contain 70%; }
-    .act.keep { animation-name: s-press; animation-range: contain 82% contain 92%; }
+/* The scene's turns, run by site.js: the selected bar fills over 5 s and its end passes the turn
+   on. Hover, keyboard focus, scrolling away or a hidden tab hold the bar, so the turn waits too.
+   The new writer's change lands the way the app draws it: strike, insert, bar, stamp, actions. */
+@media screen and (prefers-reduced-motion: no-preference) {
+  .w-panel { transition: opacity 320ms var(--ease-out), visibility 0s; }
+  .w-panel:not(.on) { transition: opacity 200ms var(--ease-in), visibility 0s 200ms; }
+  .scene.is-live:not(.is-chosen) .writer[aria-selected="true"] .seg i { animation-name: seg; animation-duration: 5s; animation-timing-function: linear; animation-fill-mode: both; }
+  .scene.is-live .typed-track i { animation-name: blink; animation-duration: 1050ms; animation-timing-function: steps(1, end); animation-iteration-count: infinite; }
+  .scene.is-held :is(.seg i, .typed-track i, .w-panel *, .chg::before, del::after) { animation-play-state: paused; }
+  @media (hover: hover) {
+    .stage:hover ~ .writers .seg i, .writers:hover .seg i { animation-play-state: paused; }
   }
-}
-@media screen and (prefers-reduced-motion: no-preference) and (min-height: 36rem) and (max-width: 56rem) {
-  @supports (animation-timeline: view()) {
-    .scene { height: 200svh; }
-  }
+  .writers:has(:focus-visible) .seg i { animation-play-state: paused; }
+  .scene.is-live .w-panel.on .chg del::after { animation: s-strike 420ms var(--ease-out) 350ms both; }
+  .scene.is-live .w-panel.on .ins { animation: s-clip 520ms var(--ease-out) 650ms both; }
+  .scene.is-live .w-panel.on .chg::before { animation: s-bar 320ms var(--ease-out) 650ms both; }
+  .scene.is-live .w-panel.on .stamp { animation: s-stamp 360ms var(--ease-out) 1000ms both; }
+  .scene.is-live .w-panel.on .acts { animation: s-acts 420ms var(--ease-reveal) 1150ms both; }
 }
 
 @keyframes ln-in { from { opacity: 0; transform: translateY(105%); } }
@@ -461,9 +477,8 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 @keyframes mark { from { opacity: 0.4; transform: scale(0.6); } }
 @keyframes wipe { from { clip-path: inset(0 0 100% 0 round 0.75rem); } to { clip-path: inset(0 round 0.75rem); } }
 @keyframes s-clip { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
-@keyframes s-track { from { transform: translateX(-100%); } }
 @keyframes s-strike { from { transform: scaleX(0); } }
 @keyframes s-bar { from { transform: scaleY(0); } }
 @keyframes s-stamp { from { opacity: 0; transform: translateY(4px); } }
 @keyframes s-acts { from { opacity: 0; transform: translateY(8px); } }
-@keyframes s-press { 50% { transform: scale(0.96); } }
+@keyframes seg { from { transform: scaleX(0); } }

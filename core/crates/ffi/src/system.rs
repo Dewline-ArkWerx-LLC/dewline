@@ -5,7 +5,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use dewline_core::jail::Jail;
-use dewline_core::{export, inbox};
+use dewline_core::{export, highlight, inbox};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum Refusal {
@@ -19,9 +19,11 @@ fn refused(message: impl ToString) -> Refusal {
     }
 }
 
-/// A Quick Look page of `text`: the page export writes, with diagrams and math as their source and no image inlined.
+/// A Quick Look page of `text`: the page export writes, with diagrams and math as their source, no image inlined, and
+/// fenced code colored in the syntaxes at `syntaxes` (the app's `Syntaxes.packdump`) when they load.
 #[uniffi::export]
-pub fn preview_html(text: String, title: String, css: String) -> String {
+pub fn preview_html(text: String, title: String, css: String, syntaxes: Option<String>) -> String {
+    let syntaxes = syntaxes.and_then(|dump| highlight::Syntaxes::load(Path::new(&dump)));
     export::html(
         &text,
         &export::ExportOptions {
@@ -29,6 +31,7 @@ pub fn preview_html(text: String, title: String, css: String) -> String {
             css: &css,
             diagram: &|_| None,
             math: &|_, _| None,
+            code: &|language, code| syntaxes.as_ref()?.html(language, code),
             folder: None,
         },
     )

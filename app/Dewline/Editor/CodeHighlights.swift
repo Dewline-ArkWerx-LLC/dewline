@@ -29,6 +29,20 @@ final class CodeHighlights {
     private nonisolated static let wanted = Mutex<[UInt64: String]>([:])
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.highlight", qos: .userInitiated)
 
+    /// Copies the bundle's syntaxes into the app group's folder, where the Quick Look preview's sandbox reads them, when
+    /// the copy there differs.
+    nonisolated static func publishForPreview() {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "DewlineAppGroup") as? String,
+            let source = Bundle.main.url(forResource: "Syntaxes", withExtension: "packdump"),
+            let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+        else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let target = folder.appending(path: "Syntaxes.packdump")
+            guard let data = try? Data(contentsOf: source), (try? Data(contentsOf: target)) != data else { return }
+            try? data.write(to: target, options: .atomic)
+        }
+    }
+
     /// Moves the entries past an edit. An edit inside a block's code keeps the spans it missed until the new ones come.
     func textDidChange(edited: NSRange, delta: Int) {
         let oldEnd = NSMaxRange(edited) - delta

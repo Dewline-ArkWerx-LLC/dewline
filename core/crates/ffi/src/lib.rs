@@ -369,6 +369,7 @@ pub fn export_html(
             css: &css,
             diagram: &diagram,
             math: &math,
+            code: &|_, _| None,
             folder: folder.as_deref().map(std::path::Path::new),
         },
     )

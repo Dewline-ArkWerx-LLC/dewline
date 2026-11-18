@@ -241,7 +241,7 @@ final class ChangeStamp: NSView {
     private var textX: CGFloat = 0
     /// The size changed: the marks lay out again.
     var resized: () -> Void = {}
-    /// The first stamp in a session to show another app's change, while no agent has hooks, offers hook setup.
+    /// The first stamp in a session to show another app's change, while an installed agent lacks hooks, offers hook setup.
     private var offering = false
     private static var offeredHooks = false
     private static var checkingHooks = false
@@ -300,9 +300,9 @@ final class ChangeStamp: NSView {
         guard !Self.offeredHooks, !Self.checkingHooks, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         Self.checkingHooks = true
         Task { [weak self] in
-            let hooks = await Task.detached { HookStatus.read() }.value
+            let report = await HookSetup.run(HookSetup.command(), ["doctor"], answers: 0)
             Self.checkingHooks = false
-            guard !hooks.claude, !hooks.codex else { return Self.offeredHooks = true }
+            guard report.ran, !HookSetup.missing(in: report.output).isEmpty else { return Self.offeredHooks = true }
             guard let self, self.external, self.superview != nil else { return }
             Self.offeredHooks = true
             self.offering = true

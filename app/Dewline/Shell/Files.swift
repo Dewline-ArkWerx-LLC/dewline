@@ -1,40 +1,11 @@
 import AppKit
-
-/// A folder's top-level .gitignore, in the subset notes need: globs, a trailing slash for folders only,
-/// and a leading or inner slash to anchor a pattern at the root. Negations are skipped.
-struct GitIgnore {
-    private var patterns: [(glob: String, anchored: Bool, foldersOnly: Bool)] = []
-
-    init(_ contents: String) {
-        for raw in contents.split(whereSeparator: \.isNewline) {
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#"), !line.hasPrefix("!") else { continue }
-            let foldersOnly = line.hasSuffix("/")
-            if foldersOnly { line.removeLast() }
-            if line.hasPrefix("**/") { line.removeFirst(3) }
-            let anchored = line.contains("/")
-            if line.hasPrefix("/") { line.removeFirst() }
-            if !line.isEmpty { patterns.append((line, anchored, foldersOnly)) }
-        }
-    }
-
-    /// Whether `path`, relative to the root and "/"-separated, is ignored.
-    func ignores(_ path: String, isFolder: Bool) -> Bool {
-        let name = path.split(separator: "/").last.map(String.init) ?? path
-        return patterns.contains { pattern in
-            guard isFolder || !pattern.foldersOnly else { return false }
-            return pattern.anchored
-                ? fnmatch(pattern.glob, path, FNM_PATHNAME) == 0
-                : fnmatch(pattern.glob, name, 0) == 0
-        }
-    }
-}
+import MdCore
 
 /// One file or folder in a folder tree.
 struct FolderEntry: Equatable {
     let url: URL
     let isFolder: Bool
-    /// Matched by the root's .gitignore, and listed only while the sidebar shows what it hides.
+    /// Ignored by git, and listed only while the sidebar shows what it hides.
     var isIgnored = false
 
     /// The extensions of net.daringfireball.markdown, as project.yml declares it.
@@ -62,14 +33,14 @@ struct Folder {
     static let agentFolders: Set<String> = [".claude", ".cursor", ".github"]
 
     let url: URL
-    let ignore: GitIgnore
+    let ignore: GitIgnores
 
     init(_ url: URL) {
         self.url = url.standardizedFileURL
-        ignore = GitIgnore((try? String(contentsOf: url.appending(path: ".gitignore"), encoding: .utf8)) ?? "")
+        ignore = GitIgnores(folder: self.url)
     }
 
-    /// The children of `folder`, folders first in Finder order, and the names the root's .gitignore hides,
+    /// The children of `folder`, folders first in Finder order, and the names git ignores,
     /// which are among the children only when `showingIgnored`. Hidden files, .git and node_modules never show; the
     /// agent folders do.
     func children(of folder: URL, showingIgnored: Bool = false) -> (entries: [FolderEntry], ignored: [String]) {

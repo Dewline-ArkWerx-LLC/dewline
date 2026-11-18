@@ -338,11 +338,7 @@ impl Writer {
             | TagEnd::Strikethrough
             | TagEnd::Superscript
             | TagEnd::Subscript => self.out.push('}'),
-            TagEnd::Link => {
-                if self.links.pop() == Some(true) {
-                    self.out.push('}');
-                }
-            }
+            TagEnd::Link if self.links.pop() == Some(true) => self.out.push('}'),
             _ => {}
         }
     }

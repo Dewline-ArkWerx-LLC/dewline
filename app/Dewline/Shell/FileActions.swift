@@ -1,4 +1,5 @@
 import AppKit
+import MdCore
 
 /// Making, naming, moving and trashing notes and folders on disk, each one undoable. An open note follows its file.
 @MainActor
@@ -29,16 +30,45 @@ enum FileActions {
         return url
     }
 
-    /// Renames `url` to `name`, keeping a note's extension when `name` has none. An open note follows.
+    /// Renames `url` to `name`, keeping a note's extension when `name` has none. An open note follows, and a note's
+    /// links from the other notes in `folder` follow too.
     @discardableResult
-    static func rename(_ url: URL, to name: String, undo: UndoManager? = nil) throws -> URL {
+    static func rename(_ url: URL, to name: String, relinkingIn folder: URL? = nil, undo: UndoManager? = nil) throws -> URL {
         let clean = cleaned(name)
         guard !clean.isEmpty else { throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSURLErrorKey: url]) }
         let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
         let keepsExtension = !isFolder && (clean as NSString).pathExtension.isEmpty && !url.pathExtension.isEmpty
         let target = url.deletingLastPathComponent().appending(path: keepsExtension ? clean + "." + url.pathExtension : clean)
         guard target.lastPathComponent != url.lastPathComponent else { return url }
-        return try relocate(url, to: target, named: "Rename", undo: undo)
+        let renamed = try relocate(url, to: target, named: "Rename", undo: undo)
+        if let folder, !isFolder { relink(from: url, to: renamed, in: folder, undo: undo) }
+        return renamed
+    }
+
+    /// Points the links in `folder`'s notes to the note moved from `old` at `new`: open notes through their editors,
+    /// as a landing that undo steps over, closed notes on disk. Undo points them back.
+    private static func relink(from old: URL, to new: URL, in folder: URL, undo: UndoManager?) {
+        let open = NSDocumentController.shared.documents.compactMap { document -> (url: URL, textView: EditorTextView)? in
+            guard let document = document as? MarkdownDocument, let url = document.fileURL, let textView = document.textView else { return nil }
+            return (url.standardizedFileURL, textView)
+        }
+        let edits = NoteLinks.relink(
+            from: old.standardizedFileURL, to: new.standardizedFileURL, in: folder.standardizedFileURL,
+            open: open.map { ($0.url, $0.textView.string) }
+        )
+        for (note, edits) in zip(open, edits) where !edits.isEmpty {
+            let storage = note.textView.textStorage!
+            note.textView.history.land(edits) {
+                storage.beginEditing()
+                for edit in edits.reversed() {
+                    storage.replaceCharacters(in: edit.range, with: edit.text)
+                }
+                storage.endEditing()
+            }
+        }
+        undo?.registerUndo(withTarget: Undo.shared) { _ in
+            MainActor.assumeIsolated { relink(from: new, to: old, in: folder, undo: undo) }
+        }
     }
 
     /// "Name copy.md" beside `url` (or "Name copy 2.md").
@@ -223,7 +253,7 @@ extension MainWindowController {
 
     @objc func renameItem(_ sender: Any?) {
         guard let request = (sender as? NSMenuItem)?.representedObject as? RenameRequest else { return }
-        perform { try FileActions.rename(request.url, to: request.name, undo: self.window?.undoManager) }
+        perform { try FileActions.rename(request.url, to: request.name, relinkingIn: self.folder?.url, undo: self.window?.undoManager) }
     }
 
     @objc func duplicateItem(_ sender: Any?) {

@@ -165,4 +165,28 @@ struct ExportTests {
         }
         #expect(book.range(of: Data("<dc:title>Report</dc:title>".utf8)) != nil)
     }
+
+    /// LaTeX writes the article and a folder beside it with the diagram and the image, and refuses a folder that is a
+    /// symbolic link.
+    @Test func latexWritesItsFiguresBesideTheArticle() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2]).write(to: folder.appending(path: "dot.png"))
+        let url = folder.appending(path: "report.tex")
+        try await Export.write(sample, title: "report", as: .latex, to: url, folder: folder)
+        let tex = try String(contentsOf: url, encoding: .utf8)
+        #expect(tex.contains("\\title{Report}") && tex.contains("$x^2$") && tex.contains("\\begin{tabular}{lr}"))
+        #expect(tex.contains("\\includegraphics[width=\\maxwidth]{report-files/image-1.png}"))
+        #expect(tex.contains("\\includegraphics[width=\\maxwidth]{report-files/diagram-2.png}"))
+        let diagram = try Data(contentsOf: folder.appending(path: "report-files/diagram-2.png"))
+        #expect(diagram.starts(with: Data([0x89, 0x50, 0x4E, 0x47])))
+
+        let elsewhere = try self.folder()
+        defer { try? FileManager.default.removeItem(at: elsewhere) }
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "linked-files"), withDestinationURL: elsewhere)
+        await #expect(throws: Export.Failure.self) {
+            try await Export.write(sample, title: "linked", as: .latex, to: folder.appending(path: "linked.tex"), folder: folder)
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path).isEmpty)
+    }
 }

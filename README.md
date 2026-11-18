@@ -29,7 +29,7 @@ macOS 26+ · Free · No account, no telemetry
 
 **Your agent's edits, by name.** Hooks let Claude Code and Codex name their writes, which land as marked changes you keep or revert. Dewline ships no model and needs no account.
 
-**Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, EPUB, plain text or PNG. Quick Look previews .md files in Finder.
+**Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, EPUB, LaTeX, plain text or PNG. Quick Look previews .md files in Finder.
 
 Every shortcut is in [docs/keyboard.md](docs/keyboard.md), and the full guide is at [dewline.arkwerx.com/docs](https://dewline.arkwerx.com/docs/).
 

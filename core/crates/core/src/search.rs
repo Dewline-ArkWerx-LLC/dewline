@@ -1,9 +1,12 @@
-use std::borrow::Cow;
-use std::fs::OpenOptions;
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
+use regex::{Regex, RegexBuilder};
+
+use crate::file;
+use crate::jail::{Jail, JailError};
 use crate::text::Opened;
 
 /// Files over this many bytes are skipped.
@@ -17,6 +20,7 @@ const PREVIEW: usize = 160;
 pub struct Options {
     pub match_case: bool,
     pub whole_word: bool,
+    pub regex: bool,
 }
 
 /// Offsets are UTF-16 code units: `start..end` in the file's text after any
@@ -48,21 +52,111 @@ pub struct Found {
     pub stopped: bool,
 }
 
-/// Searches `paths` in order for `query` as plain text, and stops after
-/// `limit` matches. Without `match_case` letters match in any case, so
-/// "STRASSE" finds "Straße". With `whole_word` a match starts and ends at
-/// word boundaries; Han and kana characters are words on their own, since
-/// those scripts don't space their words. A query with a line break matches
-/// nothing. Files over 64 MB, files that aren't UTF-8 and files that can't
-/// be read are skipped.
-pub fn search<P: AsRef<Path>>(paths: &[P], query: &str, options: Options, limit: usize) -> Found {
+/// What a search looks for: plain text, or a regular expression with
+/// `regex`.
+pub struct Query {
+    /// The text, folded unless the case must match, or the pattern's source.
+    text: String,
+    pattern: Option<Regex>,
+    options: Options,
+}
+
+impl Query {
+    /// Without `match_case` letters match in any case, so "STRASSE" finds
+    /// "Straße". With `whole_word` a match starts and ends at word
+    /// boundaries; Han and kana characters are words on their own, since those
+    /// scripts don't space their words. A match never spans lines, so text with
+    /// a line break matches nothing. Err says why a pattern doesn't compile.
+    pub fn new(query: &str, options: Options) -> Result<Self, String> {
+        let pattern = options
+            .regex
+            .then(|| {
+                RegexBuilder::new(query)
+                    .case_insensitive(!options.match_case)
+                    .build()
+            })
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let text = if options.match_case || options.regex {
+            query.to_owned()
+        } else {
+            fold(query)
+        };
+        Ok(Self {
+            text,
+            pattern,
+            options,
+        })
+    }
+
+    /// Calls `each` with the number, byte offset and text of the line of each
+    /// match, then the match's byte range in the line, until `each` returns
+    /// false. Returns whether it did. A pattern's empty matches are skipped.
+    fn each(
+        &self,
+        text: &str,
+        mut each: impl FnMut(usize, usize, &str, usize, usize) -> bool,
+    ) -> bool {
+        if self.text.is_empty() || self.pattern.is_none() && self.text.contains(['\n', '\r']) {
+            return false;
+        }
+        let whole =
+            |line: &str, start, end| !self.options.whole_word || whole_word(line, start, end);
+        let mut folded = Folded::default();
+        for (number, offset, line) in lines(text) {
+            if let Some(pattern) = &self.pattern {
+                for found in pattern.find_iter(line) {
+                    let (start, end) = (found.start(), found.end());
+                    if start < end
+                        && whole(line, start, end)
+                        && !each(number, offset, line, start, end)
+                    {
+                        return true;
+                    }
+                }
+                continue;
+            }
+            let haystack = if self.options.match_case {
+                line
+            } else {
+                folded.fill(line);
+                &folded.text
+            };
+            let mut from = 0;
+            while let Some(at) = haystack[from..].find(&self.text) {
+                let at = from + at;
+                let after = at + self.text.len();
+                let range = if self.options.match_case {
+                    Some((at, after))
+                } else {
+                    folded.source(at, after)
+                };
+                let Some((start, end)) = range.filter(|&(start, end)| whole(line, start, end))
+                else {
+                    from = at + haystack[at..].chars().next().map_or(1, char::len_utf8);
+                    continue;
+                };
+                if !each(number, offset, line, start, end) {
+                    return true;
+                }
+                from = after;
+            }
+        }
+        false
+    }
+}
+
+/// Searches `paths` in order for `query`, and stops after `limit` matches.
+/// Files over 64 MB, files that aren't UTF-8 and files that can't be read are
+/// skipped.
+pub fn search<P: AsRef<Path>>(paths: &[P], query: &Query, limit: usize) -> Found {
     let mut found = Found::default();
     let mut left = limit;
     for (file, path) in paths.iter().enumerate() {
-        let Some(text) = read(path.as_ref()) else {
+        let Some(Opened::Utf8 { text, .. }) = read(path.as_ref()).map(Opened::new) else {
             continue;
         };
-        let (matches, more) = find(&text, query, options, left);
+        let (matches, more) = find(&text, query, left);
         left -= matches.len();
         if !matches.is_empty() {
             found.files.push(FileMatches { file, matches });
@@ -75,85 +169,119 @@ pub fn search<P: AsRef<Path>>(paths: &[P], query: &str, options: Options, limit:
     found
 }
 
-/// The file's text, or None when it is not a regular file, is over
-/// `MAX_FILE` or isn't UTF-8. Opening doesn't wait, so a FIFO named like a
-/// note is skipped instead of blocking.
-fn read(path: &Path) -> Option<String> {
+/// `text` with each match of `query` replaced by `with`, and how many there
+/// were. For a pattern, `$1` or `${name}` in `with` stands for what a group
+/// matched and `$$` for a dollar sign.
+pub fn replace(text: &str, query: &Query, with: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut done = 0;
+    let mut count = 0;
+    query.each(text, |_, offset, line, start, end| {
+        out.push_str(&text[done..offset + start]);
+        match query
+            .pattern
+            .as_ref()
+            .and_then(|pattern| pattern.captures_at(line, start))
+        {
+            Some(groups) => groups.expand(with, &mut out),
+            None => out.push_str(with),
+        }
+        done = offset + end;
+        count += 1;
+        true
+    });
+    out.push_str(&text[done..]);
+    (out, count)
+}
+
+/// Why a replace in a file wrote nothing.
+#[derive(Debug)]
+pub enum ReplaceError {
+    /// The file resolves outside the folder.
+    Outside,
+    /// The file changed after it was read.
+    Conflict,
+    Io(io::Error),
+}
+
+/// Replaces each match of `query` in the file at `path` with `with`, as
+/// `replace` does, and returns how many there were. Only a file that resolves
+/// inside `root` is read and written, opened from the root with no symlink on
+/// the way, and it is written only while it still holds what was read. A file
+/// `search` skips is left alone.
+pub fn replace_in_file(
+    root: &Path,
+    path: &Path,
+    query: &Query,
+    with: &str,
+) -> Result<usize, ReplaceError> {
+    let jail = Jail::new(root).map_err(ReplaceError::Io)?;
+    let (opened, relative) = jail.open(path).map_err(|error| match error {
+        JailError::Io(error) => ReplaceError::Io(error),
+        JailError::Outside | JailError::Root(_) => ReplaceError::Outside,
+    })?;
+    let Some(bytes) = read_file(opened) else {
+        return Ok(0);
+    };
+    let base = file::hash(&bytes);
+    let Opened::Utf8 { bom, text } = Opened::new(bytes) else {
+        return Ok(0);
+    };
+    let (text, count) = replace(&text, query, with);
+    if count > 0 {
+        let bytes = Opened::Utf8 { bom, text }.to_bytes();
+        file::save(&jail.root().join(relative), &base, &bytes).map_err(|error| match error {
+            file::SaveError::Conflict => ReplaceError::Conflict,
+            file::SaveError::Io(error) => ReplaceError::Io(error),
+        })?;
+    }
+    Ok(count)
+}
+
+/// The file's bytes, or None when it is not a regular file or is over
+/// `MAX_FILE`. Opening doesn't wait, so a FIFO named like a note is skipped
+/// instead of blocking.
+fn read(path: &Path) -> Option<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .ok()?;
+    read_file(file)
+}
+
+fn read_file(file: File) -> Option<Vec<u8>> {
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > MAX_FILE {
         return None;
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_FILE + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() as u64 > MAX_FILE {
-        return None;
-    }
-    match Opened::new(bytes) {
-        Opened::Utf8 { text, .. } => Some(text),
-        Opened::Other(_) => None,
-    }
+    (bytes.len() as u64 <= MAX_FILE).then_some(bytes)
 }
 
 /// The matches of `query` in `text`, at most `limit`, and whether more were
 /// left.
-fn find(text: &str, query: &str, options: Options, limit: usize) -> (Vec<Match>, bool) {
+fn find(text: &str, query: &Query, limit: usize) -> (Vec<Match>, bool) {
     let mut matches = Vec::new();
-    if query.is_empty() || query.contains(['\n', '\r']) {
-        return (matches, false);
-    }
-    let query = if options.match_case {
-        Cow::Borrowed(query)
-    } else {
-        Cow::Owned(fold(query))
-    };
-    let mut folded = Folded::default();
     let mut cursor = (0, 0);
-    for (number, offset, line) in lines(text) {
-        let haystack = if options.match_case {
-            line
-        } else {
-            folded.fill(line);
-            &folded.text
-        };
-        let mut indent = None;
-        let mut from = 0;
-        while let Some(at) = haystack[from..].find(&*query) {
-            let at = from + at;
-            let after = at + query.len();
-            let range = if options.match_case {
-                Some((at, after))
-            } else {
-                folded.source(at, after)
-            };
-            let Some((start, end)) =
-                range.filter(|&(start, end)| !options.whole_word || whole_word(line, start, end))
-            else {
-                from = at + haystack[at..].chars().next().map_or(1, char::len_utf8);
-                continue;
-            };
-            if matches.len() == limit {
-                return (matches, true);
-            }
-            let indent = *indent
-                .get_or_insert_with(|| line.len() - line.trim_start_matches([' ', '\t']).len());
-            let (preview, preview_start, preview_end) = preview(line, indent, start, end);
-            matches.push(Match {
-                line: number as u32,
-                start: utf16_at(text, &mut cursor, offset + start) as u32,
-                end: utf16_at(text, &mut cursor, offset + end) as u32,
-                preview,
-                preview_start: preview_start as u32,
-                preview_end: preview_end as u32,
-            });
-            from = after;
+    let more = query.each(text, |number, offset, line, start, end| {
+        if matches.len() == limit {
+            return false;
         }
-    }
-    (matches, false)
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let (preview, preview_start, preview_end) = preview(line, indent, start, end);
+        matches.push(Match {
+            line: number as u32,
+            start: utf16_at(text, &mut cursor, offset + start) as u32,
+            end: utf16_at(text, &mut cursor, offset + end) as u32,
+            preview,
+            preview_start: preview_start as u32,
+            preview_end: preview_end as u32,
+        });
+        true
+    });
+    (matches, more)
 }
 
 /// Each line's number from 1, its byte offset and its text without the line
@@ -341,15 +469,35 @@ mod tests {
     const ANY_CASE: Options = Options {
         match_case: false,
         whole_word: false,
+        regex: false,
     };
     const MATCH_CASE: Options = Options {
         match_case: true,
         whole_word: false,
+        regex: false,
     };
     const WHOLE_WORD: Options = Options {
         match_case: false,
         whole_word: true,
+        regex: false,
     };
+    const PATTERN: Options = Options {
+        match_case: false,
+        whole_word: false,
+        regex: true,
+    };
+
+    fn find(text: &str, query: &str, options: Options, limit: usize) -> (Vec<Match>, bool) {
+        super::find(text, &Query::new(query, options).unwrap(), limit)
+    }
+
+    fn search<P: AsRef<Path>>(paths: &[P], query: &str, options: Options, limit: usize) -> Found {
+        super::search(paths, &Query::new(query, options).unwrap(), limit)
+    }
+
+    fn replaced(text: &str, query: &str, with: &str, options: Options) -> (String, usize) {
+        replace(text, &Query::new(query, options).unwrap(), with)
+    }
 
     /// Each match as the text it covers, found through its UTF-16 range.
     fn found(text: &str, query: &str, options: Options) -> Vec<String> {
@@ -393,6 +541,101 @@ mod tests {
             })
             .collect();
         (dir, paths)
+    }
+
+    #[test]
+    fn patterns_match_within_a_line_in_any_case_unless_case_must_match() {
+        let text = "Plan 12\nplan 345 PLAN6";
+        assert_eq!(found(text, r"\d+", PATTERN), ["12", "345", "6"]);
+        assert_eq!(found(text, "^plan", PATTERN), ["Plan", "plan"]);
+        let exact = Options {
+            match_case: true,
+            ..PATTERN
+        };
+        assert_eq!(found(text, "plan|PLAN", exact), ["plan", "PLAN"]);
+        let whole = Options {
+            whole_word: true,
+            ..PATTERN
+        };
+        assert_eq!(found(text, r"plan\d*", whole), ["Plan", "plan", "PLAN6"]);
+        // Empty matches are not matches.
+        assert_eq!(found(text, "x*", PATTERN), Vec::<String>::new());
+        assert!(Query::new("(plan", PATTERN).is_err());
+        assert!(Query::new("(plan", ANY_CASE).is_ok());
+    }
+
+    #[test]
+    fn replacing_keeps_line_breaks_and_expands_groups() {
+        assert_eq!(
+            replaced("Plan\r\nplan PLAN", "plan", "note", ANY_CASE),
+            ("note\r\nnote note".into(), 3)
+        );
+        assert_eq!(
+            replaced(
+                "due 2026-11-17, $5",
+                r"(\d+)-(\d+)-(\d+)",
+                "$3.$2.$1 ($)",
+                PATTERN
+            ),
+            ("due 17.11.2026 ($), $5".into(), 1)
+        );
+        assert_eq!(
+            replaced("Straße", "STRASSE", "Weg", ANY_CASE),
+            ("Weg".into(), 1)
+        );
+        assert_eq!(replaced("plan", "note", "x", ANY_CASE), ("plan".into(), 0));
+    }
+
+    #[test]
+    fn replacing_in_a_file_keeps_its_byte_order_mark() {
+        let (dir, paths) = files(&[b"\xEF\xBB\xBFplan\nplan", b"\xFFplan"]);
+        let query = Query::new("plan", ANY_CASE).unwrap();
+        assert_eq!(
+            replace_in_file(dir.path(), &paths[0], &query, "note").unwrap(),
+            2
+        );
+        assert_eq!(fs::read(&paths[0]).unwrap(), b"\xEF\xBB\xBFnote\nnote");
+        // Not UTF-8: left alone.
+        assert_eq!(
+            replace_in_file(dir.path(), &paths[1], &query, "note").unwrap(),
+            0
+        );
+        assert_eq!(fs::read(&paths[1]).unwrap(), b"\xFFplan");
+    }
+
+    #[test]
+    fn replacing_never_writes_through_a_link_out_of_the_folder() {
+        let base = tempfile::tempdir().unwrap();
+        let (root, outside) = (base.path().join("root"), base.path().join("outside"));
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.md"), "plan").unwrap();
+        fs::write(root.join("notes/plan.md"), "plan").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.md"), root.join("secret.md")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        std::os::unix::fs::symlink("notes/plan.md", root.join("alias.md")).unwrap();
+        let query = Query::new("plan", ANY_CASE).unwrap();
+        for path in ["secret.md", "out/secret.md", "../outside/secret.md"] {
+            assert!(
+                matches!(
+                    replace_in_file(&root, &root.join(path), &query, "note"),
+                    Err(ReplaceError::Outside)
+                ),
+                "{path}"
+            );
+        }
+        assert_eq!(fs::read(outside.join("secret.md")).unwrap(), b"plan");
+        // A link that stays inside writes the file it names, and leaves the link.
+        assert_eq!(
+            replace_in_file(&root, &root.join("alias.md"), &query, "note").unwrap(),
+            1
+        );
+        assert_eq!(fs::read(root.join("notes/plan.md")).unwrap(), b"note");
+        assert!(
+            fs::symlink_metadata(root.join("alias.md"))
+                .unwrap()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -623,7 +866,10 @@ mod tests {
             query in "[aAbB🙂é ]{1,3}",
             match_case in any::<bool>(),
         ) {
-            let options = Options { match_case, whole_word: false };
+            let options = Options {
+                match_case,
+                ..Options::default()
+            };
             let units: Vec<u16> = text.encode_utf16().collect();
             let (matches, _) = find(&text, &query, options, usize::MAX);
             let expected = if match_case {
@@ -651,7 +897,10 @@ mod tests {
             query in "[sSßẞİiIﬁf ]{1,3}",
             whole_word in any::<bool>(),
         ) {
-            let options = Options { match_case: false, whole_word };
+            let options = Options {
+                whole_word,
+                ..Options::default()
+            };
             let units: Vec<u16> = text.encode_utf16().collect();
             for m in find(&text, &query, options, usize::MAX).0 {
                 let found = String::from_utf16(&units[m.start as usize..m.end as usize]).unwrap();

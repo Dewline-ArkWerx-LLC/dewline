@@ -28,6 +28,7 @@ opt-level = 3
 [profile.release.package]
 "*" = { opt-level = "s" }
 adler2 = { opt-level = 3 }
+aho-corasick = { opt-level = 3 }
 arrayvec = { opt-level = 3 }
 bincode = { opt-level = 3 }
 bitflags = { opt-level = 3 }
@@ -51,6 +52,8 @@ once_cell = { opt-level = 3 }
 onig = { opt-level = 3 }
 onig_sys = { opt-level = 3 }
 pulldown-cmark = { opt-level = 3 }
+regex = { opt-level = 3 }
+regex-automata = { opt-level = 3 }
 regex-syntax = { opt-level = 3 }
 same-file = { opt-level = 3 }
 serde = { opt-level = 3 }

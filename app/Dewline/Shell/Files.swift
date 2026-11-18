@@ -40,8 +40,10 @@ struct FolderEntry: Equatable {
     /// The extensions of net.daringfireball.markdown, as project.yml declares it.
     static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
 
+    /// Markdown, or a Cursor rule (.mdc), which is Markdown under front matter.
     var isMarkdown: Bool {
-        !isFolder && Self.markdownExtensions.contains(url.pathExtension.lowercased())
+        let type = url.pathExtension.lowercased()
+        return !isFolder && (Self.markdownExtensions.contains(type) || type == "mdc")
     }
 
     var isCode: Bool {
@@ -56,6 +58,9 @@ struct FolderEntry: Equatable {
 
 /// A folder opened in a window: lists its children the way the sidebar shows them.
 struct Folder {
+    /// The hidden folders that hold what agents read: rules, skills, commands and instructions.
+    static let agentFolders: Set<String> = [".claude", ".cursor", ".github"]
+
     let url: URL
     let ignore: GitIgnore
 
@@ -65,15 +70,19 @@ struct Folder {
     }
 
     /// The children of `folder`, folders first in Finder order, and the names the root's .gitignore hides,
-    /// which are among the children only when `showingIgnored`. Dotfiles, .git and node_modules never show.
+    /// which are among the children only when `showingIgnored`. Hidden files, .git and node_modules never show; the
+    /// agent folders do.
     func children(of folder: URL, showingIgnored: Bool = false) -> (entries: [FolderEntry], ignored: [String]) {
         let urls = (try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+            at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey], options: []
         )) ?? []
         var entries: [FolderEntry] = []
         var ignored: [String] = []
         for child in urls where child.lastPathComponent != "node_modules" {
-            let isFolder = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isHiddenKey])
+            let isFolder = values?.isDirectory == true
+            let hidden = child.lastPathComponent.hasPrefix(".") || values?.isHidden == true
+            if hidden, !(isFolder && Self.agentFolders.contains(child.lastPathComponent)) { continue }
             var entry = FolderEntry(url: child.standardizedFileURL, isFolder: isFolder)
             if let path = relativePath(of: entry.url), ignore.ignores(path, isFolder: isFolder) {
                 ignored.append(child.lastPathComponent + (isFolder ? "/" : ""))
@@ -160,6 +169,11 @@ enum Library {
         store(recents.filter { $0.url != url }, "RecentFiles")
     }
 
+    static func forgetRecents() {
+        store([], "RecentFiles")
+        store([], "RecentFolders")
+    }
+
     static func setPinned(_ url: URL, _ pinned: Bool) {
         let paths = pins.map(\.path).filter { $0 != url.path } + (pinned ? [url.path] : [])
         UserDefaults.standard.set(paths, forKey: "Pins")
@@ -180,6 +194,54 @@ enum Library {
     private static func store(_ visits: [Visit], _ key: String) {
         UserDefaults.standard.set(visits.map { ["path": $0.url.path, "date": $0.date] }, forKey: key)
         NotificationCenter.default.post(name: changed, object: nil)
+    }
+}
+
+/// File > Open Recent: the recent folders, then the recent notes, newest first, then Clear Menu.
+@MainActor
+final class RecentMenu: NSObject, NSMenuDelegate {
+    private static let shared = RecentMenu()
+
+    static func menu() -> NSMenu {
+        let menu = NSMenu(title: "Open Recent")
+        menu.delegate = shared
+        return menu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let groups = [(Library.recentFolders, true), (Library.recents, false)].filter { !$0.0.isEmpty }
+        for (visits, folders) in groups {
+            for visit in visits {
+                let item = menu.addItem(
+                    withTitle: FileManager.default.displayName(atPath: visit.url.path), action: #selector(open(_:)), keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = visit.url
+                item.tag = folders ? 1 : 0
+                item.image = NSImage(systemSymbolName: folders ? "folder" : "doc.text", accessibilityDescription: nil)
+                item.toolTip = abbreviatedPath(visit.url)
+            }
+            menu.addItem(.separator())
+        }
+        let clear = menu.addItem(withTitle: "Clear Menu", action: groups.isEmpty ? nil : #selector(clear(_:)), keyEquivalent: "")
+        clear.target = self
+    }
+
+    @objc private func open(_ sender: NSMenuItem) {
+        let url = sender.representedObject as! URL
+        if sender.tag == 1 {
+            (NSApp.delegate as? AppDelegate)?.openFolder(at: url)
+        } else {
+            NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+                if let error { NSApp.presentError(error) }
+            }
+        }
+    }
+
+    @objc private func clear(_ sender: NSMenuItem) {
+        Library.forgetRecents()
+        NSDocumentController.shared.clearRecentDocuments(sender)
     }
 }
 

@@ -5,9 +5,10 @@
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use dewline_core::jail::Jail;
+use dewline_core::notelinks::{self, Notes};
 use dewline_core::{decisions, inbox};
 use serde_json::{Value, json};
 
@@ -17,8 +18,6 @@ const VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-
 const MAX_FILE: u64 = 8 << 20;
 /// The most lines a search or backlinks call returns.
 const MAX_HITS: usize = 200;
-/// The most files a search or backlinks call reads.
-const MAX_FILES: usize = 20_000;
 
 pub fn run(root: &Path) -> Result<(), String> {
     let home = env::home_dir().ok_or("there is no home folder")?;
@@ -151,7 +150,7 @@ impl Server {
             .jail
             .open(path)
             .map_err(|error| refused(error.to_string()))?;
-        if !served(&relative) {
+        if !notelinks::is_note(&relative) {
             return Err(refused(
                 "only .md, .markdown and .txt files outside dot folders are served".into(),
             ));
@@ -175,32 +174,39 @@ impl Server {
         if needle.trim().is_empty() {
             return Err("search needs a non-empty query".into());
         }
-        Ok(self.lines(|_, line| line.to_lowercase().contains(&needle)))
+        Ok(self.lines(|_, text| {
+            text.lines()
+                .enumerate()
+                .filter(|(_, line)| line.to_lowercase().contains(&needle))
+                .map(|(number, line)| (number + 1, line.trim().chars().take(240).collect()))
+                .collect()
+        }))
     }
 
     fn backlinks(&self, note: &Path) -> Result<String, String> {
         let (_, target) = self.read(note)?;
-        Ok(self.lines(|source, line| links_to(source, line, &target)))
+        let notes = Notes::new(notelinks::walk(self.jail.root()));
+        Ok(self.lines(|source, text| {
+            notelinks::backlinks(text, source, &notes, &target)
+                .into_iter()
+                .map(|link| (link.line, link.text))
+                .collect()
+        }))
     }
 
-    /// `path:line: text` for each line of each served file that `matches`.
-    fn lines(&self, matches: impl Fn(&Path, &str) -> bool) -> String {
-        let mut files = Vec::new();
-        walk(self.jail.root(), Path::new(""), &mut files);
+    /// `path:line: text` for each line `matches` finds in each served file's text.
+    fn lines(&self, matches: impl Fn(&Path, &str) -> Vec<(usize, String)>) -> String {
         let mut out = String::new();
         let mut hits = 0;
-        for relative in files {
+        for relative in notelinks::walk(self.jail.root()) {
             let Ok((text, relative)) = self.read(&relative) else {
                 continue;
             };
-            for (number, line) in text.lines().enumerate() {
-                if matches(&relative, line) {
-                    let line: String = line.trim().chars().take(240).collect();
-                    out.push_str(&format!("{}:{}: {line}\n", relative.display(), number + 1));
-                    hits += 1;
-                    if hits == MAX_HITS {
-                        return out;
-                    }
+            for (number, line) in matches(&relative, &text) {
+                out.push_str(&format!("{}:{number}: {line}\n", relative.display()));
+                hits += 1;
+                if hits == MAX_HITS {
+                    return out;
                 }
             }
         }
@@ -209,122 +215,6 @@ impl Server {
         }
         out
     }
-}
-
-/// Collects the served files under `folder`, root-relative, in name order. Links are skipped, not followed.
-fn walk(root: &Path, folder: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root.join(folder)) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        if files.len() == MAX_FILES {
-            return;
-        }
-        let relative = folder.join(entry.file_name());
-        match entry.file_type() {
-            Ok(kind) if kind.is_dir() && !hidden(&relative) => walk(root, &relative, files),
-            Ok(kind) if kind.is_file() && served(&relative) => files.push(relative),
-            _ => {}
-        }
-    }
-}
-
-fn hidden(relative: &Path) -> bool {
-    relative
-        .components()
-        .any(|part| part.as_os_str().as_encoded_bytes().starts_with(b"."))
-}
-
-fn served(relative: &Path) -> bool {
-    !hidden(relative)
-        && relative.extension().is_some_and(|extension| {
-            ["md", "markdown", "txt"]
-                .iter()
-                .any(|served| extension.eq_ignore_ascii_case(served))
-        })
-}
-
-/// Whether `line` of `source` holds a wikilink or a markdown link to `target`, both root-relative. A wikilink names
-/// the note's root-relative path or its file name, with or without the extension; a markdown link is a path relative
-/// to `source`'s folder.
-fn links_to(source: &Path, line: &str, target: &Path) -> bool {
-    let target_text = target.to_string_lossy();
-    let without_extension = target.with_extension("");
-    let without_extension = without_extension.to_string_lossy();
-    let stem = target.file_stem().unwrap_or_default().to_string_lossy();
-    let file_name = target.file_name().unwrap_or_default().to_string_lossy();
-    let wikilink = |name: &str| {
-        let name = name.split(['|', '#']).next().unwrap_or_default().trim();
-        [&*target_text, &*without_extension, &*stem, &*file_name]
-            .iter()
-            .any(|form| name.eq_ignore_ascii_case(form))
-    };
-    if line
-        .split("[[")
-        .skip(1)
-        .filter_map(|rest| rest.split_once("]]"))
-        .any(|(name, _)| wikilink(name))
-    {
-        return true;
-    }
-    let folder = source.parent().unwrap_or(Path::new(""));
-    line.split("](").skip(1).any(|rest| {
-        let destination = rest.split(')').next().unwrap_or_default().trim();
-        let destination = match destination.strip_prefix('<') {
-            Some(angled) => angled.split('>').next().unwrap_or_default(),
-            None => destination.split(' ').next().unwrap_or_default(),
-        };
-        let destination = destination.split('#').next().unwrap_or_default();
-        if destination.is_empty() || destination.contains(':') || destination.starts_with('/') {
-            return false;
-        }
-        normalize(&folder.join(unescape(destination)))
-            .is_some_and(|path| path.to_string_lossy().eq_ignore_ascii_case(&target_text))
-    })
-}
-
-/// `path` with `.` and `..` folded away, or `None` when it climbs above the root.
-fn normalize(path: &Path) -> Option<PathBuf> {
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::Normal(name) => out.push(name),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    return None;
-                }
-            }
-            Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    Some(out)
-}
-
-/// A link destination with its `%XX` escapes decoded.
-fn unescape(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        let hex = bytes
-            .get(at + 1..at + 3)
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match (bytes[at], hex) {
-            (b'%', Some(byte)) => {
-                out.push(byte);
-                at += 3;
-            }
-            (byte, _) => {
-                out.push(byte);
-                at += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {
@@ -380,44 +270,4 @@ fn tools() -> Value {
             "The entry's markdown"
         ),
     ])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn links_name_the_note_by_path_or_name() {
-        let target = Path::new("projects/launch plan.md");
-        let links = |source: &str, line: &str| links_to(Path::new(source), line, target);
-        assert!(links("a.md", "see [[launch plan]] today"));
-        assert!(links("a.md", "see [[Launch Plan|the plan]]"));
-        assert!(links("a.md", "see [[projects/launch plan#Goals]]"));
-        assert!(links("a.md", "see [[launch plan.md]]"));
-        assert!(links("a.md", "[plan](projects/launch%20plan.md)"));
-        assert!(links(
-            "a.md",
-            "[plan](<projects/launch plan.md#goals> \"title\")"
-        ));
-        assert!(links("projects/b.md", "[plan](./launch%20plan.md)"));
-        assert!(links("notes/c.md", "[plan](../projects/launch%20plan.md)"));
-        assert!(!links("a.md", "[[launch]] and [[plan]]"));
-        assert!(!links("a.md", "[plan](launch%20plan.md)"));
-        assert!(!links(
-            "a.md",
-            "[plan](https://example.com/projects/launch%20plan.md)"
-        ));
-        assert!(!links("a.md", "[plan](../../projects/launch%20plan.md)"));
-    }
-
-    #[test]
-    fn only_notes_outside_dot_folders_are_served() {
-        assert!(served(Path::new("a/b.md")));
-        assert!(served(Path::new("a/B.MARKDOWN")));
-        assert!(served(Path::new("todo.txt")));
-        assert!(!served(Path::new(".git/HEAD.md")));
-        assert!(!served(Path::new("a/.secret.md")));
-        assert!(!served(Path::new("a/b.html")));
-        assert!(!served(Path::new("a/md")));
-    }
 }

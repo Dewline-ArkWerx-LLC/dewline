@@ -2,6 +2,7 @@
 
 pub mod docx;
 pub mod epub;
+pub mod latex;
 pub mod text;
 
 use std::collections::HashMap;
@@ -61,6 +62,22 @@ pub fn html(text: &str, options: &ExportOptions<'_>) -> String {
     out
 }
 
+/// The folder beside an export named `name` that holds its images and diagrams: the name with every character but
+/// ASCII letters, digits and `-` as `-`, then `-files`, a path LaTeX and Markdown renderers take as written.
+pub fn files_folder(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("{name}-files")
+}
+
 /// `text` with the five HTML-significant characters as entities.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -91,10 +108,16 @@ fn url(target: &str) -> Option<String> {
     safe.then(|| escape(target))
 }
 
-/// A data URL of the image at `path` relative to `folder`: a relative path without `..` that resolves, symlinks
-/// followed, to a regular file inside the folder, at most `MAX_IMAGE` bytes, whose bytes are PNG, JPEG, GIF, WebP or
-/// SVG.
+/// A data URL of the image `read_image` finds.
 fn inline_image(folder: &Path, path: &str) -> Option<String> {
+    let (mime, bytes) = read_image(folder, path)?;
+    Some(format!("data:{mime};base64,{}", base64(&bytes)))
+}
+
+/// The media type and bytes of the image at `path` relative to `folder`: a relative path without `..` that resolves,
+/// symlinks followed, to a regular file inside the folder, at most `MAX_IMAGE` bytes, whose bytes are PNG, JPEG, GIF,
+/// WebP or SVG.
+fn read_image(folder: &Path, path: &str) -> Option<(&'static str, Vec<u8>)> {
     let relative = Path::new(path);
     if path.contains(':')
         || !relative
@@ -128,7 +151,7 @@ fn inline_image(folder: &Path, path: &str) -> Option<String> {
     } else {
         return None;
     };
-    (bytes.len() as u64 <= MAX_IMAGE).then(|| format!("data:{mime};base64,{}", base64(&bytes)))
+    (bytes.len() as u64 <= MAX_IMAGE).then_some((mime, bytes))
 }
 
 pub fn base64(bytes: &[u8]) -> String {

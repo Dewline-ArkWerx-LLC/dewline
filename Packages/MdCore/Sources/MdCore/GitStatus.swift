@@ -33,3 +33,19 @@ public func gitStatus(of folder: URL) -> FolderGitStatus? {
         )
     }
 }
+
+/// What git ignores under a folder: its repository's .gitignore files, info/exclude and `core.excludesFile`, or the
+/// folder's own .gitignore files when no repository holds it. The rules `gitStatus` reads.
+public final class GitIgnores: Sendable {
+    private let rules: DewlineFFIBindings.GitIgnores
+
+    public init(folder: URL) {
+        rules = DewlineFFIBindings.GitIgnores(folder: folder.path)
+    }
+
+    /// Whether git ignores `path`, "/"-separated from the folder: it or a folder above it matches. A folder's .gitignore
+    /// is read the first time a path under it is asked about.
+    public func ignores(_ path: String, isFolder: Bool) -> Bool {
+        rules.ignores(path: path, isFolder: isFolder)
+    }
+}

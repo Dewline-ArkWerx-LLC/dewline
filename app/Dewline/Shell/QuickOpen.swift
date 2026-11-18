@@ -283,10 +283,13 @@ struct FileTree: Sendable {
 }
 
 /// An open folder's Markdown files, kept in memory and current through FSEvents so Quick Open never waits on the
-/// disk. The folder's tabs share one; it lives while one of them holds it.
+/// disk, and its git states. Its one watch on the folder keeps both current and tells the sidebars which folders
+/// changed. The folder's tabs share one; it lives while one of them holds it.
 @MainActor
 final class FolderIndex {
     static let changed = Notification.Name("DewlineFolderIndexChanged")
+    /// Posted with `folders`, the URLs of the folders whose contents changed.
+    static let foldersChanged = Notification.Name("DewlineFoldersChanged")
     private static let open = NSMapTable<NSString, FolderIndex>.strongToWeakObjects()
 
     static func of(_ folder: Folder) -> FolderIndex {
@@ -298,6 +301,7 @@ final class FolderIndex {
 
     /// Every file that opens, or nil until the first listing finishes.
     private(set) var files: [QuickOpenFile]?
+    let git: GitStates
     private var tree: FileTree
     private var watch: FolderWatch?
     private var update: Task<Void, Never>?
@@ -307,8 +311,13 @@ final class FolderIndex {
 
     private init(_ folder: Folder) {
         tree = FileTree(folder)
+        git = GitStates(folder: folder.url)
         watch = FolderWatch([folder.url]) { [weak self] folders in
-            self?.relist(folders.map(\.standardizedFileURL.path))
+            guard let self else { return }
+            relist(folders.map(\.standardizedFileURL.path))
+            git.read()
+            for folder in folders { ClosedChanges.scan(folder, deep: false) }
+            NotificationCenter.default.post(name: Self.foldersChanged, object: self, userInfo: ["folders": folders])
         }
         relist(nil)
         settings = NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { [weak self] _ in

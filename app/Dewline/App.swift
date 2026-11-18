@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     /// The last session, until it reopens.
     private var session: Session?
+    private var sessionSave: Task<Void, Never>?
     /// True while launching to open a file, which then draws before the last session reopens behind it. Folders,
     /// links and files of other types come to application(_:open:) before launch finishes. AppKit hands a Markdown
     /// file from Finder or open(1) to NSDocumentController just after, and a path on the command line too. The dewline
@@ -125,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = inboxService
         // The test host leaves the real socket alone; ControlSocketTests make their own.
         guard !isTestHost else { return }
+        NotificationCenter.default.addObserver(self, selector: #selector(tabsChanged), name: TabSet.changed, object: nil)
         Preferences.shared.keepWindows()
         if let failure = MarkdownDocument.engineFailure { Tracking.report(.noEngine(failure)) }
         Export.publishPreviewStylesheet()
@@ -152,6 +154,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.control = control
         } catch {
             Tracking.report(.noSocket(error.localizedDescription))
+        }
+    }
+
+    /// Writes the session half a second after any window's tabs last changed, so a crash reopens what was open. The
+    /// last session stays until it has reopened.
+    @objc private func tabsChanged() {
+        sessionSave?.cancel()
+        sessionSave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled, session == nil else { return }
+            MainWindowController.session().save(to: defaults)
         }
     }
 

@@ -2,6 +2,8 @@
 # The perf gate in release.yml's verify job: judges a perf.sh result against perf/budgets.jq. A v* tag fails when the
 # file is missing or misses a budget. A rehearse/v* tag only warns (owner decision D26), so signing, notarization and
 # feed signing can be rehearsed before the budgets hold. Missed budgets go to the job summary when there is one.
+# A v* tag with no result passes with a warning when perf/<version>.waived holds the owner's reason for shipping
+# unmeasured.
 # Usage: scripts/perf-gate.sh <perf/<version>.json> <tag>
 set -euo pipefail
 
@@ -19,6 +21,11 @@ verdict() { # message
     exit 1
 }
 
+waiver=${result%.json}.waived
+if [[ ! -f $result && -s $waiver ]]; then
+    echo "::warning::$result is missing; the owner waived the perf gate: $(head -1 "$waiver")"
+    exit 0
+fi
 [[ -f $result ]] || verdict "$result is missing (scripts/perf.sh writes it)"
 judged=$(jq -f "$root/perf/budgets.jq" "$result") || verdict "$result is not perf.sh's JSON"
 if jq -e .pass <<< "$judged" > /dev/null; then

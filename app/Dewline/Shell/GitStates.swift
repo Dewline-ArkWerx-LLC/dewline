@@ -1,13 +1,15 @@
 import Foundation
 import MdCore
 
-/// The git state of each file under a folder, read again whenever the folder or its repository changes.
+/// The git state of each file under a folder, read again whenever the folder or its repository changes. The folder's
+/// `FolderIndex` holds the one its tabs share and reads it again when the folder changes.
 @MainActor
 final class GitStates {
-    /// Called on the main queue after the states change.
-    var changed: () -> Void = {}
+    /// Posted on the main queue after the states change.
+    static let changed = Notification.Name("DewlineGitStatesChanged")
     private let folder: URL
     private var files: [String: GitFileState] = [:]
+    /// Watches a gitdir outside the folder.
     private var watch: FolderWatch?
     private var gitdir: URL?
     private var reading = false
@@ -15,7 +17,6 @@ final class GitStates {
 
     init(folder: URL) {
         self.folder = folder.standardizedFileURL
-        watch = FolderWatch([self.folder]) { [weak self] _ in self?.read() }
         read()
     }
 
@@ -33,7 +34,7 @@ final class GitStates {
         return nil
     }
 
-    private func read() {
+    func read() {
         guard !reading else {
             stale = true
             return
@@ -52,14 +53,14 @@ final class GitStates {
         if let gitdir = status?.gitdir.standardizedFileURL, gitdir != self.gitdir {
             self.gitdir = gitdir
             let inside = gitdir.path.hasPrefix(folder.resolvingSymlinksInPath().path + "/")
-            watch = FolderWatch(inside ? [folder] : [folder, gitdir]) { [weak self] _ in self?.read() }
+            watch = inside ? nil : FolderWatch([gitdir]) { [weak self] _ in self?.read() }
         }
         // A repository caught mid-write reads as none; the states stand until the next read.
         let kept = status == nil && gitdir.map { FileManager.default.fileExists(atPath: $0.path) } == true
         let files = status?.files ?? [:]
         if !kept && files != self.files {
             self.files = files
-            changed()
+            NotificationCenter.default.post(name: Self.changed, object: self)
         }
         if stale {
             stale = false

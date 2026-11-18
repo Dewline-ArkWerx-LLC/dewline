@@ -127,16 +127,16 @@ dewline 0.1.0</code></pre>
 
       <h2 id="open"><code>dewline open</code></h2>
       <div class="code" data-lang="Usage">
-<pre tabindex="0"><code>dewline open [--wait] &lt;FILE[:LINE[:COLUMN]]&gt;...</code></pre>
+<pre tabindex="0"><code>dewline open [--wait] &lt;FILE[:LINE[:COLUMN]] | FOLDER&gt;...</code></pre>
       </div>
-      <p>Opens each file in Dewline and brings the app forward. When the app isn't running, the command starts it. It waits up to 10 seconds for the app to listen, then 10 seconds per file.</p>
+      <p>Opens each file or folder in Dewline and brings the app forward. A folder opens in its own window, as <code>dewline open .</code> does for the current folder. When the app isn't running, the command starts it. It waits up to 10 seconds for the app to listen, then 10 seconds per file.</p>
       <dl>
         <dt><code>FILE[:LINE[:COLUMN]]</code></dt>
         <dd>A file, with the caret at <code>LINE</code> and <code>COLUMN</code> when given, both counting from 1. A relative path starts at the current folder, and <code>~</code> is your home folder. If a file exists under the whole argument, it opens as is, so a colon can be part of a name.</dd>
         <dt><code>--wait</code></dt>
         <dd>Returns once every file's window has closed. Git and other tools that start an editor need this to know you are done.</dd>
       </dl>
-      <p>The command checks every file before it asks the app for any, so one bad name opens nothing. It refuses a folder (<code>is a folder; dewline open takes files</code>), anything that isn't a regular file, and a path that isn't UTF-8.</p>
+      <p>The command checks every file before it asks the app for any, so one bad name opens nothing. It refuses a folder with a line (<code>is a folder; a line needs a file</code>) or with <code>--wait</code> (<code>is a folder; --wait takes files</code>), anything else that isn't a regular file, and a path that isn't UTF-8.</p>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="c"># open a note with the caret on line 12, column 4</span>
 <span class="p">$ </span>dewline open projects/launch-plan.md:12:4

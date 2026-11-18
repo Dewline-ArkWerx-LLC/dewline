@@ -146,6 +146,7 @@ final class EditorTextView: CaretTextView {
             rail.labels.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
         ])
         rail.attach(textView)
+        textView.showLineNumbers(textView.styler.showsSource)
         let status = NSTextField(labelWithString: "")
         status.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         status.textColor = ThemeStore.shared.color(.ink2)
@@ -176,13 +177,19 @@ final class EditorTextView: CaretTextView {
         isHorizontallyResizable = true
         textContainer?.widthTracksTextView = false
         textContainer?.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        if let scrollView = enclosingScrollView {
-            scrollView.hasHorizontalScroller = true
-            scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView)
-            scrollView.hasVerticalRuler = true
-            scrollView.rulersVisible = true
-        }
+        enclosingScrollView?.hasHorizontalScroller = true
+        showLineNumbers(true)
         applyTheme()
+    }
+
+    /// Line numbers left of the text, in a code file and in Source mode.
+    private func showLineNumbers(_ shown: Bool) {
+        guard let scrollView = enclosingScrollView, shown != scrollView.hasVerticalRuler else { return }
+        if shown { scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView) }
+        scrollView.hasVerticalRuler = shown
+        scrollView.rulersVisible = shown
+        // A ruler put away stops counting lines.
+        if !shown { scrollView.verticalRulerView = nil }
     }
 
     /// Paper, selection and typing attributes from the theme, and the column at its measure.
@@ -496,12 +503,14 @@ final class EditorTextView: CaretTextView {
             offset = held.offset
         }
         held = offset.map { (anchor, $0) }
+        // The line numbers come and go after the anchor is read and before the picture, so the fade doesn't stretch it.
+        showLineNumbers(!styler.showsSource)
 
         let caretView = subviews.first { $0 is NSTextInsertionIndicator }
         let caretWasHidden = caretView?.isHidden ?? true
         caretView?.isHidden = true
-        let picture = bitmapImageRepForCachingDisplay(in: visible)
-        if let picture { cacheDisplay(in: visible, to: picture) }
+        let picture = bitmapImageRepForCachingDisplay(in: visibleRect)
+        if let picture { cacheDisplay(in: visibleRect, to: picture) }
         caretView?.isHidden = caretWasHidden
 
         // The visible text and as much again on either side change first, so the fade starts before the rest restyles. TextKit 2

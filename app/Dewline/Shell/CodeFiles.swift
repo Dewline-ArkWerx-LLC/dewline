@@ -79,10 +79,11 @@ enum CodeFile {
     }
 }
 
-/// A code file's line numbers, in SF Mono `ink3` left of the text, one per paragraph: code mode wraps no line.
+/// Line numbers for a code file and for Source mode, in SF Mono `ink3` left of the text, one per paragraph at its
+/// first line.
 final class LineNumbers: NSRulerView {
     private weak var textView: EditorTextView?
-    /// The UTF-16 offset each line starts at, until the text changes.
+    /// The UTF-16 offset each line starts at, moved with each edit.
     private var starts: [Int]?
 
     init(textView: EditorTextView, in scrollView: NSScrollView) {
@@ -107,8 +108,8 @@ final class LineNumbers: NSRulerView {
     }
 
     @objc private func textChanged(_ notification: Notification) {
-        guard (notification.object as? NSTextStorage)?.editedMask.contains(.editedCharacters) == true else { return }
-        starts = nil
+        guard let storage = notification.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        update(storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength)
         fit()
         needsDisplay = true
     }
@@ -128,24 +129,51 @@ final class LineNumbers: NSRulerView {
     func lineStarts() -> [Int] {
         if let starts { return starts }
         let text = textView?.textStorage?.mutableString ?? ""
-        var found = [0]
-        var buffer = [unichar](repeating: 0, count: 1 << 16)
-        var at = 0
-        var afterCR = false
-        while at < text.length {
-            let count = min(buffer.count, text.length - at)
-            text.getCharacters(&buffer, range: NSRange(location: at, length: count))
+        let found = [0] + Self.starts(in: text, NSRange(location: 0, length: text.length))
+        starts = found
+        return found
+    }
+
+    /// Moves the starts past an edit and finds the ones in it again, from the character before it: a carriage return
+    /// there starts a line or not by what follows it. An edit costs its own length, not the note's.
+    private func update(_ text: NSString, edited: NSRange, delta: Int) {
+        guard var found = starts else { return }
+        let from = max(edited.location - 1, 0)
+        let low = Self.count(found, through: from)
+        let high = Self.count(found, through: NSMaxRange(edited) - delta + 1)
+        for index in high..<found.count { found[index] += delta }
+        found.replaceSubrange(low..<high, with: Self.starts(in: text, NSRange(location: from, length: min(NSMaxRange(edited) + 1, text.length) - from)))
+        starts = found
+    }
+
+    /// The lines that start after the characters in `range` of `text`.
+    private static func starts(in text: NSString, _ range: NSRange) -> [Int] {
+        var found: [Int] = []
+        // One more character than a pass reads, to see whether a carriage return ends CRLF.
+        var buffer = [unichar](repeating: 0, count: min(range.length, 1 << 16) + 1)
+        var at = range.location
+        while at < NSMaxRange(range) {
+            let count = min(buffer.count - 1, NSMaxRange(range) - at)
+            let read = min(count + 1, text.length - at)
+            text.getCharacters(&buffer, range: NSRange(location: at, length: read))
             for index in 0..<count {
                 let character = buffer[index]
-                if afterCR, character != 0x0A { found.append(at + index) }
-                afterCR = character == 0x0D
-                if character == 0x0A || character == 0x2029 { found.append(at + index + 1) }
+                let next = index + 1 < read ? buffer[index + 1] : 0
+                if character == 0x0A || character == 0x2029 || (character == 0x0D && next != 0x0A) { found.append(at + index + 1) }
             }
             at += count
         }
-        if afterCR { found.append(text.length) }
-        starts = found
         return found
+    }
+
+    /// How many of `starts` are at or before `offset`: the line number there.
+    private static func count(_ starts: [Int], through offset: Int) -> Int {
+        var (low, high) = (0, starts.count)
+        while low < high {
+            let middle = (low + high) / 2
+            if starts[middle] <= offset { low = middle + 1 } else { high = middle }
+        }
+        return low
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -164,15 +192,10 @@ final class LineNumbers: NSRulerView {
         layout.enumerateTextLayoutFragments(from: viewport.location) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else { return false }
             let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
-            var (low, high) = (0, starts.count)
-            while low < high {
-                let middle = (low + high) / 2
-                if starts[middle] <= offset { low = middle + 1 } else { high = middle }
-            }
             guard let line = fragment.textLineFragments.first else { return true }
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
             let y = convert(NSPoint(x: 0, y: baseline), from: textView).y
-            let number = NSAttributedString(string: "\(low)", attributes: attributes)
+            let number = NSAttributedString(string: "\(Self.count(starts, through: offset))", attributes: attributes)
             number.draw(at: NSPoint(x: ruleThickness - 8 - number.size().width, y: y - font.ascender))
             return true
         }

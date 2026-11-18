@@ -1,7 +1,8 @@
 import AppKit
 
-/// The dew line: the editor's vertical scroller. Its hairline is the whole note, a 9 pt tick marks each H2, a bracket
-/// spans what is on screen, and each waiting change is a 3 x 10 pt rule in its writer's ink at its place in the note.
+/// The dew line: the editor's vertical scroller. Its hairline is the whole note, a tick marks each H1, H2 and H3 (13, 9
+/// and 5 pt long), a bracket spans what is on screen, and each waiting change is a 3 x 10 pt rule in its writer's ink
+/// at its place in the note.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
 final class Rail: NSScroller {
@@ -13,7 +14,7 @@ final class Rail: NSScroller {
 
     let labels = RailLabels()
     private weak var textView: EditorTextView?
-    /// The note's H1 to H3 headings, which name changes; the H2s are ticks.
+    /// The note's H1 to H3 headings, which name changes and are ticks.
     private var headings: [Heading] = []
     private var ticks: [(heading: Heading, y: CGFloat)] = []
     private var marks: [(id: UInt64, change: LiveFile.Change, y: CGFloat)] = []
@@ -105,7 +106,7 @@ final class Rail: NSScroller {
     private func measure() {
         guard let textView else { return }
         headings = outline(of: textView.textStorage!.mutableString, in: textView.styler.map)
-        ticks = headings.filter { $0.level == 2 }.map { (heading: $0, y: y(at: $0.location)) }
+        ticks = headings.map { (heading: $0, y: y(at: $0.location)) }
         let live = textView.marks.live
         marks = (live?.changes ?? [:]).filter(\.value.marked)
             .map { (id: $0.key, change: $0.value, y: y(at: $0.value.range.location)) }
@@ -162,8 +163,9 @@ final class Rail: NSScroller {
         NSRect(x: Self.line - 1, y: railY(y) - 5, width: 3, height: 10)
     }
 
-    private func tickRect(_ y: CGFloat) -> NSRect {
-        NSRect(x: Self.line - 4, y: railY(y) - 0.5, width: 9, height: 1)
+    private func tickRect(_ tick: (heading: Heading, y: CGFloat)) -> NSRect {
+        let width: CGFloat = tick.heading.level == 1 ? 13 : tick.heading.level == 2 ? 9 : 5
+        return NSRect(x: Self.line + 0.5 - width / 2, y: railY(tick.y) - 0.5, width: width, height: 1)
     }
 
     private func mark(at point: NSPoint) -> (id: UInt64, change: LiveFile.Change, y: CGFloat)? {
@@ -171,7 +173,7 @@ final class Rail: NSScroller {
     }
 
     private func tick(at point: NSPoint) -> Heading? {
-        ticks.first { tickRect($0.y).insetBy(dx: 0, dy: -4).contains(point) }?.heading
+        ticks.first { tickRect($0).insetBy(dx: 0, dy: -4).contains(point) }?.heading
     }
 
     // MARK: Drawing
@@ -187,7 +189,7 @@ final class Rail: NSScroller {
         drawMarks()
     }
 
-    /// Paper, the hairline and the H2 ticks; while the legend shows, the ticks are ink2 like their names.
+    /// Paper, the hairline and the heading ticks; while the legend shows, the ticks are ink2 like their names.
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
         ThemeStore.shared.color(.paper).setFill()
         bounds.fill()
@@ -196,7 +198,7 @@ final class Rail: NSScroller {
         NSRect(x: Self.line, y: slotRect.minY, width: 1, height: slotRect.height).fill()
         let legend = labels.items.contains { $0.rule == nil }
         (legend ? ThemeStore.shared.color(.ink2) : ink(0.52, dark: 0.40)).setFill()
-        for tick in ticks { tickRect(tick.y).fill() }
+        for tick in ticks { tickRect(tick).fill() }
     }
 
     /// The bracket: a 2 pt stroke down the visible span, its caps reaching the hairline.
@@ -314,9 +316,14 @@ final class Rail: NSScroller {
             text.append(NSAttributedString(string: arrow, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
             labels.items = [RailLabels.Item(text: text, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)]
         } else if hovering != nil {
-            labels.items = ticks.map { tick in
+            // Where names would overlap, the higher heading keeps its name.
+            var taken: [CGFloat] = []
+            labels.items = ticks.sorted { $0.heading.level < $1.heading.level }.compactMap { tick in
+                let y = center(tick.y)
+                guard !taken.contains(where: { abs($0 - y) < 18 }) else { return nil }
+                taken.append(y)
                 let text = NSAttributedString(string: tick.heading.title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: ThemeStore.shared.color(.ink2)])
-                return RailLabels.Item(text: text, center: center(tick.y), right: right, rule: nil)
+                return RailLabels.Item(text: text, center: y, right: right, rule: nil)
             }
         } else {
             labels.items = []
@@ -346,7 +353,7 @@ final class Rail: NSScroller {
     /// A button per tick, "Heading: Endpoints", and per mark, "Claude changed Endpoints, 15:25".
     private func updateAccessibility() {
         let headings = ticks.map { tick in
-            RailItem(self, "Heading: \(tick.heading.title)", tickRect(tick.y).insetBy(dx: 0, dy: -4)) { [weak self] in self?.jump(to: tick.heading) }
+            RailItem(self, "Heading: \(tick.heading.title)", tickRect(tick).insetBy(dx: 0, dy: -4)) { [weak self] in self?.jump(to: tick.heading) }
         }
         let changes = marks.map { mark in
             let (name, time) = spoken(mark)

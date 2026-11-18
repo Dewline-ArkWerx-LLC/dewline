@@ -381,14 +381,22 @@ final class MarkdownDocument: NSDocument {
     }
 
     override func makeWindowControllers() {
-        // A file inside the folder of the window in front opens there: in place of its empty page, else in a new tab.
-        // Any other file opens in a new tab of the front window without a folder, or in a window of its own.
+        // A file opens in the frontmost window whose folder holds it, else in a window of its own on its git repository
+        // or the folder that holds it. A note without a file opens in the front window when that has a folder, else in
+        // a window without one. Either takes the window's empty page, else a new tab.
         let windows = NSApp.orderedWindows.lazy.filter(\.isVisible).compactMap { $0.windowController as? MainWindowController }
-        guard let front = windows.first, let folder = front.folder, fileURL.map({ folder.relativePath(of: $0) != nil }) ?? true else {
-            MainWindowController(folder: nil, joining: windows.first { $0.folder == nil }).display(self)
-            return
+        let home = if let fileURL {
+            windows.first { $0.folder?.relativePath(of: fileURL) != nil }
+        } else {
+            windows.first.flatMap { $0.folder == nil ? nil : $0 }
         }
-        (front.document == nil ? front : MainWindowController(folder: folder, joining: front)).display(self)
+        if let home {
+            (home.document == nil ? home : MainWindowController(folder: home.folder, joining: home)).display(self)
+        } else if let fileURL {
+            MainWindowController(folder: MainWindowController.folder(for: fileURL)).display(self)
+        } else {
+            MainWindowController(folder: nil, joining: windows.first { $0.folder == nil }).display(self)
+        }
     }
 
     override func showWindows() {

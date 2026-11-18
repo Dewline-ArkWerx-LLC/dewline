@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         RightPane.makeChanges = { ReviewViewController(for: $0) }
         Review.closedNotes = {
-            ClosedChanges.all.map { ClosedNote(url: $0.url, origin: $0.origin, time: $0.time) }.sorted { $0.time > $1.time }
+            ClosedChanges.all.map { ClosedNote(url: $0.url, origin: $0.origin, count: $0.count, time: $0.time) }.sorted { $0.time > $1.time }
         }
         FlowStatus.start()
         guard !isTestHost else { return }
@@ -155,47 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Marks don't outlive the app, so a quit you start with undecided changes asks first: Review cancels it and shows
-    /// the front-most undecided change, Keep All quits. A quit for logout, restart, shutdown or an update restart asks
-    /// nothing, since the writes are already on disk.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let system = NSAppleEventManager.shared().currentAppleEvent?.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason)) != nil
-        guard !isTestHost, !system, !Updates.shared.restarting else { return .terminateNow }
-        let documents = NSApp.orderedWindows.flatMap { window in
-            [window.windowController?.document as? MarkdownDocument].compactMap { $0 } + Review.documents(in: window)
-        } + NSDocumentController.shared.documents.compactMap { $0 as? MarkdownDocument }
-        var waiting: [LiveFile] = []
-        for live in documents.compactMap(\.live) where live.changes.values.contains(where: \.marked) && !waiting.contains(where: { $0 === live }) {
-            waiting.append(live)
-        }
-        guard let file = waiting.first else { return .terminateNow }
-        let names = Set(waiting.flatMap(\.changes.values).filter(\.marked).map { EarlierVersions.writer($0.origin) }).sorted()
-        let others = names.count - 1
-        let alert = NSAlert()
-        alert.messageText = "Keep all changes from \(names[0])" + (others == 0 ? "?" : " and \(others) \(others == 1 ? "other" : "others")?")
-        alert.informativeText = "Keep All accepts them as they stand and quits. After that they can\u{2019}t be reverted."
-        alert.addButton(withTitle: "Review")
-        alert.addButton(withTitle: "Keep All")
-        func review() {
-            if let first = file.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location }) {
-                file.reveal(first.key, caret: true)
-            }
-        }
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
-            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateNow }
-            review()
-            return .terminateCancel
-        }
-        alert.beginSheetModal(for: window) { response in
-            MainActor.assumeIsolated {
-                NSApp.reply(toApplicationShouldTerminate: response != .alertFirstButtonReturn)
-                if response == .alertFirstButtonReturn { review() }
-            }
-        }
-        return .terminateLater
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
+        LiveFile.keepAllMarks()
         control?.stop()
         if !isTestHost { MainWindowController.session().save(to: defaults) }
     }
@@ -251,11 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     else { throw POSIXError(.EFTYPE) }
                     return try handle.readToEnd() ?? Data()
                 }.value
+                let out = URL(fileURLWithPath: request.out)
+                guard out.resolvingSymlinksInPath() != file.resolvingSymlinksInPath() else { throw Export.replacesSource }
                 guard let text = String(data: data, encoding: .utf8) else {
                     throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
                 }
                 try await Export.write(
-                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: URL(fileURLWithPath: request.out),
+                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: out,
                     folder: file.deletingLastPathComponent()
                 )
                 connection.reply(.exported)

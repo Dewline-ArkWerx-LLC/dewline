@@ -77,6 +77,13 @@ public func exportLaTeX(_ text: String, name: String, folder: URL?, colors: Diag
     return (article.text, article.files.map { ($0.path, $0.bytes) })
 }
 
+/// `text` as Markdown any renderer shows, and the images to write beside it, each at a path relative to the export's
+/// folder: wikilinks as relative links to the notes found in `folder`, highlights as `<mark>`, comments left out.
+public func exportPortableMarkdown(_ text: String, name: String, folder: URL?) -> (text: String, files: [(path: String, data: Data)]) {
+    let export = DewlineFFIBindings.exportPortableMarkdown(text: text, name: name, folder: folder?.path)
+    return (export.text, export.files.map { ($0.path, $0.bytes) })
+}
+
 /// `text` as a Word document, with relative images read from inside `folder`.
 public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure) -> Data {
     do {

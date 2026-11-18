@@ -91,10 +91,11 @@ enum Review {
     }
 }
 
-/// A note an outside writer changed while it was closed.
+/// A note an outside writer changed while it was closed, in `count` places.
 struct ClosedNote: Equatable {
     let url: URL
     let origin: ChangeEngine.Origin
+    let count: Int
     let time: Date
 }
 

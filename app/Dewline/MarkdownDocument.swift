@@ -193,7 +193,9 @@ final class MarkdownDocument: NSDocument {
         Self.onMain {
             isNew = false
             hasBOM = opened.bom
-            let live = LiveFile(engine: engine, doc: opened.doc, url: url, gitdir: opened.gitdir, document: self, closedWrite: opened.closed)
+            let live = LiveFile(
+                engine: engine, doc: opened.doc, url: url, gitdir: opened.gitdir, document: self, closedWrite: opened.closed,
+                marks: opened.marks)
             // A tab already showing the document, as after Save As, holds its text.
             if let textView { live.attach(textView) } else { self.text = text }
             self.live = live

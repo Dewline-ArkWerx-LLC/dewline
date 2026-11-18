@@ -463,11 +463,34 @@ fn edit_declares_only_what_claude_code_would_write() {
         edit("a b a\n", json!({"old_string": "z", "new_string": "c"})),
         None
     );
-    // Edit rewrites line endings, so a file with CRs declares nothing.
+    // Edit keeps a CRLF file's line endings; mixed endings declare nothing.
     assert_eq!(
         edit("a\r\nb\r\n", json!({"old_string": "b", "new_string": "c"})),
+        Some(hex("a\r\nc\r\n"))
+    );
+    assert_eq!(
+        edit("a\r\nb\n", json!({"old_string": "b", "new_string": "c"})),
         None
     );
+    // Straight quotes match curly ones, and the edit keeps them curly.
+    assert_eq!(
+        edit(
+            "\u{201C}hello\u{201D}\n",
+            json!({"old_string": "\"hello\"", "new_string": "\"goodbye\""})
+        ),
+        Some(hex("\u{201C}goodbye\u{201D}\n"))
+    );
+}
+
+#[test]
+fn a_failed_call_closes_like_its_post_tool_use() {
+    let fixture = Fixture::new();
+    let post = fixture.one("claude", &fixture.event("claude PostToolUse Edit"));
+    assert!(post.is_some());
+    let mut event = fixture.event("claude PostToolUse Edit");
+    event["hook_event_name"] = json!("PostToolUseFailure");
+    event["error"] = json!("String to replace not found in file.");
+    assert_eq!(fixture.one("claude", &event), post);
 }
 
 #[test]

@@ -696,8 +696,8 @@ struct JourneyTests {
         #expect(word.starts(with: Data([0x50, 0x4B, 0x03, 0x04])))
         #expect(word.range(of: Data("word/document.xml".utf8)) != nil)
         #expect(vault.listing() == listing)
-        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "txt", "png"])
-        #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "Plain Text", "PNG Image"])
+        #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "epub", "txt", "png"])
+        #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "EPUB", "Plain Text", "PNG Image"])
 
         // One File > Export… on ⇧⌘E, starting on PDF, and Print on ⌘P; a written export is what the status bar names.
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)

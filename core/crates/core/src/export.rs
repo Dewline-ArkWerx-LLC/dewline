@@ -1,6 +1,7 @@
 //! Markdown to one standalone HTML page. Raw HTML in the source is shown as text, never passed through.
 
 pub mod docx;
+pub mod epub;
 pub mod text;
 
 use std::collections::HashMap;
@@ -21,6 +22,9 @@ pub struct ExportOptions<'a> {
     pub diagram: &'a dyn Fn(&str) -> Option<String>,
     /// TeX as inline HTML, display math when the flag is set, or `None` to show the source.
     pub math: &'a dyn Fn(&str, bool) -> Option<String>,
+    /// A fenced block's code in its info string's first word as highlighted HTML, as `highlight::Syntaxes::html`
+    /// writes it, or `None` to show it plain.
+    pub code: &'a dyn Fn(&str, &str) -> Option<String>,
     /// The document's folder: images inside it are inlined as data URLs, all others keep their paths.
     pub folder: Option<&'a Path>,
 }
@@ -183,6 +187,19 @@ impl Writer<'_, '_> {
                         }
                     }
                 }
+                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
+                    if !info.trim().is_empty() =>
+                {
+                    let language = info.split_whitespace().next().unwrap_or_default();
+                    let source = code(&mut events);
+                    let inner =
+                        (self.options.code)(language, &source).unwrap_or_else(|| escape(&source));
+                    let _ = writeln!(
+                        self.out,
+                        "<pre><code class=\"language-{}\">{inner}</code></pre>",
+                        escape(language)
+                    );
+                }
                 Event::Start(Tag::MetadataBlock(_)) => {
                     code(&mut events);
                 }
@@ -258,21 +275,8 @@ impl Writer<'_, '_> {
                 let _ = write!(self.out, "<{}>", heading(level));
             }
             Tag::BlockQuote(_) => self.out.push_str("<blockquote>\n"),
-            Tag::CodeBlock(kind) => {
-                let language = match &kind {
-                    CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or(""),
-                    CodeBlockKind::Indented => "",
-                };
-                if language.is_empty() {
-                    self.out.push_str("<pre><code>");
-                } else {
-                    let _ = write!(
-                        self.out,
-                        "<pre><code class=\"language-{}\">",
-                        escape(language)
-                    );
-                }
-            }
+            // A fenced block with a language is written whole in `run`.
+            Tag::CodeBlock(_) => self.out.push_str("<pre><code>"),
             Tag::HtmlBlock => self.out.push_str("<pre class=\"html\">"),
             Tag::List(Some(1)) => self.out.push_str("<ol>\n"),
             Tag::List(Some(start)) => {
@@ -421,6 +425,7 @@ mod tests {
                 css: "",
                 diagram: &|_| Some("<svg>diagram</svg>".into()),
                 math: &|tex, display| Some(format!("[{display}:{tex}]")),
+                code: &|language, code| language.starts_with("rust").then(|| format!("[{code}]")),
                 folder: None,
             },
         )
@@ -428,6 +433,21 @@ mod tests {
 
     fn body(page: &str) -> &str {
         &page[page.find("<body>").unwrap()..]
+    }
+
+    #[test]
+    fn fenced_code_takes_the_highlighters_html() {
+        let page =
+            export("```rust,ignore\nlet a = 1;\n```\n\n```klingon\n<x>\n```\n\n```\nplain\n```\n");
+        assert!(
+            page.contains("<pre><code class=\"language-rust,ignore\">[let a = 1;\n]</code></pre>"),
+            "{page}"
+        );
+        assert!(
+            page.contains("<pre><code class=\"language-klingon\">&lt;x&gt;\n</code></pre>"),
+            "{page}"
+        );
+        assert!(page.contains("<pre><code>plain\n</code></pre>"), "{page}");
     }
 
     #[test]
@@ -526,6 +546,7 @@ mod tests {
                 css: "p{}</style><script>",
                 diagram: &|_| None,
                 math: &|_, _| None,
+                code: &|_, _| None,
                 folder: None,
             },
         );
@@ -557,6 +578,7 @@ mod tests {
                 css: "",
                 diagram: &|_| None,
                 math: &|_, _| None,
+                code: &|_, _| None,
                 folder: Some(&folder),
             },
         );

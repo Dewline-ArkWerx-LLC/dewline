@@ -98,7 +98,7 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>Export</h1>
-      <p class="lead">Export a note as a PDF, a Word document, a web page, rich text, an OpenDocument file, plain text or a PNG image. Export reads the text in the window and never changes the Markdown file.</p>
+      <p class="lead">Export a note as a PDF, a Word document, a web page, rich text, an OpenDocument file, an EPUB book, plain text or a PNG image. Export reads the text in the window and never changes the Markdown file.</p>
 
       <h2 id="from-the-app">Export from the app</h2>
       <ol class="steps">
@@ -116,6 +116,7 @@
             <tr><td id="docx">Word (DOCX)</td><td>Plain document styles for headings, lists, quotes, tables, footnotes and code</td><td>Their source, as text</td></tr>
             <tr><td id="rtf">Rich Text (RTF)</td><td>Your theme's fonts and sizes, with headings, lists, tables and links, and no colors, so it pastes into Pages, Mail and Notes. System fonts become Helvetica Neue, Georgia and Menlo</td><td>Their source, as text</td></tr>
             <tr><td id="odt">OpenDocument (ODT)</td><td>As rich text. Lists and tables are real lists and tables; headings are larger bold paragraphs, not outline levels</td><td>Their source, as text</td></tr>
+            <tr><td id="epub">EPUB</td><td>An EPUB 3 book in your theme's light version: one chapter, a table of contents from the headings, and the title from the first top-level heading or the file name. Links to other notes keep their text only</td><td>Diagrams as SVG files, math as images, inside the book</td></tr>
             <tr><td id="txt">Plain Text</td><td>No markup. Bullets, numbers and task boxes stay, table columns line up with spaces, and code, quotes and display math are indented. A link is followed by its address</td><td>Their source</td></tr>
             <tr><td id="png">PNG Image</td><td>The PDF's page as one tall image at twice its size, up to 16,384 pixels tall (about nine Letter pages). A longer note is refused with a message to export it as PDF</td><td>Diagrams as SVG, math as images</td></tr>
           </tbody>
@@ -126,6 +127,7 @@
       <ul>
         <li><strong>Images</strong> from inside the note's folder are embedded, up to 20 MB each. HTML takes PNG, JPEG, GIF, WebP and SVG; Word takes PNG, JPEG and GIF.</li>
         <li><strong>Other images</strong>, from the web or outside the folder, are not embedded. HTML keeps their address; Word keeps their alt text.</li>
+        <li><strong>EPUB</strong> carries the images HTML embeds.</li>
         <li><strong>Rich text, OpenDocument and plain text</strong> hold no images. Each image shows as its alt text, as <code>[image: ferry at dawn]</code>.</li>
         <li><strong>Wikilinks</strong> become links in HTML and PDF. In Word they stay as written.</li>
         <li><strong>Highlights, comments, tags and callouts</strong> appear as their source text, such as <code>==one bag==</code>.</li>

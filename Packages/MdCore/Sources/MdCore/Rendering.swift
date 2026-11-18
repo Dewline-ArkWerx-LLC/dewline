@@ -53,6 +53,20 @@ public func exportPage(
     )
 }
 
+/// `text` as an EPUB 3 book of the page `exportPage` writes in `colors`, its images, diagrams and math as files in it.
+public func exportEPUB(_ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, mathSize: Double) throws(RenderFailure) -> Data {
+    let colors = DewlineFFIBindings.DiagramColors(
+        paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
+    )
+    do {
+        return try exportEpub(text: text, title: title, css: css, folder: folder?.path, colors: colors, mathSize: Float(mathSize))
+    } catch ExportError.Io(let message) {
+        throw RenderFailure(message)
+    } catch {
+        throw RenderFailure("\(error)")
+    }
+}
+
 /// `text` as a Word document, with relative images read from inside `folder`.
 public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure) -> Data {
     do {

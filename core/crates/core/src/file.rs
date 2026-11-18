@@ -1,8 +1,9 @@
-use std::ffi::{c_int, c_void};
+use std::ffi::{CString, c_int, c_void};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,24 +48,26 @@ fn gone(error: io::Error) -> SaveError {
 /// and returns their hash. Bytes that hash to `base` write nothing.
 ///
 /// The file is replaced by a hidden sibling that takes its mode, owner,
-/// group, flags and extended attributes. It is written in place instead,
-/// through the descriptor that was hashed, when the path is a symlink, the
-/// file has other hard links or an access control list, or a new file
-/// beside it can't take its owner and group; a failed write in place puts
-/// the original bytes back.
+/// group, flags and extended attributes. A symlink's target is replaced and
+/// the link left as it is. The file is written in place instead, through the
+/// descriptor that was hashed, when it has other hard links or an access
+/// control list, or a new file beside it can't be made or take its owner and
+/// group; a failed write in place puts the original bytes back.
 pub fn save(path: &Path, base: &Hash, bytes: &[u8]) -> Result<Hash, SaveError> {
     // Hashed first, so the check stays next to the write.
     let new = hash(bytes);
-    let symlink = fs::symlink_metadata(path).map_err(gone)?.is_symlink();
+    let target;
+    let path = if fs::symlink_metadata(path).map_err(gone)?.is_symlink() {
+        target = fs::canonicalize(path).map_err(gone)?;
+        target.as_path()
+    } else {
+        path
+    };
     let (mut file, original) = unchanged(path, base)?;
     if new == *base {
         return Ok(new);
     }
-    if symlink
-        || file.metadata()?.nlink() > 1
-        || has_acl(&file)?
-        || !replace(path, &file, base, bytes)?
-    {
+    if file.metadata()?.nlink() > 1 || has_acl(&file)? || !replace(path, &file, base, bytes)? {
         write_in_place(path, &mut file, &original, bytes)?;
     }
     Ok(new)
@@ -152,9 +155,9 @@ fn overwrite(file: &mut File, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Writes `bytes` to a hidden sibling of `path` with `original`'s metadata,
-/// then renames it over `path` if the file still holds `base`. Returns false,
-/// having written nothing, when the sibling can't take `original`'s owner
-/// and group.
+/// then puts it at `path` if the file still holds `base`. Returns false,
+/// having written nothing, when the sibling can't be made in the folder or
+/// can't take `original`'s owner and group.
 fn replace(path: &Path, original: &File, base: &Hash, bytes: &[u8]) -> Result<bool, SaveError> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -162,11 +165,12 @@ fn replace(path: &Path, original: &File, base: &Hash, bytes: &[u8]) -> Result<bo
         .as_nanos();
     // Not derived from the file's name, which may already be at the 255-byte limit.
     let temp = path.with_file_name(format!(".dewline.{}.{stamp:x}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)?;
-    let result = (|| {
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(&temp) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let written = (|| {
         // Copying the metadata copies the old modification date too, so it
         // comes before the bytes, whose write sets the date to now.
         // SAFETY: both descriptors stay open for the call; copyfile accepts a null state.
@@ -188,24 +192,85 @@ fn replace(path: &Path, original: &File, base: &Hash, bytes: &[u8]) -> Result<bo
         }
         file.write_all(bytes)?;
         file.sync_all()?;
-        // Another writer may have landed while the copy was written.
-        unchanged(path, base)?;
-        fs::rename(&temp, path)?;
         Ok(true)
     })();
-    if !matches!(result, Ok(true))
-        && let Err(cleanup) = fs::remove_file(&temp)
-    {
-        let after = result
-            .err()
-            .map(|error| format!("{error}; "))
-            .unwrap_or_default();
-        return Err(SaveError::Io(io::Error::new(
-            cleanup.kind(),
-            format!("{after}{} could not be removed: {cleanup}", temp.display()),
-        )));
+    match written {
+        Ok(true) => swap(&temp, path, base, &hash(bytes)).map(|()| true),
+        written => discard(&temp, written),
     }
-    result
+}
+
+/// Removes `temp`, a sibling that holds nothing anyone needs, and returns
+/// `result`, or the failed removal.
+fn discard<T>(temp: &Path, result: Result<T, SaveError>) -> Result<T, SaveError> {
+    let Err(cleanup) = fs::remove_file(temp) else {
+        return result;
+    };
+    let after = result
+        .err()
+        .map(|error| format!("{error}; "))
+        .unwrap_or_default();
+    Err(SaveError::Io(io::Error::new(
+        cleanup.kind(),
+        format!("{after}{} could not be removed: {cleanup}", temp.display()),
+    )))
+}
+
+/// Puts `temp`, which holds the bytes `new` hashes, at `path` if the file at
+/// `path` still holds `base`. Where the volume swaps two names in one step,
+/// the file swapped out is hashed after the swap, swapped back if another
+/// writer got in, and then removed; there is no moment between the check and
+/// the swap. Elsewhere the check comes just before a rename.
+fn swap(temp: &Path, path: &Path, base: &Hash, new: &Hash) -> Result<(), SaveError> {
+    match renamex(temp, path, libc::RENAME_SWAP) {
+        Ok(()) => {}
+        Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => {
+            // Another writer may have landed while the copy was written.
+            let renamed = unchanged(path, base).and_then(|_| Ok(fs::rename(temp, path)?));
+            return match renamed {
+                Ok(()) => Ok(()),
+                renamed => discard(temp, renamed),
+            };
+        }
+        Err(error) => return discard(temp, Err(gone(error))),
+    }
+    // `temp` now names the file that was at `path`.
+    match fs::read(temp) {
+        Ok(old) if hash(&old) == *base => {
+            // The save has landed; an old copy left behind is no reason to report that it failed.
+            let _ = fs::remove_file(temp);
+            Ok(())
+        }
+        old => {
+            let back = renamex(temp, path, libc::RENAME_SWAP);
+            // A writer that got in between the two swaps left its bytes in what came back.
+            let ours = fs::read(temp).is_ok_and(|back| hash(&back) == *new);
+            if back.is_err() || !ours {
+                return Err(SaveError::Io(io::Error::other(format!(
+                    "another writer's version is at {}",
+                    temp.display()
+                ))));
+            }
+            discard(
+                temp,
+                Err(old.map_or_else(SaveError::Io, |_| SaveError::Conflict)),
+            )
+        }
+    }
+}
+
+fn renamex(from: &Path, to: &Path, flags: libc::c_uint) -> io::Result<()> {
+    let c = |path: &Path| {
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    };
+    let (from, to) = (c(from)?, c(to)?);
+    // SAFETY: both strings outlive the call.
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), flags) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 #[cfg(test)]
@@ -378,25 +443,83 @@ mod tests {
     }
 
     #[test]
-    fn a_symlink_is_written_through() {
+    fn a_symlink_s_target_is_replaced_and_the_link_stays() {
         let (dir, target) = file(b"# Notes\n");
         let link = dir.path().join("link.md");
         symlink(&target, &link).unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
         set_xattr(&target, "dev.arkwerx.dewline.test", b"kept");
+        let before = fs::metadata(&target).unwrap();
         save(&link, &hash(b"# Notes\n"), b"# My notes\n").unwrap();
         assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
         assert_eq!(fs::read_link(&link).unwrap(), target);
         assert_eq!(fs::read(&target).unwrap(), b"# My notes\n");
-        assert_eq!(
-            fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
-            0o600
-        );
+        let after = fs::metadata(&target).unwrap();
+        assert_ne!(after.ino(), before.ino(), "the sibling replaced the target");
+        assert_eq!(after.permissions().mode() & 0o7777, 0o600);
         assert_eq!(
             xattr(&target, "dev.arkwerx.dewline.test").as_deref(),
             Some(&b"kept"[..])
         );
         assert_eq!(names(dir.path()), ["launch-plan.md", "link.md"]);
+    }
+
+    #[test]
+    fn a_symlink_into_a_folder_that_takes_no_new_file_is_written_in_place() {
+        let (dir, link) = file(b"");
+        fs::remove_file(&link).unwrap();
+        let shared = dir.path().join("shared");
+        fs::create_dir(&shared).unwrap();
+        let target = shared.join("AGENTS.md");
+        fs::write(&target, b"# Agents\n").unwrap();
+        symlink(&target, &link).unwrap();
+        let before = fs::metadata(&target).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o500)).unwrap();
+        let saved = save(&link, &hash(b"# Agents\n"), b"# Our agents\n");
+        let left = names(&shared);
+        // Lifted before asserting, so the folder can always be removed.
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"# Our agents\n");
+        assert_eq!(fs::metadata(&target).unwrap().ino(), before.ino());
+        assert_eq!(left, ["AGENTS.md"]);
+    }
+
+    #[test]
+    fn a_swap_lands_only_over_the_base_and_puts_another_writer_back() {
+        let (dir, path) = file(b"# Notes\n");
+        let base = hash(b"# Notes\n");
+        let temp = dir.path().join(".dewline.test.tmp");
+        fs::write(&temp, b"# My notes\n").unwrap();
+        swap(&temp, &path, &base, &hash(b"# My notes\n")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"# My notes\n");
+        assert_eq!(names(dir.path()), ["launch-plan.md"]);
+
+        // Another writer lands after the copy was written and before the swap.
+        fs::write(&path, b"# Notes\nAn agent wrote this.\n").unwrap();
+        let agent = fs::metadata(&path).unwrap().ino();
+        fs::write(&temp, b"# Our notes\n").unwrap();
+        let swapped = swap(
+            &temp,
+            &path,
+            &hash(b"# My notes\n"),
+            &hash(b"# Our notes\n"),
+        );
+        assert!(matches!(swapped, Err(SaveError::Conflict)), "{swapped:?}");
+        assert_eq!(fs::read(&path).unwrap(), b"# Notes\nAn agent wrote this.\n");
+        assert_eq!(fs::metadata(&path).unwrap().ino(), agent);
+        assert_eq!(names(dir.path()), ["launch-plan.md"]);
+
+        fs::remove_file(&path).unwrap();
+        fs::write(&temp, b"# Our notes\n").unwrap();
+        let swapped = swap(
+            &temp,
+            &path,
+            &hash(b"# My notes\n"),
+            &hash(b"# Our notes\n"),
+        );
+        assert!(matches!(swapped, Err(SaveError::Conflict)), "{swapped:?}");
+        assert!(names(dir.path()).is_empty());
     }
 
     #[test]

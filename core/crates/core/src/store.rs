@@ -272,7 +272,8 @@ impl Store {
     /// draft takes `to`'s slot, and a draft `to` held joins the history. A
     /// kill between the two index writes leaves the snapshots under both
     /// paths; `to` records the hash of the index it took in, so running the
-    /// move again only removes the old one.
+    /// move again only removes the old one. The record goes once the old one
+    /// is removed, so a later index at `from` that hashes the same still moves.
     pub fn moved(&self, from: &Path, to: &Path) -> io::Result<()> {
         if from.as_os_str() == to.as_os_str() {
             return Ok(());
@@ -315,7 +316,9 @@ impl Store {
         }
         step("moved");
         fs::remove_file(self.root.join("files").join(key(from)))?;
-        self.sync(&File::open(self.root.join("files"))?)
+        self.sync(&File::open(self.root.join("files"))?)?;
+        index.moved = None;
+        self.write(&index)
     }
 
     /// Drops each history entry that is older than 30 days, unpinned and not

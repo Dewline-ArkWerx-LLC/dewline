@@ -132,6 +132,95 @@ struct TableTests {
         #expect(qtyEnd() > start + 10)
         #expect(qtyEnd() > narrow)
     }
+
+    @Test func tabAndShiftTabMoveBetweenCellsPastTheDelimiterRow() {
+        let editor = Editor(Self.text, caret: 0)
+        editor.place(editor.find("Name").location + 1)
+        let body = editor.find("| apple").location
+        for (cell, from) in [("Qty", 0), ("Note", 0), ("apple", 0), ("3", body), ("ok", body), ("kiwi fruit", 0)] {
+            editor.view.insertTab(nil)
+            #expect(editor.view.selectedRange() == editor.find(cell, from: from), "Tab to \(cell)")
+        }
+        editor.view.insertBacktab(nil)
+        #expect(editor.view.selectedRange() == editor.find("ok"))
+        editor.place(editor.find("Name").location)
+        editor.view.insertBacktab(nil)
+        #expect(editor.view.selectedRange() == editor.find("Name"))
+        #expect(editor.view.string == Self.text)
+    }
+
+    /// The table after Tab in its last cell, aligned, with the alignments kept.
+    static let added = """
+        Intro
+
+        | Name       | Qty | Note     |
+        | :--------- | --: | :------: |
+        | apple      | 3   | ok       |
+        | kiwi fruit | 12  | fine one |
+        |            |     |          |
+
+        After
+
+        """
+
+    @Test func tabInTheLastCellAddsAnAlignedRow() {
+        let editor = Editor(Self.text, caret: 0)
+        editor.place(editor.find("fine").location)
+        editor.edit { editor.view.insertTab(nil) }
+        #expect(editor.view.string == Self.added)
+        #expect(editor.view.selectedRange() == NSRange(location: editor.find("|            |").location + 2, length: 0))
+        editor.edit { editor.view.insertText("pear", replacementRange: editor.view.selectedRange()) }
+        editor.view.insertTab(nil)
+        #expect(editor.view.selectedRange() == NSRange(location: editor.find("pear").location + 17, length: 0))
+        editor.view.styler.undoManager.undo()
+        editor.view.styler.undoManager.undo()
+        #expect(editor.view.string == Self.text)
+    }
+
+    @Test func insertRowsAndColumnsAndSelectTheNewCell() throws {
+        func run(_ command: TableEditing, at cell: String, from: Int = 0) -> Editor {
+            let editor = Editor("| a | b |\n|---|--:|\n| c | d |\n", caret: 0)
+            editor.place(editor.find(cell, from: from).location)
+            let item = NSMenuItem(title: command.name, action: #selector(EditorTextView.editTableItem(_:)), keyEquivalent: "")
+            item.tag = command.rawValue
+            #expect(editor.view.validateMenuItem(item))
+            editor.edit { editor.view.editTableItem(item) }
+            return editor
+        }
+        let below = run(.rowBelow, at: "a")
+        #expect(below.view.string == "| a   | b   |\n| --- | --: |\n|     |     |\n| c   | d   |\n")
+        #expect(below.view.selectedRange() == NSRange(location: 30, length: 0))
+        let above = run(.rowAbove, at: "c")
+        #expect(above.view.string == "| a   | b   |\n| --- | --: |\n|     |     |\n| c   | d   |\n")
+        #expect(above.view.selectedRange() == NSRange(location: 30, length: 0))
+        #expect(run(.rowAbove, at: "a").view.string == "| a | b |\n|---|--:|\n| c | d |\n")
+        let left = run(.columnLeft, at: "d")
+        #expect(left.view.string == "| a   |     | b   |\n| --- | --- | --: |\n| c   |     | d   |\n")
+        #expect(left.view.selectedRange() == NSRange(location: 48, length: 0))
+        let right = run(.columnRight, at: "d")
+        #expect(right.view.string == "| a   | b   |     |\n| --- | --: | --- |\n| c   | d   |     |\n")
+        #expect(right.view.selectedRange() == NSRange(location: 54, length: 0))
+        right.view.styler.undoManager.undo()
+        #expect(right.view.string == "| a | b |\n|---|--:|\n| c | d |\n")
+        let crlf = Editor("| a | b |\r\n|---|---|\r\n| c | d |\r\n", caret: 0)
+        crlf.view.insertBacktab(nil)
+        #expect(crlf.view.selectedRange() == crlf.find("a"))
+        crlf.place(crlf.find("| c").location)
+        crlf.view.insertBacktab(nil)
+        #expect(crlf.view.selectedRange() == crlf.find("b"))
+        crlf.place(crlf.find("d").location)
+        crlf.view.insertTab(nil)
+        #expect(crlf.view.string == "| a   | b   |\r\n| --- | --- |\r\n| c   | d   |\r\n|     |     |\r\n")
+        // Lines selected across rows take Tab as before, with no cell to move to.
+        let rest = (crlf.view.string as NSString).substring(from: 20)
+        crlf.view.setSelectedRange(NSRange(location: 0, length: 20))
+        crlf.view.insertTab(nil)
+        #expect(crlf.view.string == "\t" + rest)
+        let outside = Editor("Prose\n\n| a |\n|---|\n", caret: 2)
+        let item = NSMenuItem(title: "", action: #selector(EditorTextView.editTableItem(_:)), keyEquivalent: "")
+        item.tag = TableEditing.rowBelow.rawValue
+        #expect(!outside.view.validateMenuItem(item))
+    }
 }
 
 @MainActor

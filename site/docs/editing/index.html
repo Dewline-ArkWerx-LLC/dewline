@@ -125,14 +125,21 @@
 
       <h2 id="lists">Lists and tasks</h2>
       <p>In a list, <kbd>↩</kbd> starts the next item, counting on or adding an unchecked box. <kbd>↩</kbd> on an empty item ends the list. <kbd>⇥</kbd> and <span class="keys"><kbd>⇧</kbd><kbd>⇥</kbd></span> indent and outdent every selected item, as one undo step. Click a task box to check it.</p>
-      <p>Outside a list, <kbd>⇥</kbd> types a tab or 2 or 4 spaces, as Settings &gt; Editor &gt; Tab key says.</p>
+      <p>Outside a list or table, <kbd>⇥</kbd> types a tab or 2 or 4 spaces, as Settings &gt; Editor &gt; Tab key says.</p>
+
+      <h2 id="tables">Tables</h2>
+      <p>In a table, <kbd>⇥</kbd> and <span class="keys"><kbd>⇧</kbd><kbd>⇥</kbd></span> select the next and previous cell. <kbd>⇥</kbd> in the last cell adds a row. Format &gt; Insert Row Above, Insert Row Below, Insert Column Left and Insert Column Right add an empty row or column at the caret, line the table's pipes up in the source and put the caret in the new cell.</p>
 
       <h2 id="format">Format and move lines</h2>
       <p>The Format menu writes the Markdown. Bold, Italic, Strikethrough, Highlight and Inline Code wrap the selection or the word at the caret, and unwrap it when it has the markers. Link <span class="keys"><kbd>⌘</kbd><kbd>K</kbd></span> writes <code>[text]()</code> with the caret inside the parentheses.</p>
       <p>Headings, Quote, the lists and Task act on every selected line, and come off when all lines have them. Edit &gt; Move Line Up <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>[</kbd></span> and Down <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>]</kbd></span> move the selected lines. <a href="/docs/keyboard/#format">Keyboard</a> lists every key.</p>
+      <p>View &gt; Zoom In <span class="keys"><kbd>⌘</kbd><kbd>+</kbd></span>, Zoom Out <span class="keys"><kbd>⌘</kbd><kbd>-</kbd></span> and Actual Size <span class="keys"><kbd>⌘</kbd><kbd>0</kbd></span> change Settings &gt; Appearance &gt; Text size, so every window follows and the size stays. Body Text has no key: press a heading's key again to turn it back.</p>
 
       <h2 id="images">Paste images</h2>
-      <p>Paste or drop an image and Dewline saves it as <code>image-&lt;date&gt;-&lt;n&gt;.png</code> beside the note, then links it at the caret. Settings &gt; Files can put images in an <code>attachments</code> folder instead.</p>
+      <p>Paste or drop an image and Dewline saves it as <code>image-&lt;date&gt;-&lt;n&gt;</code> beside the note, then links it at the caret. A JPEG, GIF, WebP or PNG keeps its bytes and extension; anything else, such as a screenshot's TIFF, is saved as PNG. Settings &gt; Files can put images in an <code>attachments</code> folder instead.</p>
+
+      <h2 id="copy-paste">Copy and paste</h2>
+      <p>Edit &gt; Copy as Markdown copies the selection, or the whole note when nothing is selected, as Markdown. Copy as HTML copies it as HTML, which rich text apps paste formatted and text editors paste as source. Pasting from a web page, Mail or a word processor turns its headings, emphasis, links, lists, quotes, code and tables into Markdown. Text that is already Markdown, and text from a code editor, pastes as it is.</p>
 
       <h2 id="find">Find</h2>
       <p>Find… <span class="keys"><kbd>⌘</kbd><kbd>F</kbd></span> finds and replaces in the open note. <span class="keys"><kbd>⌘</kbd><kbd>G</kbd></span> and <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd></span> step through matches. Go to Line… <span class="keys"><kbd>⌘</kbd><kbd>L</kbd></span> jumps by number.</p>

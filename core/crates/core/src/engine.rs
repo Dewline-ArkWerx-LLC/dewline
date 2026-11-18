@@ -2451,8 +2451,9 @@ mod tests {
         /// file when the engine looked, and each buffer a landing or restore
         /// replaced. The document's own saves are history its undo holds.
         ever: HashMap<Hash, Vec<u8>>,
-        /// The file holds the document's own save.
-        ours: bool,
+        /// The document's own newest save. A file holding these bytes holds
+        /// the document's save, whoever wrote them last (an A-B-A).
+        saved: Option<Vec<u8>>,
         /// Open calls: a PreToolUse's id, file and arrival, until its
         /// PostToolUse.
         calls: Vec<(String, PathBuf, Instant)>,
@@ -2550,7 +2551,7 @@ mod tests {
                 blobs: Vec::new(),
                 commits: Vec::new(),
                 serial: 0,
-                ours: false,
+                saved: None,
                 fx,
             }
         }
@@ -2700,7 +2701,7 @@ mod tests {
                 Op::Observe => {
                     let differs = self.fx.engine.observe(self.doc).unwrap();
                     if let Some(bytes) = &disk_before
-                        && !self.ours
+                        && self.saved.as_ref() != Some(bytes)
                     {
                         self.ever.insert(blake3::hash(bytes), bytes.clone());
                         if differs {
@@ -3019,9 +3020,7 @@ mod tests {
             }
 
             if saved {
-                self.ours = true;
-            } else if outside && self.disk() != disk_before {
-                self.ours = false;
+                self.saved = self.disk();
             }
             let base = self.doc(|d| d.base.clone());
             if blake3::hash(&base) != base_before {

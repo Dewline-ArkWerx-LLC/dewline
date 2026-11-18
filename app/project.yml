@@ -83,9 +83,13 @@ targets:
         # Ink, not Apple blue, fills the controls AppKit draws: default buttons, checkboxes, selected segments. Signal
         # draws lines and never fills a control (Station rule 1).
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Launch Services rank for code files. Every build registers its app, so the test host claims None and never
+        # becomes a handler for a code type.
+        DEWLINE_CODE_RANK: Alternate
       configs:
         Test:
           PRODUCT_BUNDLE_IDENTIFIER: dev.arkwerx.dewline.testhost
+          DEWLINE_CODE_RANK: None
     entitlements:
       path: Dewline/Dewline.entitlements
       properties:
@@ -122,6 +126,30 @@ targets:
             CFBundleTypeRole: Editor
             LSHandlerRank: Alternate
             LSItemContentTypes: [net.daringfireball.markdown]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
+          # Code files (CodeFile.extensions), at Alternate so Open With lists Dewline without claiming the default. They
+          # open only while Settings > Editor > Open code files is on. First the system's types, then by extension the
+          # ones it has none for.
+          - CFBundleTypeName: Source code
+            CFBundleTypeRole: Editor
+            LSHandlerRank: $(DEWLINE_CODE_RANK)
+            LSItemContentTypes: [
+              public.python-script, com.netscape.javascript-source, com.microsoft.typescript, com.sun.java-source,
+              public.c-source, public.c-header, public.c-plus-plus-source, public.c-plus-plus-header, public.php-script,
+              public.ruby-script, public.swift-source, com.apple.rez-source, public.perl-script, public.objective-c-source,
+              public.objective-c-plus-plus-source, public.shell-script, public.bash-script, public.zsh-script, org.iso.sql,
+              public.html, public.css, public.json, public.yaml, public.toml, public.xml, public.make-source,
+              public.protobuf-source, public.patch-file, org.tug.tex, public.assembly-source, com.microsoft.ini,
+            ]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
+          - CFBundleTypeName: Source code file
+            CFBundleTypeRole: Editor
+            LSHandlerRank: $(DEWLINE_CODE_RANK)
+            CFBundleTypeExtensions: [
+              pyi, pyw, jsx, cjs, ts, cts, cs, go, rs, kt, kts, scala, sc, dart, lua, hs, ex, exs, erl, hrl, clj, cljs, cljc,
+              fsx, fsi, ml, mli, jl, groovy, gradle, ps1, psm1, fish, scss, sass, jsonc, json5, cmake, graphql, gql, tf, hcl,
+              nix, zig, asm, dockerfile,
+            ]
             NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: net.daringfireball.markdown

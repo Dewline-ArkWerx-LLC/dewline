@@ -106,6 +106,9 @@ enum MainMenu {
         keepAll.keyEquivalentModifierMask = [.command, .shift]
         let revertAll = menu.addItem(withTitle: "Revert All Changes", action: #selector(EditorTextView.revertAllChanges(_:)), keyEquivalent: "\u{8}")
         revertAll.keyEquivalentModifierMask = [.command, .option, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")
         return menu
     }
 
@@ -118,7 +121,8 @@ enum MainMenu {
             menu.addItem(format(command, key, modifiers))
         }
         menu.addItem(.separator())
-        for (command, key) in zip([MarkdownFormat.heading1, .heading2, .heading3, .heading4, .heading5, .heading6, .body], ["1", "2", "3", "4", "5", "6", "0"]) {
+        // Body Text has no key: ⌘0 is Actual Size, as in Bear, and a heading's own key turns it back to body text.
+        for (command, key) in zip([MarkdownFormat.heading1, .heading2, .heading3, .heading4, .heading5, .heading6, .body], ["1", "2", "3", "4", "5", "6", ""]) {
             menu.addItem(format(command, key, .command))
         }
         menu.addItem(.separator())
@@ -126,6 +130,10 @@ enum MainMenu {
             (.quote, "'", .command), (.bulletedList, "8", [.command, .shift]), (.numberedList, "7", [.command, .shift]), (.task, "9", [.command, .shift]),
         ] {
             menu.addItem(format(command, key, modifiers))
+        }
+        menu.addItem(.separator())
+        for command in [TableEditing.rowAbove, .rowBelow, .columnLeft, .columnRight] {
+            menu.addItem(withTitle: command.name, action: #selector(EditorTextView.editTableItem(_:)), keyEquivalent: "").tag = command.rawValue
         }
         return menu
     }
@@ -171,6 +179,17 @@ enum MainMenu {
         menu.addItem(withTitle: "Show Previous Tab", action: #selector(MainWindowController.showPreviousTab(_:)), keyEquivalent: "{")
         menu.addItem(withTitle: "Show Next Tab", action: #selector(MainWindowController.showNextTab(_:)), keyEquivalent: "}")
         menu.addItem(withTitle: "Folding", action: nil, keyEquivalent: "").submenu = foldMenu()
+        menu.addItem(.separator())
+        for (title, action, key) in [
+            ("Zoom In", #selector(TextZoom.zoomIn(_:)), "+"), ("Zoom In", #selector(TextZoom.zoomIn(_:)), "="),
+            ("Zoom Out", #selector(TextZoom.zoomOut(_:)), "-"), ("Actual Size", #selector(TextZoom.actualSize(_:)), "0"),
+        ] {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+            item.target = TextZoom.self
+            // ⌘= zooms in without Shift, from an item the menu doesn't show.
+            item.isHidden = key == "="
+            item.allowsKeyEquivalentWhenHidden = true
+        }
         return menu
     }
 

@@ -112,6 +112,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var section: Int?
     private var watch: FolderWatch?
     private var showsIgnored: Bool
+    /// Whether code files opened when the rows were listed.
+    private var listsCode: Bool
     /// The rows are listed once the window has drawn its first frame; until then the sidebar shows empty.
     private var filled = false
     /// The open file as `show` last had it before the rows were listed.
@@ -131,6 +133,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         header = folder.map { _ in SidebarHeader() }
         gitStates = folder.map { GitStates(folder: $0.url) }
         showsIgnored = Preferences.shared.showsIgnored
+        listsCode = CodeFile.isOn
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
@@ -462,8 +465,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     @objc private func preferencesChanged() {
-        guard Preferences.shared.showsIgnored != showsIgnored else { return }
+        guard Preferences.shared.showsIgnored != showsIgnored || CodeFile.isOn != listsCode else { return }
         showsIgnored = Preferences.shared.showsIgnored
+        listsCode = CodeFile.isOn
         relist { _ in true }
     }
 
@@ -475,14 +479,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         reload()
     }
 
-    /// A click opens a note in this tab and a Command-click in a new one; any other file opens in Quick Look.
+    /// A click opens a note or code file in this tab and a Command-click in a new one; any other file opens in Quick Look.
     @objc private func clicked(_ sender: Any?) {
         guard let node = outlineView.item(atRow: outlineView.clickedRow) as? SidebarNode else { return }
         let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
         switch node.kind {
         case .entry(let entry) where entry.isFolder:
             outlineView.isItemExpanded(node) ? outlineView.collapseItem(node) : outlineView.expandItem(node)
-        case .entry(let entry) where entry.isMarkdown || isAgentFile(entry.url):
+        case .entry(let entry) where entry.opens || isAgentFile(entry.url):
             open(entry.url, newTab)
         case .entry(let entry):
             quickLook(entry.url)
@@ -499,16 +503,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func doubleClicked(_ sender: Any?) {
         guard let node = outlineView.item(atRow: outlineView.clickedRow) as? SidebarNode,
-            case .entry(let entry) = node.kind, entry.isMarkdown
+            case .entry(let entry) = node.kind, entry.opens
         else { return }
         open(entry.url, true)
     }
 
     /// A folder's chevron turns as it opens and closes.
+    /// The chevron, and the roll-up a closed folder shows in place of its notes' badges.
     private func reloadChevron(_ node: SidebarNode) {
         let row = outlineView.row(forItem: node)
         guard row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarFileCell else { return }
-        cell.setExpanded(outlineView.isItemExpanded(node))
+        show(node, in: cell)
     }
 
     // MARK: The header
@@ -586,17 +591,24 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     @objc private func changesChanged() {
         guard filled else { return }
         var waiting: [String: [WaitingCount]] = [:]
+        for note in Review.closedNotes() {
+            let path = note.url.standardizedFileURL.path
+            let writer = MarkWriter(note.origin)
+            if !(waiting[path] ?? []).contains(where: { $0.writer.name == writer.name }) {
+                waiting[path, default: []].append(WaitingCount(writer: writer, count: nil))
+            }
+        }
         for live in Review.files(in: view.window) {
             var counts: [WaitingCount] = []
             for change in live.changes.values where change.marked {
                 let writer = MarkWriter(change.origin)
                 if let index = counts.firstIndex(where: { $0.writer.name == writer.name }) {
-                    counts[index] = WaitingCount(writer: writer, count: counts[index].count + 1)
+                    counts[index] = WaitingCount(writer: writer, count: (counts[index].count ?? 0) + 1)
                 } else {
                     counts.append(WaitingCount(writer: writer, count: 1))
                 }
             }
-            if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count > $1.count } }
+            if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count ?? 0 > $1.count ?? 0 } }
         }
         for note in Review.closedNotes() where waiting[note.url.standardizedFileURL.path] == nil {
             waiting[note.url.standardizedFileURL.path] = [WaitingCount(writer: MarkWriter(note.origin), count: note.count)]
@@ -617,8 +629,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         switch node.kind {
         case .entry(let entry):
             let path = entry.url.standardizedFileURL.path
-            cell.show(entry, gone: false, expanded: entry.isFolder && outlineView.isItemExpanded(node),
-                waiting: node === fileNode ? [] : waitingChanges[path] ?? [], git: gitStates?.state(of: entry.url))
+            let expanded = entry.isFolder && outlineView.isItemExpanded(node)
+            let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : node === fileNode ? [] : waitingChanges[path] ?? []
+            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: gitStates?.state(of: entry.url))
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
@@ -626,6 +639,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         default:
             break
         }
+    }
+
+    /// A closed folder's roll-up: each writer with changes waiting in a note under it, without counts.
+    private func rollUp(under folder: String) -> [WaitingCount] {
+        let open = fileNode?.url?.standardizedFileURL.path
+        var writers: [WaitingCount] = []
+        for (path, counts) in waitingChanges.sorted(by: { $0.key < $1.key }) where path.hasPrefix(folder + "/") && path != open {
+            for count in counts where !writers.contains(where: { $0.writer.name == count.writer.name }) {
+                writers.append(WaitingCount(writer: count.writer, count: nil))
+            }
+        }
+        return writers
     }
 
     /// The row's indent guides: one per enclosing folder, under its chevron.
@@ -661,7 +686,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             item.target = mine ? self : nil
             item.representedObject = object
         }
-        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) {
+        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) || CodeFile.opened(url) != nil {
             add("Open in New Tab", #selector(openInNewTab(_:)), mine: true)
         }
         let container = isFolder ? url : url.deletingLastPathComponent()
@@ -1042,8 +1067,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
     static let note = NSUserInterfaceItemIdentifier("note")
 
     private var indent: NSLayoutConstraint?
-    /// The text's ink at rest; dimmed rows take `ink3`.
-    private var tone: Token = .ink2
     private var current = false
 
     var selected = false {
@@ -1076,7 +1099,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
             constraints.append(indent)
         default:
             label.font = Chrome.small
-            tone = .ink3
             constraints.append(label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22))
         }
         NSLayoutConstraint.activate(constraints)
@@ -1100,7 +1122,7 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
         if identifier == Self.heading {
             textField?.font = current ? .systemFont(ofSize: 12, weight: .medium) : Chrome.small
         }
-        textField?.textColor = Chrome.color(selected || current ? .ink : tone)
+        textField?.textColor = Chrome.color(selected || current ? .ink : .ink2)
     }
 
     func show(_ title: String) {
@@ -1112,7 +1134,6 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
         self.current = current
         textField?.stringValue = heading.title
         indent?.constant = 4 + CGFloat(heading.level - 1) * 10
-        tone = .ink2
         paint()
     }
 }

@@ -49,7 +49,6 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Heading 4 | Format | ⌘4 |
 | Heading 5 | Format | ⌘5 |
 | Heading 6 | Format | ⌘6 |
-| Body Text | Format | ⌘0 |
 | Quote | Format | ⌘' |
 | Bulleted List | Format | ⇧⌘8 |
 | Numbered List | Format | ⇧⌘7 |
@@ -67,6 +66,9 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Unfold | View › Folding | ⌥⌘→ |
 | Fold All | View › Folding | ⌥⇧⌘← |
 | Unfold All | View › Folding | ⌥⇧⌘→ |
+| Zoom In | View | ⌘+ |
+| Zoom Out | View | ⌘- |
+| Actual Size | View | ⌘0 |
 | Back | Go | ⌘[ |
 | Forward | Go | ⌘] |
 | Next Change | Go | ⌃⌘↓ |

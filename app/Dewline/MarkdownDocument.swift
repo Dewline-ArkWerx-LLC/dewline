@@ -103,6 +103,40 @@ final class MarkdownDocument: NSDocument {
         NotificationCenter.default.post(name: Self.didCloseNotification, object: self)
     }
 
+    /// Saves the note now, through the engine when it keeps the file. True when its text is safe: in the file, or in
+    /// the draft the engine keeps when it refuses, which opening the note offers back.
+    func flush() async -> Bool {
+        guard isDocumentEdited else { return true }
+        if let live, let text = textView?.string {
+            // Typing during the save leaves the document edited, or the draft behind the buffer.
+            guard await live.autosave() != nil else { return !isDocumentEdited }
+            let kept = await live.keptDraft()?.holds(bytes(of: text)) == true
+            return kept && textView?.string == text
+        }
+        if let fileURL {
+            _ = await withCheckedContinuation { continuation in
+                save(to: fileURL, ofType: Self.type, for: .saveOperation) { continuation.resume(returning: $0) }
+            }
+        } else {
+            await saveNew()
+        }
+        return !isDocumentEdited
+    }
+
+    /// Closing saves the note first, so nothing asks; a refused save closes with the text in the draft. AppKit's
+    /// sheet comes up only for text that is neither in the file nor in a draft.
+    override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        Task {
+            guard await flush() else {
+                return super.canClose(withDelegate: delegate, shouldClose: shouldCloseSelector, contextInfo: contextInfo)
+            }
+            guard let shouldCloseSelector else { return }
+            let delegate = delegate as AnyObject
+            typealias Reply = @convention(c) (AnyObject, Selector, NSDocument, Bool, UnsafeMutableRawPointer?) -> Void
+            unsafeBitCast(delegate.method(for: shouldCloseSelector), to: Reply.self)(delegate, shouldCloseSelector, self, true, contextInfo)
+        }
+    }
+
     /// Reads through a descriptor that must be a regular file, so a path that became a FIFO or a device after it
     /// was checked fails at once instead of blocking. Runs off the main thread when AppKit opens a document.
     override func read(from url: URL, ofType typeName: String) throws {
@@ -398,5 +432,74 @@ struct SaveConflict: LocalizedError, RecoverableError {
             Task { @MainActor in document.saveAs(nil) }
         }
         return false
+    }
+}
+
+/// Saves every note before a quit reviews them, and when the app goes to the background or the Mac sleeps, so a quit
+/// asks only about text that is neither in its file nor in a draft. Notes recent documents only while the recent list
+/// keeps any: AppKit writes the system's Recent Items from `noteNewRecentDocumentURL` whatever `NSRecentDocumentsLimit`
+/// says, so a run with `-NSRecentDocumentsLimit 0`, as the scheme's tests are, records nothing.
+final class DocumentController: NSDocumentController {
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(flushAll), name: NSApplication.didResignActiveNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(flushAll), name: NSWorkspace.willSleepNotification, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    override func noteNewRecentDocumentURL(_ url: URL) {
+        guard maximumRecentDocumentCount > 0 else { return }
+        super.noteNewRecentDocumentURL(url)
+    }
+
+    /// Code files open from Finder, File > Open and Quick Open only while Open code files is on.
+    override func openDocument(
+        withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
+    ) {
+        if let refusal = CodeFile.refusal(url) { return completionHandler(nil, false, refusal) }
+        super.openDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+    }
+
+    /// A code file reads as text, whatever type Launch Services gives its extension (.ts is also MPEG-2 video).
+    override func typeForContents(of url: URL) throws -> String {
+        CodeFile.language(of: url) != nil ? MarkdownDocument.type : try super.typeForContents(of: url)
+    }
+
+    /// File > Open offers code files only while they open.
+    override func runModalOpenPanel(_ openPanel: NSOpenPanel, forTypes types: [String]?) -> Int {
+        super.runModalOpenPanel(openPanel, forTypes: CodeFile.isOn ? types : [MarkdownDocument.type])
+    }
+
+    @objc private func flushAll() {
+        Task { _ = await flush() }
+    }
+
+    /// Whether every note's text is safe after saving them all.
+    private func flush() async -> Bool {
+        var safe = true
+        for case let document as MarkdownDocument in documents {
+            let flushed = await document.flush()
+            safe = safe && flushed
+        }
+        return safe
+    }
+
+    override func reviewUnsavedDocuments(
+        withAlertTitle title: String?, cancellable: Bool, delegate: Any?, didReviewAllSelector: Selector?,
+        contextInfo: UnsafeMutableRawPointer?
+    ) {
+        Task {
+            guard await flush() else {
+                return super.reviewUnsavedDocuments(
+                    withAlertTitle: title, cancellable: cancellable, delegate: delegate, didReviewAllSelector: didReviewAllSelector,
+                    contextInfo: contextInfo)
+            }
+            guard let delegate = delegate as AnyObject?, let didReviewAllSelector else { return }
+            typealias Reply = @convention(c) (AnyObject, Selector, NSDocumentController, Bool, UnsafeMutableRawPointer?) -> Void
+            unsafeBitCast(delegate.method(for: didReviewAllSelector), to: Reply.self)(delegate, didReviewAllSelector, self, true, contextInfo)
+        }
     }
 }

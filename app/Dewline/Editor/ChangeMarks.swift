@@ -585,9 +585,11 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             self.stamp = stamp
             return stamp
         }()
-        let count = group(of: id).count
+        let group = group(of: id)
         let external = change.origin == .external
-        stamp.show(MarkWriter(change.origin), at: landed[id] ?? .now, count: count, external: external, shell: external && change.shell)
+        stamp.show(
+            MarkWriter(change.origin), at: landed[id] ?? .now, count: group.count, external: external, shell: external && change.shell,
+            refused: group.contains { changes[$0]?.refused == true })
         if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
             setReach(0)

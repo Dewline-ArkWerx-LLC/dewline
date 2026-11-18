@@ -229,6 +229,8 @@ final class ChangeStamp: NSView {
     private static let gap: CGFloat = 10
     /// What an unnamed change that landed while Claude Code ran a shell command says (X2).
     static let duringShell = "During Claude Code\u{2019}s shell command"
+    /// What a change says once Revert refuses it for text typed inside it.
+    static let typedInside = "You edited inside it: undo that to revert"
 
     private let revert: StampButton
     private let keep: StampButton
@@ -288,8 +290,8 @@ final class ChangeStamp: NSView {
     }
 
     /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`, during Claude
-    /// Code's shell command when `shell`; Keep and Revert decide them all.
-    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool) {
+    /// Code's shell command when `shell`, and why Revert left one when `refused`; Keep and Revert decide them all.
+    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool, refused: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
         self.writer = writer
@@ -297,8 +299,9 @@ final class ChangeStamp: NSView {
         self.count = count
         self.external = external
         self.shell = shell
-        note.isHidden = !shell
-        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (shell ? ", \(Self.duringShell)" : ""))
+        note.stringValue = refused ? Self.typedInside : Self.duringShell
+        note.isHidden = !(shell || refused)
+        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (note.isHidden ? "" : ", \(note.stringValue)"))
         let changes = count == 1 ? "change" : "\(count) changes"
         revert.setAccessibilityLabel("Revert \(writer.possessive) \(changes)")
         keep.setAccessibilityLabel("Keep \(writer.possessive) \(changes)")

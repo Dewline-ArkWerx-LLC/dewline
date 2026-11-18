@@ -1427,17 +1427,21 @@ fn differing(ours: &str, theirs: &str) -> (u32, u32, String) {
 }
 
 /// A change's text with the change undone: `original` back where it put
-/// `landed`, keeping what was typed inside it since. None when that typing
-/// and the revert overlap.
+/// `landed`, keeping what was typed inside it since, or typed against its
+/// edges while `landed` stays whole. None when that typing and the revert
+/// overlap.
 fn revert(original: &str, landed: &str, current: &str) -> Option<String> {
     if current == landed {
         return Some(original.to_owned());
     }
     let merge = merge::merge3(landed, current, original);
-    merge
-        .conflicts
-        .is_empty()
-        .then(|| merge::apply(current, &merge.edits))
+    if merge.conflicts.is_empty() {
+        return Some(merge::apply(current, &merge.edits));
+    }
+    let at = current
+        .find(landed)
+        .filter(|&at| !landed.is_empty() && current.rfind(landed) == Some(at))?;
+    Some([&current[..at], original, &current[at + landed.len()..]].concat())
 }
 
 /// A conflict's two versions, yours first, on lines of their own.
@@ -1962,6 +1966,18 @@ mod tests {
             Some("The cat sat down")
         );
         assert_eq!(revert("a", "b", "c"), None);
+        // Typing against the change's edges stays; typing in its words or at a removal does not.
+        assert_eq!(
+            revert("cat", "cow", "cow jumped").as_deref(),
+            Some("cat jumped")
+        );
+        assert_eq!(
+            revert("cat", "cow", "Big cow!").as_deref(),
+            Some("Big cat!")
+        );
+        assert_eq!(revert("cat", "cow", "cXw"), None);
+        assert_eq!(revert("cat", "cow", "cowcow"), None);
+        assert_eq!(revert("gone", "", "typed"), None);
         assert_eq!(both("mine", "theirs\r\n"), "mine\r\ntheirs\r\n");
         assert_eq!(both("mine\n", "theirs\n"), "mine\ntheirs\n");
         assert_eq!(both("", "theirs"), "theirs");

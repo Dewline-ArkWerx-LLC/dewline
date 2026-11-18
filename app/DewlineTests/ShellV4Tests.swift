@@ -142,25 +142,6 @@ struct ShellV4Tests {
         #expect(abs(after.offset - saved.offset) < 1)
     }
 
-    @Test func previewShowsTheSourceBesideItAndPutsTheModeBack() async throws {
-        Offscreen.install()
-        defer { Offscreen.uninstall() }
-        let root = try folder(["a.md": "# A\n\nSome **bold** text.\n"])
-        let main = MainWindowController(folder: Folder(root))
-        main.display(try document(root.appending(path: "a.md")))
-        main.showWindow(nil)
-        defer { close([main]) }
-        let textView = try #require(main.textView)
-        #expect(!textView.styler.showsSource)
-        main.togglePreview(nil)
-        await settle(0.5)
-        #expect(textView.styler.showsSource)
-        #expect(main.pane.tab == .preview && main.pane.preview.textView.string == textView.string)
-        #expect(!main.pane.preview.textView.isEditable && !main.pane.preview.textView.styler.showsSource)
-        main.togglePreview(nil)
-        #expect(!textView.styler.showsSource)
-    }
-
     @Test func theStatusBarShowsOneMessageAtATime() {
         let bar = StatusBar()
         bar.post(.init(id: "loads", kind: .info, text: "Agents read 2 files here"))

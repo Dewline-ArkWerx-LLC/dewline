@@ -139,7 +139,7 @@ final class ThemeStore {
         case .codex: .writerCodex
         case .git: .gitModified
         case .you, .otherMac, .collaborator: .ink2
-        case .cursor, .copilot, .gemini, .unknown, .agent, .demo: .writerApp
+        case .cursor, .copilot, .gemini, .unknown, .demo: .writerApp
         }
         return color(token)
     }

@@ -48,7 +48,7 @@ public final class ChangeEngine: Sendable {
         case claude, codex, cursor
         /// The first-run demo in Welcome.md.
         case demo
-        /// An agent in the agent panel; the session names it.
+        /// Marks the agent panel left before it was cut; the session names the agent.
         case acp
     }
 

@@ -60,6 +60,10 @@ const MAX_SCORE: u64 = 60_000;
 /// The most bytes read of each blob a rename's content is compared in; a
 /// larger one pairs with nothing.
 const MAX_RENAME_BYTES: u64 = 256 << 10;
+/// The most bytes read of all blobs, and pieces looked up, in one rename
+/// search; past either, nothing pairs.
+const MAX_RENAME_TOTAL: u64 = 8 << 20;
+const MAX_RENAME_LOOKUPS: usize = 1 << 22;
 
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
@@ -347,22 +351,35 @@ fn config_string(value: &[u8]) -> Vec<u8> {
 /// `added`, as git's rename detection pairs them: each blob once, best
 /// score first, where the score is the bytes of lines (in pieces of 64 bytes
 /// at most) the two have in common over the larger one's size, and at least
-/// half. Nothing when there are more than git's default limit of pairs; a
-/// blob over `MAX_RENAME_BYTES` pairs with nothing.
+/// half. Nothing when there are more than git's default limit of pairs, or
+/// the search passes `MAX_RENAME_TOTAL` or `MAX_RENAME_LOOKUPS`; a blob over
+/// `MAX_RENAME_BYTES` pairs with nothing.
 fn similar(objects: &Objects, deleted: &[Oid], added: &[Oid]) -> Vec<(usize, usize)> {
     if deleted.is_empty() || added.is_empty() || deleted.len() * added.len() > MAX_RENAME_PAIRS {
         return Vec::new();
     }
     // An object that can't be read is empty, which pairs with nothing.
-    let blob = |id: &Oid| {
-        objects
-            .read(*id, MAX_RENAME_BYTES)
-            .filter(|(kind, _)| *kind == 3)
-            .map(|(_, bytes)| bytes)
-            .unwrap_or_default()
+    let mut left = MAX_RENAME_TOTAL;
+    let mut read = |ids: &[Oid]| -> Option<Vec<Vec<u8>>> {
+        ids.iter()
+            .map(|id| {
+                let bytes = objects
+                    .read(*id, MAX_RENAME_BYTES)
+                    .filter(|(kind, _)| *kind == 3)
+                    .map(|(_, bytes)| bytes)
+                    .unwrap_or_default();
+                left = left.checked_sub(bytes.len() as u64)?;
+                Some(bytes)
+            })
+            .collect()
     };
-    let deleted: Vec<_> = deleted.iter().map(blob).collect();
-    let added: Vec<_> = added.iter().map(blob).collect();
+    let Some(deleted) = read(deleted) else {
+        return Vec::new();
+    };
+    let Some(added) = read(added) else {
+        return Vec::new();
+    };
+    let mut lookups = MAX_RENAME_LOOKUPS;
     let added_pieces: Vec<_> = added.iter().map(|blob| pieces(blob)).collect();
     let mut scores = Vec::new();
     for (d, blob) in deleted.iter().enumerate() {
@@ -372,6 +389,10 @@ fn similar(objects: &Objects, deleted: &[Oid], added: &[Oid]) -> Vec<(usize, usi
             if larger == 0 || blob.len().min(other.len()) * 2 < larger {
                 continue;
             }
+            let Some(rest) = lookups.checked_sub(counts.len()) else {
+                return Vec::new();
+            };
+            lookups = rest;
             let common: usize = counts
                 .iter()
                 .filter_map(|(piece, count)| Some(*count.min(others.get(piece)?)))

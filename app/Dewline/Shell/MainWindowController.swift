@@ -271,8 +271,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private static let awaitedMessage = "awaited"
     private static let heldMessage = "held"
+    private static let draftMessage = "draft"
 
-    /// A terminal waiting on the note, and a conflict holding its save, in the status bar.
+    /// A terminal waiting on the note, why its last autosave wrote nothing, and a draft kept from before it opened,
+    /// in the status bar.
     private func updateState() {
         let document = document as? MarkdownDocument
         if document?.isAwaited == true {
@@ -282,10 +284,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else {
             statusBar.clear(Self.awaitedMessage)
         }
-        if document?.live?.changes.values.contains(where: \.conflict) == true {
+        let live = document?.live
+        if live?.changes.values.contains(where: \.conflict) == true {
             statusBar.post(.init(id: Self.heldMessage, kind: .problem, text: "Saving waits until you choose"))
+        } else if let document, let reason = live?.refusal.flatMap(Self.reason) {
+            statusBar.post(.init(id: Self.heldMessage, kind: .problem, text: "Not saved: \(reason)", actions: [
+                .init(title: "Save Now") { _ in document.save(nil) },
+            ]))
         } else {
             statusBar.clear(Self.heldMessage)
+        }
+        if let live, let draft = live.draft {
+            statusBar.post(.init(id: Self.draftMessage, kind: .question, text: "Unsaved text from \(Self.time(draft.time)) was kept", actions: [
+                .init(title: "Restore") { _ in Task { await live.restoreDraft() } },
+                .init(title: "Discard") { _ in live.discardDraft() },
+            ]))
+        } else {
+            statusBar.clear(Self.draftMessage)
+        }
+    }
+
+    /// Why an autosave wrote nothing, for the status bar; nil for a wait that ends on its own soon, an IME composition
+    /// or Writing Tools.
+    private static func reason(_ refusal: ChangeEngine.Refusal) -> String? {
+        switch refusal {
+        case .held: "an agent is writing this note"
+        case .changed: "the file changed on disk"
+        case .deleted: "the file was deleted"
+        case .unreadable: "the file can\u{2019}t be read"
+        case .io(let message): message
+        case .closed, .readOnly, .stale, .conflict, .composing, .writingTools: nil
         }
     }
 
@@ -294,8 +322,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard let document = document as? NSDocument else { return nil }
         guard !edited, document.fileURL != nil else { return "Not saved yet" }
         guard let date = document.fileModificationDate else { return "Saved" }
-        let time = Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .shortened)
-        return "Saved \(time)"
+        return "Saved \(Self.time(date))"
+    }
+
+    /// "15:31" today, else with the date.
+    private static func time(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .shortened)
     }
 
     /// Selects this tab, in its window's place, and brings it front.
@@ -349,6 +381,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         // Rendered blocks fit the column, so the text arrives once the view has its width.
         window?.layoutIfNeeded()
         let textView = scrollView.documentView as! EditorTextView
+        if let language = document.fileURL.flatMap(CodeFile.opened) { textView.showCode(language, indent: CodeFile.indentation(of: text)) }
         textView.documentFolder = document.fileURL?.deletingLastPathComponent()
         textView.noteFolder = folder?.url ?? textView.documentFolder
         textView.openNote = { [weak self] url, heading in self?.follow(url, heading: heading) }

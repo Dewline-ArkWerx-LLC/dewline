@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::md::{self, TokenKind};
 
@@ -46,8 +46,9 @@ pub struct Span {
 pub const LINE_TOKENS: usize = 2_000;
 /// A line longer than this in UTF-8 bytes is not parsed.
 pub const LINE_BYTES: usize = 16_384;
-/// A line whose parse takes longer than this stays plain, and so does the rest of its block.
-pub const LINE_TIME: Duration = Duration::from_millis(30);
+/// A line whose parse takes longer than this stays plain, and so does the rest of its block. The unit tests share the
+/// CPU with each other on an unoptimized build, so there it is a second.
+pub const LINE_TIME: Duration = Duration::from_millis(if cfg!(test) { 1_000 } else { 30 });
 /// The blocks whose line states the worker keeps.
 const CACHED_BLOCKS: usize = 256;
 
@@ -290,22 +291,49 @@ impl Worker {
     }
 }
 
-/// The syntax for a fence's language: an extension or a name, as GitHub reads them, with a few common aliases.
-fn find<'a>(set: &'a SyntaxSet, language: &str) -> Option<&'a syntect::parsing::SyntaxReference> {
-    let language = match language.to_ascii_lowercase().as_str() {
-        "shell" | "zsh" | "console" => "bash".to_string(),
-        "c++" => "cpp".to_string(),
-        "golang" => "go".to_string(),
-        "javascript" | "jsx" | "mjs" | "cjs" => "js".to_string(),
-        "typescript" | "tsx" => "ts".to_string(),
-        "jsonc" | "json5" => "json".to_string(),
-        "py3" | "python3" => "py".to_string(),
-        other => other.to_string(),
+/// The syntax for a fence's language as GitHub reads it: a Linguist name or alias, then a syntax's extension or name.
+fn find<'a>(set: &'a SyntaxSet, language: &str) -> Option<&'a SyntaxReference> {
+    // An info string's first word as GitHub reads it: ` ```rust,ignore ` and ` ```{python} ` too.
+    let language = language
+        .split(',')
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['{', '}', '.'])
+        .to_ascii_lowercase();
+    // Linguist's names and aliases for the languages in the dump that the syntaxes' own extensions and names miss,
+    // mapped to an extension that finds the right one.
+    let token = match language.as_str() {
+        "shell" | "shell-script" | "zsh" | "ksh" | "envrc" | "console" | "shellsession"
+        | "sh-session" => "bash",
+        "javascript" | "node" => "js",
+        "csharp" | "cake" | "cakescript" => "cs",
+        "golang" => "go",
+        "python3" | "rusthon" => "py",
+        "h" => "c",
+        "jruby" | "macruby" | "rake" | "rbx" => "rb",
+        "rscript" | "splus" => "r",
+        "cperl" => "pl",
+        "fsharp" => "fs",
+        "octave" => "matlab",
+        "obj-c" | "objc" | "objectivec" => "m",
+        "obj-c++" | "objc++" | "objectivec++" => "mm",
+        "posh" | "pwsh" => "ps1",
+        "jsonc" | "json5" | "jsonl" | "geojson" | "topojson" | "sarif" => "json",
+        "docker" | "containerfile" => "dockerfile",
+        "bsdmake" | "mf" => "make",
+        "opentofu" | "tofu" => "tf",
+        "nixos" => "nix",
+        "assembly" | "s" => "asm",
+        "nginxconf" | "vhost" => "nginx",
+        "conf" | "dosini" => "ini",
+        "regex" | "regexp" => "re",
+        "wsdl" | "xsd" | "rss" | "plist" => "xml",
+        other => other,
     };
-    if language.is_empty() {
+    if token.is_empty() {
         return None;
     }
-    set.find_syntax_by_token(&language)
+    set.find_syntax_by_token(token)
         .filter(|syntax| !syntax.hidden && syntax.name != "Unnamed")
 }
 
@@ -511,10 +539,7 @@ mod tests {
     use super::*;
 
     fn highlighter() -> Highlighter {
-        Highlighter::new(PathBuf::from(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../app/Dewline/Syntaxes.packdump"
-        )))
+        Highlighter::new(PathBuf::from(DUMP))
     }
 
     /// The text of each span with its class.
@@ -606,21 +631,321 @@ mod tests {
         );
     }
 
-    /// syntect 5.3.0 loops forever on two contexts that `set` each other without consuming (trishume/syntect#706),
-    /// which older JavaScript syntaxes do on this line.
+    const DUMP: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../app/Dewline/Syntaxes.packdump"
+    );
+
+    /// Lines that leave contexts open or nested, among them `x /*`, on which syntect 5.3.0 loops forever in two contexts
+    /// that `set` each other without consuming (trishume/syntect#706), as older JavaScript syntaxes do.
+    const PATHOLOGICAL: &[&str] = &[
+        "x /*",
+        "/*",
+        "*/ */",
+        "\"",
+        "'",
+        "`",
+        "${",
+        "#{",
+        "@{",
+        "%{",
+        "{{",
+        "}}",
+        "<!--",
+        "<<EOF",
+        "<<-'EOF'",
+        "\"\"\"",
+        "'''",
+        "(*",
+        "{-",
+        "--[[",
+        "[[",
+        "]]",
+        "<?php",
+        "?>",
+        "<script>",
+        "<style>",
+        "\\",
+        "r#\"",
+        "@\"",
+        "$(",
+        "$((",
+        "#!",
+        "%>",
+        "<%",
+        "(?<",
+        "[^",
+        "\\\\\\",
+        "/\\/",
+        "=begin",
+        "\"\\",
+        "x = \"a\\",
+        "</",
+    ];
+
+    /// Every syntax in the dump, hidden ones too, returns on each pathological line from a fresh state and on all of
+    /// them in a row. One thread takes the syntaxes in turn, so the other tests' 30 ms line guard keeps its meaning.
     #[test]
-    fn the_syntect_706_line_returns() {
-        for language in ["js", "ts"] {
-            let (sent, received) = mpsc::channel();
-            std::thread::spawn(move || {
-                sent.send(highlighter().highlight(1, language, "x /*"))
-                    .unwrap()
-            });
+    fn every_syntax_returns_on_pathological_lines() {
+        let set: SyntaxSet = syntect::dumps::from_uncompressed_dump_file(DUMP).unwrap();
+        let names: Vec<String> = set
+            .syntaxes()
+            .iter()
+            .map(|syntax| syntax.name.clone())
+            .collect();
+        let nested: Vec<String> = ["(", "{", "[", "<", "\"", "/*", "${"]
+            .iter()
+            .map(|open| open.repeat(400))
+            .collect();
+        let (sent, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for syntax in set.syntaxes() {
+                let mut together = ParseState::new(syntax);
+                for line in PATHOLOGICAL
+                    .iter()
+                    .copied()
+                    .chain(nested.iter().map(String::as_str))
+                {
+                    let line = format!("{line}\n");
+                    let _ = ParseState::new(syntax).parse_line(&line, &set);
+                    let _ = together.parse_line(&line, &set);
+                }
+                let _ = sent.send(());
+            }
+        });
+        for name in &names {
             assert!(
                 received.recv_timeout(Duration::from_secs(10)).is_ok(),
-                "{language}"
+                "{name} never returned"
             );
         }
+    }
+
+    /// A short, typical snippet for each fence language, by a word people write for it.
+    const SNIPPETS: &[(&str, &str)] = &[
+        ("bash", "# c\necho \"hi $USER\" && exit 1\n"),
+        (
+            "c",
+            "#include <stdio.h>\nint main(void) { return 0; } // c\n",
+        ),
+        (
+            "csharp",
+            "// c\npublic class A { string s = \"x\"; int n = 1; }\n",
+        ),
+        (
+            "cpp",
+            "#include <vector>\nint main() { auto x = 1; return x; } // c\n",
+        ),
+        (
+            "cmake",
+            "# c\ncmake_minimum_required(VERSION 3.20)\nproject(demo LANGUAGES C)\n",
+        ),
+        ("css", "/* c */\n.a > #b { color: #fff; margin: 0 1px; }\n"),
+        ("clojure", "; c\n(defn add [a b] (+ a b 42))\n"),
+        ("dart", "// c\nvoid main() { var s = 'x'; print(s); }\n"),
+        ("dockerfile", "# c\nFROM alpine:3.20\nRUN echo \"hi\"\n"),
+        (
+            "elixir",
+            "# c\ndefmodule A do\n  def f(x), do: x + 1\nend\n",
+        ),
+        ("erlang", "% c\n-module(a).\nf(X) -> X + 1.\n"),
+        (
+            "fsharp",
+            "// c\nlet add x y = x + y + 1\nprintfn \"%d\" (add 1 2)\n",
+        ),
+        ("fish", "# c\nfunction greet\n    echo \"hi $argv\"\nend\n"),
+        (
+            "go",
+            "// c\npackage main\nfunc main() { s := \"x\"; _ = s }\n",
+        ),
+        (
+            "graphql",
+            "# c\nquery Hero($id: ID!) { hero(id: $id) { name } }\n",
+        ),
+        (
+            "groovy",
+            "// c\ndef greet(name) { println \"hi ${name}\"; return 1 }\n",
+        ),
+        ("html", "<!-- c -->\n<a href=\"#\">x</a>\n"),
+        ("haskell", "-- c\nmain :: IO ()\nmain = putStrLn \"hi\"\n"),
+        ("ini", "; c\n[section]\nkey = value\n"),
+        ("json", "{\"a\": 1, \"b\": \"x\"}\n"),
+        (
+            "java",
+            "// c\npublic class A { static int f() { return 1; } }\n",
+        ),
+        ("javascript", "// c\nconst f = (a) => `x${a}` + 1;\n"),
+        ("julia", "# c\nfunction f(x)\n    return x + 1\nend\n"),
+        ("kotlin", "// c\nfun main() { val s = \"x\"; println(s) }\n"),
+        (
+            "latex",
+            "% c\n\\begin{document}\nHello $x^2$\n\\end{document}\n",
+        ),
+        (
+            "lua",
+            "-- c\nlocal function f(x) return x + 1 end\nprint(\"hi\")\n",
+        ),
+        ("matlab", "% c\nfunction y = f(x)\n  y = x + 1;\nend\n"),
+        ("makefile", "# c\nall: main.o\n\t$(CC) -o app main.o\n"),
+        ("nix", "# c\n{ pkgs ? import <nixpkgs> {} }: pkgs.hello\n"),
+        ("ocaml", "(* c *)\nlet add x y = x + y + 1\n"),
+        ("objc", "// c\n@interface A : NSObject\n- (int)f;\n@end\n"),
+        (
+            "objc++",
+            "// c\n#import <Foundation/Foundation.h>\nint main() { return 0; }\n",
+        ),
+        ("php", "<?php\n// c\necho \"hi\" . 1;\n"),
+        ("perl", "# c\nmy $x = \"hi\";\nprint $x . 1;\n"),
+        (
+            "powershell",
+            "# c\nfunction Get-A { param($x) Write-Output \"hi $x\" }\n",
+        ),
+        (
+            "protobuf",
+            "// c\nsyntax = \"proto3\";\nmessage A { int32 id = 1; }\n",
+        ),
+        ("python", "# c\ndef f(x):\n    return x + 1\n"),
+        ("r", "# c\nf <- function(x) { x + 1 }\nprint(\"hi\")\n"),
+        ("regex", "^(?:[a-z]+|\\d{2,})$\n"),
+        ("ruby", "# c\ndef f(x)\n  \"hi #{x}\"\nend\n"),
+        ("rust", "// c\nfn main() { let s = \"x\"; }\n"),
+        ("scss", "// c\n$x: 1px;\n.a { .b { margin: $x; } }\n"),
+        ("sql", "-- c\nSELECT a, 1 FROM t WHERE b = 'x';\n"),
+        ("sass", "// c\n$x: 1px\n.a\n  margin: $x\n"),
+        ("scala", "// c\nobject A { def f(x: Int): Int = x + 1 }\n"),
+        (
+            "swift",
+            "// c\nfunc f(_ x: Int) -> String { return \"\\(x)\" }\n",
+        ),
+        ("toml", "# c\n[package]\nname = \"x\"\nversion = 1\n"),
+        (
+            "hcl",
+            "# c\nresource \"aws_s3_bucket\" \"b\" {\n  bucket = \"x\"\n}\n",
+        ),
+        (
+            "typescript",
+            "// c\nconst f = (a: number): string => `${a}`;\n",
+        ),
+        (
+            "tsx",
+            "// c\nconst A = () => <div className=\"x\">{1}</div>;\n",
+        ),
+        (
+            "xml",
+            "<?xml version=\"1.0\"?>\n<!-- c -->\n<a b=\"x\">y</a>\n",
+        ),
+        ("yaml", "# c\nkey: value\nlist: [1, 2]\n"),
+        (
+            "zig",
+            "// c\nconst std = @import(\"std\");\npub fn main() void {}\n",
+        ),
+        (
+            "nginx",
+            "# c\nserver {\n    listen 80;\n    server_name example.com;\n}\n",
+        ),
+        ("asm", "; c\nsection .text\nmov rax, 60\nsyscall\n"),
+        ("diff", "@@ -1 +1 @@\n-a\n+b\n"),
+        ("markdown", "# Title\n\nSee `code`.\n"),
+    ];
+
+    #[test]
+    fn a_snippet_in_every_language_gets_more_than_one_class() {
+        let highlighter = highlighter();
+        let plain: Vec<(&str, Vec<(String, Class)>)> = SNIPPETS
+            .iter()
+            .enumerate()
+            .filter_map(|(block, (language, text))| {
+                let found = read(
+                    text,
+                    &highlighter.highlight(block as u64, language, text).unwrap(),
+                );
+                let classes: std::collections::HashSet<Class> =
+                    found.iter().map(|(_, class)| *class).collect();
+                (classes.len() < 2).then_some((*language, found))
+            })
+            .collect();
+        assert!(plain.is_empty(), "{plain:#?}");
+    }
+
+    /// The fence words GitHub Linguist knows for these languages find the syntax it means.
+    #[test]
+    fn fence_words_find_their_syntax() {
+        let set: SyntaxSet = syntect::dumps::from_uncompressed_dump_file(DUMP).unwrap();
+        let wanted = [
+            ("csharp", "C#"),
+            ("cs", "C#"),
+            ("c#", "C#"),
+            ("objc", "Objective-C"),
+            ("objective-c", "Objective-C"),
+            ("objectivec", "Objective-C"),
+            ("objc++", "Objective-C++"),
+            ("mm", "Objective-C++"),
+            ("fs", "F#"),
+            ("fsharp", "F#"),
+            ("f#", "F#"),
+            ("h", "C"),
+            ("m", "Objective-C"),
+            ("octave", "MATLAB"),
+            ("js", "JavaScript (Babel)"),
+            ("javascript", "JavaScript (Babel)"),
+            ("jsx", "JavaScript (Babel)"),
+            ("mjs", "JavaScript (Babel)"),
+            ("node", "JavaScript (Babel)"),
+            ("ts", "TypeScript"),
+            ("tsx", "TypeScriptReact"),
+            ("py3", "Python"),
+            ("python3", "Python"),
+            ("shell", "Bourne Again Shell (bash)"),
+            ("zsh", "Bourne Again Shell (bash)"),
+            ("console", "Bourne Again Shell (bash)"),
+            ("sh", "Bourne Again Shell (bash)"),
+            ("golang", "Go"),
+            ("c++", "C++"),
+            ("pwsh", "PowerShell"),
+            ("ps1", "PowerShell"),
+            ("docker", "Dockerfile"),
+            ("containerfile", "Dockerfile"),
+            ("make", "Makefile"),
+            ("mk", "Makefile"),
+            ("proto", "Protocol Buffer"),
+            ("protobuf", "Protocol Buffer"),
+            ("hcl", "Terraform"),
+            ("terraform", "Terraform"),
+            ("tf", "Terraform"),
+            ("tex", "LaTeX"),
+            ("latex", "LaTeX"),
+            ("asm", "x86_64 Assembly"),
+            ("nasm", "x86_64 Assembly"),
+            ("conf", "INI"),
+            ("ini", "INI"),
+            ("nginx", "nginx"),
+            ("regex", "Regular Expression"),
+            ("jsonc", "JSON"),
+            ("json5", "JSON"),
+            ("yml", "YAML"),
+            ("plist", "XML"),
+            ("gql", "GraphQL"),
+            ("rb", "Ruby"),
+            ("kts", "Kotlin"),
+            ("exs", "Elixir"),
+            ("rscript", "R"),
+            ("jl", "Julia"),
+            ("cmake", "CMake"),
+            ("rust,ignore", "Rust"),
+            ("{python}", "Python"),
+        ];
+        let wrong: Vec<(&str, &str, Option<&str>)> = wanted
+            .iter()
+            .map(|(word, name)| {
+                (
+                    *word,
+                    *name,
+                    find(&set, word).map(|syntax| syntax.name.as_str()),
+                )
+            })
+            .filter(|(_, name, found)| *found != Some(name))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:?}");
     }
 
     #[test]

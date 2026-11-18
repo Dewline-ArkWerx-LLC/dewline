@@ -32,6 +32,8 @@ final class BlockMap {
     private(set) var isProvisional = false
     /// Where the text the map has blocks for ends: the text's end, unless a new text's first whole parse still runs.
     var parsed: Int { unparsed ?? length }
+    /// A code file's map, which parses nothing: it has no blocks, so nothing in the text styles as Markdown.
+    var isCode = false
 
     private let parser = MarkdownParser()
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.markdown", qos: .userInitiated)
@@ -165,6 +167,10 @@ final class BlockMap {
     func textDidChange(_ text: NSString, edited: NSRange, delta: Int) -> NSRange {
         self.text = text
         version += 1
+        if isCode {
+            length = text.length
+            return text.paragraphRange(for: edited)
+        }
         if edited.location == 0, edited.length == text.length {
             return open()
         }
@@ -338,7 +344,7 @@ final class BlockMap {
     }
 
     private func reparseNow(gap: Int) {
-        guard let parse = try? parser.parse(text as String) else { return }
+        guard !isCode, let parse = try? parser.parse(text as String) else { return }
         install(Self.result(of: parse, in: text, replacing: blocks(after: -1, before: .max), gap: gap), version: version)
     }
 

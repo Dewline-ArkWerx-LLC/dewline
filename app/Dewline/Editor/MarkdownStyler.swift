@@ -42,6 +42,9 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     /// Text not styled yet, whole paragraphs, which `styleSome` works through from the top of the view.
     private var unstyled = IndexSet()
     private var scheduled = false
+    /// The text the next later pass styles: what the last one would have styled in `passTime` at its rate. Each pass
+    /// also lays the view out again, so on a fast Mac few long passes style a long text sooner than many short ones.
+    private var passLength = MarkdownStyler.pass
     /// The line a restored place put at the top of the view, until the text is all styled. The place was measured on
     /// styled text, so `styleSome` holds this line while it shows.
     var restored: Int?
@@ -69,8 +72,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     ].map { $0.rawValue as NSString }
     /// The text a long restyle styles at once, which covers the view: several screens.
     private static let chunk = BlockMap.screen
-    /// The most text one later pass styles while more waits, so a pass fits in a 120 Hz frame.
+    /// The text the first later pass styles while more waits, and the least a later one aims for.
     private static let pass = chunk / 2
+    /// How long one later pass styles while more waits, so the pass and the display after it fit in a 120 Hz frame.
+    private static let passTime = Duration.milliseconds(6)
     private static var base: [NSAttributedString.Key: Any] {
         [
             .font: bodyFont,
@@ -361,10 +366,13 @@ extension MarkdownStyler {
             let anchor = min(line ?? top, storage.length - 1)
             held = textView.baseline(at: anchor).map { (anchor, $0 - visible.minY) }
         }
-        let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, Self.pass, map.parsed - first)
+        let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, passLength, map.parsed - first)
+        let start = ContinuousClock.now
         storage.beginEditing()
         restyle(NSRange(location: first, length: length), in: storage, selection: textView.selectedRanges.map(\.rangeValue))
         storage.endEditing()
+        let took = max(ContinuousClock.now - start, .microseconds(100))
+        if !past { passLength = max(Self.pass, Int(Double(length) * (Self.passTime / took))) }
         if let held { textView.hold(held.anchor, at: held.offset) }
         if unstyled.isEmpty { restored = nil } else { schedule() }
     }

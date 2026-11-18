@@ -122,8 +122,8 @@ pub struct Link {
     pub range: Range<usize>,
     /// The note, root-relative.
     pub target: PathBuf,
-    /// The bytes naming the file as written: a wikilink's last name, a destination's last part. A reference link has
-    /// none; its definition does.
+    /// The bytes naming the file as written: a wikilink's name, a destination's last part. A reference link has none;
+    /// its definition does.
     pub name: Option<Range<usize>>,
 }
 
@@ -237,14 +237,11 @@ fn wikilink(text: &str, range: Range<usize>, notes: &Notes) -> Option<Link> {
     let start = open + (written.len() - written.trim_start().len());
     let end = start + written.trim().len();
     let target = notes.resolve(&text[start..end])?.to_path_buf();
-    let last = text[start..end]
-        .rfind('/')
-        .map_or(start, |slash| start + slash + 1);
     Some(Link {
         kind: Kind::Wiki,
         range,
         target,
-        name: Some(last..end),
+        name: Some(start..end),
     })
 }
 
@@ -382,8 +379,9 @@ pub fn backlinks(text: &str, source: &Path, notes: &Notes, target: &Path) -> Vec
 }
 
 /// The edits that point the links in `text`, the note at `source`, to `old` at `new` instead: each a byte range and
-/// what replaces it. A wikilink keeps its form, with or without `.md`; a destination is percent-encoded unless it
-/// was written with spaces. `notes` has the note at `old`.
+/// what replaces it. A wikilink keeps its form, with or without `.md`, and names the note's whole path when its name
+/// alone would give another note; a destination is percent-encoded unless it was written with spaces. `notes` has the
+/// note at `old`.
 pub fn relink(
     text: &str,
     source: &Path,
@@ -405,15 +403,37 @@ pub fn relink(
             .into_owned(),
         _ => file_name.clone(),
     };
-    let mut edits: Vec<(Range<usize>, String)> = links(text, source, notes)
+    let found: Vec<Link> = links(text, source, notes)
         .into_iter()
         .filter(|link| same(&link.target, old))
+        .collect();
+    let after = found.iter().any(|link| link.kind == Kind::Wiki).then(|| {
+        Notes::new(
+            notes
+                .paths()
+                .iter()
+                .map(|path| if same(path, old) { new } else { path }.to_path_buf())
+                .collect(),
+        )
+    });
+    let mut edits: Vec<(Range<usize>, String)> = found
+        .into_iter()
         .filter_map(|link| {
             let name = link.name?;
             let written = &text[name.clone()];
-            let wanted = match link.kind {
-                Kind::Wiki if written.to_lowercase().ends_with(".md") => file_name.clone(),
-                Kind::Wiki => stem.clone(),
+            let wanted = match (link.kind, &after) {
+                (Kind::Wiki, Some(after)) => {
+                    let last = if written.to_lowercase().ends_with(".md") {
+                        &file_name
+                    } else {
+                        &stem
+                    };
+                    let folder = written.rfind('/').map_or("", |slash| &written[..=slash]);
+                    let path = new.with_file_name(last).to_string_lossy().into_owned();
+                    [format!("{folder}{last}"), path]
+                        .into_iter()
+                        .find(|name| after.resolve(name).is_some_and(|note| same(note, new)))?
+                }
                 _ if written.contains(' ') => file_name.clone(),
                 _ => encode(&file_name),
             };
@@ -613,6 +633,27 @@ mod tests {
             "[[Q4 (draft)]] [[Projects/Q4 (draft).md#Goals|g]] [[other]] `[[launch plan]]`\n\
              [x](projects/Q4%20%28draft%29.md) [y](<projects/Q4 (draft).md>) [z][r]\n\n\
              [r]: projects/Q4%20%28draft%29.md#top \"t\"\n"
+        );
+    }
+
+    #[test]
+    fn relink_names_the_path_when_the_name_gives_another_note() {
+        let notes = notes(&["a.md", "roadmap.md", "projects/plan.md"]);
+        let text = "[[plan]] [[projects/plan]] [[plan.md]]";
+        let edits = relink(
+            text,
+            Path::new("a.md"),
+            &notes,
+            Path::new("projects/plan.md"),
+            Path::new("projects/roadmap.md"),
+        );
+        let mut out = text.to_owned();
+        for (range, with) in edits.iter().rev() {
+            out.replace_range(range.clone(), with);
+        }
+        assert_eq!(
+            out,
+            "[[projects/roadmap]] [[projects/roadmap]] [[projects/roadmap.md]]"
         );
     }
 

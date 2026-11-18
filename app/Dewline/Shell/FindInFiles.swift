@@ -13,6 +13,8 @@ final class FileSearch {
     /// The search stopped at `limit` with matches left.
     private(set) var stopped = false
     private(set) var isSearching = false
+    /// Why the last search found nothing: its pattern doesn't compile.
+    private(set) var problem: String?
     /// Called with true when a search's first batch, or an empty query, replaces the results, and with false when a
     /// later batch adds to them or the search ends.
     var changed: (_ replaced: Bool) -> Void = { _ in }
@@ -29,6 +31,7 @@ final class FileSearch {
         task?.cancel()
         task = nil
         isSearching = !query.isEmpty
+        problem = nil
         guard isSearching else {
             (results, matchCount, stopped) = ([], 0, false)
             changed(true)
@@ -54,9 +57,18 @@ final class FileSearch {
         for start in stride(from: 0, to: files.count, by: batch) {
             let urls = Array(files[start..<min(start + batch, files.count)])
             let remaining = limit - count
-            let found = await Task.detached(priority: .utility) {
-                textMatches(of: query, in: urls, options: options, limit: remaining)
-            }.value
+            let found: (files: [FileMatches], stopped: Bool)
+            do {
+                found = try await Task.detached(priority: .utility) {
+                    try textMatches(of: query, in: urls, options: options, limit: remaining)
+                }.value
+            } catch {
+                guard !Task.isCancelled else { return }
+                if case .pattern(let message) = error as? SearchFailure {
+                    problem = message.split(separator: "\n").last.map { String($0.trimmingPrefix("error: ")) } ?? message
+                }
+                break
+            }
             guard !Task.isCancelled else { return }
             let added = found.files
             count += added.reduce(0) { $0 + $1.matches.count }
@@ -81,8 +93,9 @@ final class FileSearch {
     }
 }
 
-/// Find in Files in the sidebar (synthesis 2.7): a search field with Match Case and Whole Word, a line counting the
-/// matches, then the matches grouped by file, each on its line with the match marked.
+/// Find in Files in the sidebar (synthesis 2.7): a search field with Match Case, Whole Word and Regular Expression, a
+/// replace field, a line counting the matches, then the matches grouped by file, each on its line with the match marked.
+/// A `path:` term in the query searches only the files whose path in the folder holds it.
 final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Opens a file from the results, at a match when there is one, in a new tab when asked.
     var reveal: (URL, TextMatch?, _ newTab: Bool) -> Void = { _, _, _ in }
@@ -94,6 +107,8 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private let search = FileSearch()
     private let field = NSSearchField()
     private let options = NSSegmentedControl()
+    private let replacement = NSTextField()
+    private let replaceButton = NSButton(title: "Replace All", target: nil, action: nil)
     private let status = NSTextField(labelWithString: "")
     private let outlineView = ResultsOutlineView()
     private var files: [ResultFile] = []
@@ -102,6 +117,8 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     /// Set from a query's search until its first batch replaces the results.
     private var pending = false
     private var wasSearching = false
+    /// What the last search looked for, in which files, for Replace All.
+    private var searched = (query: "", options: SearchOptions(), files: [URL]())
 
     init(folder: Folder) {
         self.folder = folder
@@ -122,14 +139,25 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             cancel.action = #selector(clear)
         }
         options.trackingMode = .selectAny
-        options.segmentCount = 2
-        for (segment, (symbol, name)) in [("textformat", "Match Case"), ("character.textbox", "Whole Word")].enumerated() {
+        options.segmentCount = 3
+        let segments = [("textformat", "Match Case"), ("character.textbox", "Whole Word"), ("asterisk", "Regular Expression")]
+        for (segment, (symbol, name)) in segments.enumerated() {
             options.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: name), forSegment: segment)
             options.setToolTip(name, forSegment: segment)
             options.setWidth(28, forSegment: segment)
         }
         options.target = self
         options.action = #selector(optionsChanged)
+        field.toolTip = "Add path:docs to search only the files whose path holds docs."
+        replacement.placeholderString = "Replace"
+        replacement.setAccessibilityLabel("Replace with")
+        replacement.target = self
+        replacement.action = #selector(replaceAll)
+        replaceButton.target = self
+        replaceButton.action = #selector(replaceAll)
+        replaceButton.controlSize = .small
+        replaceButton.setContentHuggingPriority(.required, for: .horizontal)
+        replaceButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingTail
@@ -161,7 +189,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         scrollView.autohidesScrollers = true
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
-        for view in [field, options, status, scrollView] as [NSView] {
+        for view in [field, options, replacement, replaceButton, status, scrollView] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -172,7 +200,12 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             options.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
             options.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -10),
             options.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-            status.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
+            replacement.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
+            replacement.leadingAnchor.constraint(equalTo: field.leadingAnchor),
+            replaceButton.leadingAnchor.constraint(equalTo: replacement.trailingAnchor, constant: 6),
+            replaceButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -10),
+            replaceButton.centerYAnchor.constraint(equalTo: replacement.centerYAnchor),
+            status.topAnchor.constraint(equalTo: replacement.bottomAnchor, constant: 6),
             status.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 2),
             status.trailingAnchor.constraint(lessThanOrEqualTo: safe.trailingAnchor, constant: -10),
             scrollView.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
@@ -205,12 +238,106 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     }
 
     private func run(after delay: Duration = .milliseconds(150)) {
-        let query = field.stringValue
-        let chosen = SearchOptions(matchCase: options.isSelected(forSegment: 0), wholeWord: options.isSelected(forSegment: 1))
+        let (query, paths) = Self.scope(field.stringValue)
+        let chosen = SearchOptions(
+            matchCase: options.isSelected(forSegment: 0), wholeWord: options.isSelected(forSegment: 1),
+            regex: options.isSelected(forSegment: 2)
+        )
+        let files = (index.files ?? []).map(\.url).filter { url in
+            let path = folder.relativePath(of: url) ?? url.path
+            return paths.allSatisfy { path.localizedCaseInsensitiveContains($0) }
+        }
         waitsForFiles = !query.isEmpty && index.files == nil
         pending = true
-        search.search(waitsForFiles ? "" : query, options: chosen, in: index.files?.map(\.url) ?? [], after: delay)
+        searched = (query, chosen, files)
+        search.search(waitsForFiles ? "" : query, options: chosen, in: files, after: delay)
         showStatus()
+    }
+
+    /// `query` without its `path:` terms, and the terms.
+    private static func scope(_ query: String) -> (query: String, paths: [String]) {
+        var paths: [String] = []
+        let rest = query.replacing(#/(?:^|\s+)path:(\S*)/#) { match in
+            if !match.1.isEmpty { paths.append(String(match.1)) }
+            return ""
+        }
+        return rest == query ? (query, []) : (rest.trimmingCharacters(in: .whitespaces), paths)
+    }
+
+    /// Asks before replacing every match the search found with the replace field's text, then replaces them: in an open
+    /// note as one edit that Undo takes back, in any other file by saving it, unless it changed since it was read.
+    @objc private func replaceAll() {
+        guard search.matchCount > 0, !search.isSearching, !pending, let window = view.window else { return }
+        let (query, chosen, all) = searched
+        let with = replacement.stringValue
+        let files = search.stopped ? all : search.results.map(\.url)
+        let alert = NSAlert()
+        alert.messageText = search.stopped
+            ? "Replace every match in \(Self.count(all.count, "file"))?"
+            : "Replace \(Self.count(search.matchCount, "match", "matches")) in \(Self.count(files.count, "file"))?"
+        alert.informativeText = "Open notes take it as one edit you can undo. Other files are saved at once."
+        alert.addButton(withTitle: "Replace All")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.replace(query, with: with, options: chosen, in: files)
+        }
+    }
+
+    private func replace(_ query: String, with replacement: String, options: SearchOptions, in files: [URL]) {
+        var closed: [URL] = []
+        var skipped: [URL] = []
+        for url in files {
+            guard let document = NSDocumentController.shared.document(for: url) else {
+                closed.append(url)
+                continue
+            }
+            guard let textView = (document as? MarkdownDocument)?.textView,
+                let replaced = try? replacingMatches(of: query, in: textView.string, with: replacement, options: options)
+            else {
+                skipped.append(url)
+                continue
+            }
+            if replaced.text != textView.string { Self.replaceChanged(in: textView, with: replaced.text) }
+        }
+        Task { [weak self, closed, skipped] in
+            let failed = await Task.detached(priority: .userInitiated) {
+                closed.filter { url in (try? replaceMatches(of: query, inFile: url, with: replacement, options: options)) == nil }
+            }.value
+            guard let self else { return }
+            self.run(after: .zero)
+            let left = skipped + failed
+            guard !left.isEmpty, let window = self.view.window else { return }
+            let alert = NSAlert()
+            alert.messageText = "\(Self.count(left.count, "file")) kept \(left.count == 1 ? "its" : "their") matches"
+            alert.informativeText = "These changed while replacing, or couldn\u{2019}t be written:\n"
+                + left.map { self.folder.relativePath(of: $0) ?? $0.path }.joined(separator: "\n")
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        }
+    }
+
+    /// Replaces the text view's text with `text` as one edit over the part that differs, so the caret and the rest
+    /// stay put.
+    private static func replaceChanged(in textView: EditorTextView, with text: String) {
+        let old = textView.string as NSString
+        let new = text as NSString
+        let shorter = min(old.length, new.length)
+        var start = 0
+        while start < shorter, old.character(at: start) == new.character(at: start) { start += 1 }
+        if start < old.length { start = old.rangeOfComposedCharacterSequence(at: start).location }
+        var end = 0
+        while end < shorter - start, old.character(at: old.length - 1 - end) == new.character(at: new.length - 1 - end) { end += 1 }
+        if end > 0, end < old.length - start {
+            end = old.length - NSMaxRange(old.rangeOfComposedCharacterSequence(at: old.length - end - 1))
+        }
+        textView.replaceAsOneEdit(
+            NSRange(location: start, length: old.length - start - end),
+            with: new.substring(with: NSRange(location: start, length: new.length - start - end)), named: "Replace All"
+        )
+    }
+
+    private static func count(_ number: Int, _ one: String, _ many: String? = nil) -> String {
+        "\(number.formatted()) \(number == 1 ? one : many ?? one + "s")"
     }
 
     /// Returns to the file tree, stopping the search; the next `begin` runs it again.
@@ -284,8 +411,11 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private func showStatus() {
         let (matches, count) = (search.matchCount, search.results.count)
         let found = "\(matches.formatted()) \(matches == 1 ? "match" : "matches") in \(count.formatted()) \(count == 1 ? "file" : "files")"
+        replaceButton.isEnabled = matches > 0 && !search.isSearching && !pending
         status.stringValue = if field.stringValue.isEmpty {
             "Search the notes in \(FileManager.default.displayName(atPath: folder.url.path))."
+        } else if let problem = search.problem {
+            "Not a valid pattern: \(problem)"
         } else if waitsForFiles {
             "Listing files…"
         } else if pending {

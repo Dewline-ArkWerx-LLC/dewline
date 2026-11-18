@@ -20,10 +20,31 @@ public struct FileMatches: Sendable {
 public struct SearchOptions: Sendable, Equatable {
     public var matchCase: Bool
     public var wholeWord: Bool
+    /// The query is a regular expression, matched within a line.
+    public var regex: Bool
 
-    public init(matchCase: Bool = false, wholeWord: Bool = false) {
+    public init(matchCase: Bool = false, wholeWord: Bool = false, regex: Bool = false) {
         self.matchCase = matchCase
         self.wholeWord = wholeWord
+        self.regex = regex
+    }
+}
+
+/// Why a search or a replace did nothing.
+public enum SearchFailure: Error, Sendable, Equatable {
+    /// The pattern doesn't compile, and the message says why.
+    case pattern(String)
+    /// The file no longer holds the bytes it was read with.
+    case conflict
+    case io(String)
+
+    init(_ error: Error) {
+        switch error {
+        case SearchError.Pattern(let message): self = .pattern(message)
+        case SearchError.Conflict: self = .conflict
+        case SearchError.Io(let message): self = .io(message)
+        default: self = .io("\(error)")
+        }
     }
 }
 
@@ -31,13 +52,18 @@ public struct SearchOptions: Sendable, Equatable {
 /// matches, and `stopped` says matches were left. Without `matchCase` letters match in any case; with `wholeWord` a
 /// match starts and ends at word boundaries, and Han and kana characters are words on their own. Files over 64 MB,
 /// files that aren't UTF-8 and files that can't be read are skipped.
-public func textMatches(of query: String, in files: [URL], options: SearchOptions, limit: Int)
+public func textMatches(of query: String, in files: [URL], options: SearchOptions, limit: Int) throws(SearchFailure)
     -> (files: [FileMatches], stopped: Bool)
 {
-    let found = searchFiles(
-        paths: files.map(\.path), query: query, matchCase: options.matchCase, wholeWord: options.wholeWord,
-        limit: UInt32(clamping: limit)
-    )
+    let found: SearchResults
+    do {
+        found = try searchFiles(
+            paths: files.map(\.path), query: query, matchCase: options.matchCase, wholeWord: options.wholeWord,
+            regex: options.regex, limit: UInt32(clamping: limit)
+        )
+    } catch {
+        throw SearchFailure(error)
+    }
     let matches = found.files.map { file in
         FileMatches(url: files[Int(file.file)], matches: file.matches.map { match in
             TextMatch(
@@ -49,4 +75,35 @@ public func textMatches(of query: String, in files: [URL], options: SearchOption
         })
     }
     return (matches, found.stopped)
+}
+
+/// `text` with each match of `query` replaced by `replacement`, and how many there were. In a pattern's replacement
+/// `$1` or `${name}` stands for what a group matched, and `$$` for a dollar sign.
+public func replacingMatches(of query: String, in text: String, with replacement: String, options: SearchOptions)
+    throws(SearchFailure) -> (text: String, count: Int)
+{
+    do {
+        let replaced = try replaceText(
+            text: text, query: query, with: replacement, matchCase: options.matchCase, wholeWord: options.wholeWord,
+            regex: options.regex
+        )
+        return (replaced.text, Int(replaced.count))
+    } catch {
+        throw SearchFailure(error)
+    }
+}
+
+/// Replaces each match of `query` in the file at `url` as `replacingMatches` does, writing only while the file still
+/// holds what was read, and returns how many there were.
+public func replaceMatches(of query: String, inFile url: URL, with replacement: String, options: SearchOptions)
+    throws(SearchFailure) -> Int
+{
+    do {
+        return Int(try replaceInFile(
+            path: url.path, query: query, with: replacement, matchCase: options.matchCase, wholeWord: options.wholeWord,
+            regex: options.regex
+        ))
+    } catch {
+        throw SearchFailure(error)
+    }
 }

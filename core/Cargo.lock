@@ -982,6 +982,7 @@ dependencies = [
  "libc",
  "proptest",
  "pulldown-cmark",
+ "regex",
  "serde_json",
  "syntect",
  "tempfile",

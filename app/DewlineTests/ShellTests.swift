@@ -19,19 +19,19 @@ struct ShellTests {
     @Test func folderListsFoldersFirstInFinderOrderAndHidesNoise() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        for folder in [".git", "node_modules", "build", "Journal"] {
+        for folder in [".git", ".claude", "node_modules", "build", "Journal"] {
             try FileManager.default.createDirectory(at: root.appending(path: folder), withIntermediateDirectories: true)
         }
-        for file in [".DS_Store", ".gitignore", "note 10.md", "note 2.md", "photo.png", "debug.log"] {
+        for file in [".DS_Store", ".gitignore", "note 10.md", "note 2.md", "photo.png", "debug.log", "rule.mdc"] {
             try Data((file == ".gitignore" ? "build/\n*.log\n" : "").utf8).write(to: root.appending(path: file))
         }
         let folder = Folder(root)
         let listing = folder.children(of: folder.url)
-        #expect(listing.entries.map(\.url.lastPathComponent) == ["Journal", "note 2.md", "note 10.md", "photo.png"])
-        #expect(listing.entries.map(\.isMarkdown) == [false, true, true, false])
+        #expect(listing.entries.map(\.url.lastPathComponent) == [".claude", "Journal", "note 2.md", "note 10.md", "photo.png", "rule.mdc"])
+        #expect(listing.entries.map(\.isMarkdown) == [false, false, true, true, false, true])
         #expect(listing.ignored == ["build/", "debug.log"])
         let all = folder.children(of: folder.url, showingIgnored: true).entries
-        #expect(all.map(\.url.lastPathComponent) == ["build", "Journal", "debug.log", "note 2.md", "note 10.md", "photo.png"])
+        #expect(all.map(\.url.lastPathComponent) == [".claude", "build", "Journal", "debug.log", "note 2.md", "note 10.md", "photo.png", "rule.mdc"])
         #expect(all.filter(\.isIgnored).map(\.url.lastPathComponent) == ["build", "debug.log"])
         #expect(folder.relativePath(of: root.appending(path: "Journal/today.md")) == "Journal/today.md")
         #expect(folder.relativePath(of: root.deletingLastPathComponent()) == nil)

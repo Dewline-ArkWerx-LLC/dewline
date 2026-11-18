@@ -35,7 +35,7 @@ jobs:
           for n in 1 2 3 4 5; do
             out=$RUNNER_TEMP/perf-$n.json
             TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$out xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline \
-              -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO -quiet \
+              -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO SWIFT_OPTIMIZATION_LEVEL=-O -quiet \
               '-only-testing:DewlineTests/PerfTests/folderWindow()'
             jq -c --arg n "$n" '{run: $n} + .folderWindow' "$out" | tee -a "$GITHUB_STEP_SUMMARY"
           done

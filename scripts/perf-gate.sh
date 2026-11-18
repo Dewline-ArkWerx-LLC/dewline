@@ -36,7 +36,7 @@ fi
 [[ -f $result ]] || verdict "$result is missing (scripts/perf.sh writes it)"
 judged=$(jq -f "$budgets" "$result") || verdict "$result is not perf.sh's JSON"
 if jq -e .pass <<< "$judged" > /dev/null; then
-    echo "perf-gate.sh: $result holds every budget in $budgets"
+    echo "perf-gate.sh: $result holds every budget in ${budgets#"$root"/}"
     exit 0
 fi
 if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then

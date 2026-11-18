@@ -107,12 +107,12 @@ impl Jail {
 }
 
 /// `path`, absolute, with every link resolved, if it lies inside `home` but not inside `~/Library` or a `.ssh`
-/// folder. A file not there yet is checked through its folder.
+/// folder. A file not there yet is checked through its folder; a link to one is refused.
 pub fn in_home(path: &Path, home: &Path) -> Result<PathBuf, JailError> {
     if !path.is_absolute() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "the path is not absolute").into());
     }
-    let (folder, name) = if path.exists() {
+    let (folder, name) = if fs::symlink_metadata(path).is_ok() {
         (path, None)
     } else {
         match (path.parent(), path.file_name()) {
@@ -308,6 +308,12 @@ mod tests {
         fs::write(home.join("notes/a.md"), "").unwrap();
         fs::write(base.path().join("outside.md"), "").unwrap();
         symlink(home.join("Library/Notes"), home.join("notes/linked")).unwrap();
+        symlink(
+            home.join("keys/.ssh/authorized_keys"),
+            home.join("notes/keys.md"),
+        )
+        .unwrap();
+        symlink(base.path().join("gone.md"), home.join("notes/gone.md")).unwrap();
         let home = fs::canonicalize(&home).unwrap();
         assert_eq!(
             in_home(&home.join("notes/a.md"), &home).unwrap(),
@@ -332,6 +338,9 @@ mod tests {
             in_home(&base.path().join("outside.md"), &home),
             Err(JailError::Outside)
         ));
+        for dangling in ["notes/keys.md", "notes/gone.md"] {
+            assert!(in_home(&home.join(dangling), &home).is_err(), "{dangling}");
+        }
         assert!(matches!(
             in_home(Path::new("notes/a.md"), &home),
             Err(JailError::Io(_))

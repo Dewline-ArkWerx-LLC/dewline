@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use dewline_core::md::{self, BlockKind, TokenKind};
 
@@ -23,7 +23,7 @@ impl Text {
 
 impl Text {
     pub fn lock(&self) -> MutexGuard<'_, String> {
-        self.0.lock().unwrap()
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

@@ -64,15 +64,25 @@ struct CodeFilesTests {
             #expect(!textView.isAutomaticQuoteSubstitutionEnabled && !textView.isContinuousSpellCheckingEnabled)
             // The whole file is highlighted: "import" takes the keyword color.
             let layout = try #require(textView.textLayoutManager)
-            let keyword = ThemeStore.shared.color(.codeKeyword)
+            // Compared by resolved value: a ThemeStore change, from a suite running beside this one, rebuilds the store's
+            // dynamic colors as new objects, so a color held across the wait would never equal the one painted after it.
+            func resolved(_ color: NSColor?) -> NSColor? {
+                var result: NSColor?
+                textView.effectiveAppearance.performAsCurrentDrawingAppearance { result = color?.usingColorSpace(.sRGB) }
+                return result
+            }
+            let area = NSRect(x: 0, y: 0, width: 600, height: 300)
+            let bitmap = try #require(textView.bitmapImageRepForCachingDisplay(in: area))
             try await Self.until {
                 layout.ensureLayout(for: layout.documentRange)
+                // Colors are set when a line is drawn, and a window that is not on screen never draws: draw into a bitmap.
+                textView.cacheDisplay(in: area, to: bitmap)
                 var color: NSColor?
                 layout.enumerateRenderingAttributes(from: layout.documentRange.location, reverse: false) { _, attributes, _ in
                     color = attributes[.foregroundColor] as? NSColor
                     return false
                 }
-                return color == keyword
+                return resolved(color) == resolved(ThemeStore.shared.color(.codeKeyword))
             }
             // The 400-character line widens the view past the clip view, and no further than the text.
             let clip = try #require(textView.enclosingScrollView?.contentView.bounds.width)

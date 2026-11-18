@@ -258,11 +258,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     else { throw POSIXError(.EFTYPE) }
                     return try handle.readToEnd() ?? Data()
                 }.value
+                let out = URL(fileURLWithPath: request.out)
+                guard out.resolvingSymlinksInPath() != file.resolvingSymlinksInPath() else { throw Export.replacesSource }
                 guard let text = String(data: data, encoding: .utf8) else {
                     throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
                 }
                 try await Export.write(
-                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: URL(fileURLWithPath: request.out),
+                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: out,
                     folder: file.deletingLastPathComponent()
                 )
                 connection.reply(.exported)

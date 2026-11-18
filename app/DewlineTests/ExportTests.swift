@@ -189,4 +189,20 @@ struct ExportTests {
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path).isEmpty)
     }
+
+    /// Portable Markdown links wikilinks to the notes they name and copies the note's images beside the export.
+    @Test func portableMarkdownLinksNotesAndCopiesImages() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder.appending(path: "notes/attachments"), withIntermediateDirectories: true)
+        try Data().write(to: folder.appending(path: "notes/Launch plan.md"))
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2])
+        try png.write(to: folder.appending(path: "notes/attachments/ferry.png"))
+        let text = "See [[Launch plan#Risks|the risks]] and ==this==.%%draft%%\n\n![[attachments/ferry.png]]\n"
+        let url = folder.appending(path: "Field notes.md")
+        try await Export.write(text, title: "Field notes", as: .markdown, to: url, folder: folder.appending(path: "notes"))
+        #expect(try String(contentsOf: url, encoding: .utf8)
+            == "See [the risks](Launch%20plan.md#risks) and <mark>this</mark>.\n\n![](Field-notes-files/attachments/ferry.png)\n")
+        #expect(try Data(contentsOf: folder.appending(path: "Field-notes-files/attachments/ferry.png")) == png)
+    }
 }

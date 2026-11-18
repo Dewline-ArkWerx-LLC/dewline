@@ -19,6 +19,7 @@ pub enum Format {
     Odt,
     Epub,
     Tex,
+    Md,
     Txt,
     Png,
 }
@@ -33,6 +34,7 @@ impl Format {
             Format::Odt => "odt",
             Format::Epub => "epub",
             Format::Tex => "tex",
+            Format::Md => "md",
             Format::Txt => "txt",
             Format::Png => "png",
         }

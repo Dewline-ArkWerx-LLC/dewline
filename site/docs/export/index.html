@@ -98,7 +98,7 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>Export</h1>
-      <p class="lead">Export a note as a PDF, a Word document, a web page, rich text, an OpenDocument file, an EPUB book, a LaTeX article, plain text or a PNG image. Export reads the text in the window and never changes the Markdown file.</p>
+      <p class="lead">Export a note as a PDF, a Word document, a web page, rich text, an OpenDocument file, an EPUB book, a LaTeX article, portable Markdown, plain text or a PNG image. Export reads the text in the window and never changes the Markdown file.</p>
 
       <h2 id="from-the-app">Export from the app</h2>
       <ol class="steps">
@@ -118,6 +118,7 @@
             <tr><td id="odt">OpenDocument (ODT)</td><td>As rich text. Lists and tables are real lists and tables; headings are larger bold paragraphs, not outline levels</td><td>Their source, as text</td></tr>
             <tr><td id="epub">EPUB</td><td>An EPUB 3 book in your theme's light version: one chapter, a table of contents from the headings, and the title from the first top-level heading or the file name. Links to other notes keep their text only</td><td>Diagrams as SVG files, math as images, inside the book</td></tr>
             <tr><td id="tex">LaTeX</td><td>A standalone article for pdflatex, XeLaTeX or LuaLaTeX. Code goes in <code>verbatim</code>, tables in <code>tabular</code>, footnotes in <code>\footnote</code>. Diagrams and images go in a folder beside the file, named after it, such as <code>launch-plan-files</code></td><td>Math as written; diagrams as PNG files</td></tr>
+            <tr><td id="md">Markdown (portable)</td><td>A copy any CommonMark or GitHub renderer shows: wikilinks become relative links to the notes they name in the note's folder, <code>==highlights==</code> become <code>&lt;mark&gt;</code>, <code>%%comments%%</code> are left out, and images inside the note's folder are copied to a folder beside the copy, named after it. Everything else stays as written. Dewline refuses to write it over the note itself</td><td>As written</td></tr>
             <tr><td id="txt">Plain Text</td><td>No markup. Bullets, numbers and task boxes stay, table columns line up with spaces, and code, quotes and display math are indented. A link is followed by its address</td><td>Their source</td></tr>
             <tr><td id="png">PNG Image</td><td>The PDF's page as one tall image at twice its size, up to 16,384 pixels tall (about nine Letter pages). A longer note is refused with a message to export it as PDF</td><td>Diagrams as SVG, math as images</td></tr>
           </tbody>

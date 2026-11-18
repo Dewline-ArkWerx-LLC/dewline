@@ -276,7 +276,7 @@ final class ActivityButton: NSButton {
         target = self
         action = #selector(showMenu(_:))
         setAccessibilityRole(.popUpButton)
-        for name in [LiveFile.changesDidChange, TabSet.changed, ThemeStore.didChange] {
+        for name in [LiveFile.changesDidChange, ClosedChanges.changed, TabSet.changed, ThemeStore.didChange] {
             NotificationCenter.default.addObserver(self, selector: #selector(changed(_:)), name: name, object: nil)
         }
     }
@@ -312,7 +312,8 @@ final class ActivityButton: NSButton {
     /// Rebuilds the title when the counts change; each keystroke before a pending change moves it without changing them.
     private func update(force: Bool = false) {
         let (open, closed) = waiting
-        let counts = Self.tally(open.flatMap { $0.changes.values.filter(\.marked).map(\.origin) } + closed.map(\.origin))
+        let counts = Self.tally(
+            open.flatMap { $0.changes.values.filter(\.marked).map(\.origin) } + closed.flatMap { Array(repeating: $0.origin, count: $0.count) })
         let same = counts.map { "\($0.writer.name) \($0.count)" } == self.counts.map { "\($0.writer.name) \($0.count)" }
         guard force || !same else { return }
         self.counts = counts

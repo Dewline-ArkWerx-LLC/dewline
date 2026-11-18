@@ -23,6 +23,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private(set) var hover: LinkHover?
     private(set) var restyles = 0
     private(set) var showsSource = false
+    /// A code file's language: the whole text is code, in SF Mono and highlighted, and nothing styles as Markdown.
+    var code: String? {
+        didSet { map.isCode = code != nil }
+    }
     /// Source line height: 22 pt, or prose's 24 pt pitch through `DewlineSourceLineHeight`, until the owner picks one.
     var sourceLineHeight: CGFloat = {
         let height = UserDefaults.standard.double(forKey: "DewlineSourceLineHeight")
@@ -103,6 +107,16 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     }
 
     var baseAttributes: [NSAttributedString.Key: Any] {
+        if code != nil {
+            // SF Mono at the body's x-height, a tab four of its spaces wide.
+            let body = Self.bodyFont
+            let size = body.pointSize * body.xHeight / NSFont.monospacedSystemFont(ofSize: body.pointSize, weight: .regular).xHeight
+            let font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            let style = ThemeStore.shared.paragraphStyle(lineHeight: sourceLineHeight).mutableCopy() as! NSMutableParagraphStyle
+            style.tabStops = []
+            style.defaultTabInterval = NSAttributedString(string: "    ", attributes: [.font: font]).size().width
+            return Self.base.merging([.font: font, .paragraphStyle: style]) { $1 }
+        }
         guard showsSource else { return Self.base }
         return Self.base.merging([
             .font: Self.code(matching: Self.bodyFont), .paragraphStyle: ThemeStore.shared.paragraphStyle(lineHeight: sourceLineHeight),
@@ -460,7 +474,11 @@ extension MarkdownStyler {
                 .dewlineBlock: BlockLine(.collapsed), .foregroundColor: NSColor.clear, .font: Self.hiddenFont, .paragraphStyle: RenderedBlocks.collapsedLines,
             ], range: local)
         }
-        highlights.update(map.blocks(in: paragraphs), in: paragraphs, text: storage.mutableString)
+        if let code {
+            highlights.update(file: code, text: storage.mutableString)
+        } else {
+            highlights.update(map.blocks(in: paragraphs), in: paragraphs, text: storage.mutableString)
+        }
         // Removed text, a conflict's other version and the folded stamp hang under their paragraph, in space added
         // below it, or above the next paragraph when theirs is drawn as a block.
         for (anchor, height, before) in textView?.marks.space(in: paragraphs) ?? [] {

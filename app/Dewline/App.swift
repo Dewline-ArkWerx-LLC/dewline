@@ -29,6 +29,24 @@ final class DocumentController: NSDocumentController {
         guard maximumRecentDocumentCount > 0 else { return }
         super.noteNewRecentDocumentURL(url)
     }
+
+    /// Code files open from Finder, File > Open and Quick Open only while Open code files is on.
+    override func openDocument(
+        withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
+    ) {
+        if let refusal = CodeFile.refusal(url) { return completionHandler(nil, false, refusal) }
+        super.openDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
+    }
+
+    /// A code file reads as text, whatever type Launch Services gives its extension (.ts is also MPEG-2 video).
+    override func typeForContents(of url: URL) throws -> String {
+        CodeFile.language(of: url) != nil ? MarkdownDocument.type : try super.typeForContents(of: url)
+    }
+
+    /// File > Open offers code files only while they open.
+    override func runModalOpenPanel(_ openPanel: NSOpenPanel, forTypes types: [String]?) -> Int {
+        super.runModalOpenPanel(openPanel, forTypes: CodeFile.isOn ? types : [MarkdownDocument.type])
+    }
 }
 
 /// What a launch shows when no file asked to open.
@@ -247,9 +265,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Writes the PDF `dewline export --to pdf` asks for, from the Markdown file on disk, through a descriptor that
-    /// must be a regular file whose path, as opened, has a Markdown extension.
-    func export(_ request: ControlSocket.PDFExport, for connection: ControlSocket.Connection) {
+    /// Writes the export `dewline export` asks for, from the Markdown file on disk, through a descriptor that must be a
+    /// regular file whose path, as opened, has a Markdown extension.
+    func export(_ request: ControlSocket.FileExport, for connection: ControlSocket.Connection) {
         resume(after: nil)
         let file = URL(fileURLWithPath: request.path)
         Task {
@@ -269,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     throw CocoaError(.fileReadInapplicableStringEncoding, userInfo: [NSURLErrorKey: file])
                 }
                 try await Export.write(
-                    text, title: file.deletingPathExtension().lastPathComponent, as: .pdf, to: URL(fileURLWithPath: request.out),
+                    text, title: file.deletingPathExtension().lastPathComponent, as: request.format, to: URL(fileURLWithPath: request.out),
                     folder: file.deletingLastPathComponent()
                 )
                 connection.reply(.exported)

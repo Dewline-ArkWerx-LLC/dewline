@@ -4,20 +4,30 @@ import PDFKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// A document as a standalone HTML page or a paged PDF in the current theme, or as a Word document: the PDF in its
-/// light palette, as paper is, and the HTML in both, switched by the reader's appearance. The source file is never read
+/// A document as a standalone HTML page, a paged PDF or one tall PNG in the current theme, or as a Word, rich text,
+/// OpenDocument or plain text file: the PDF and PNG in the light palette, as paper is, and the HTML in both, switched by
+/// the reader's appearance. The source file is never read
 /// or written: the page comes from the text passed in, and images inline from the document's folder.
 @MainActor
 enum Export {
     enum Format: Int, CaseIterable {
-        case html, pdf, docx
+        /// The raw values are stored in the defaults; the order is the Format menu's.
+        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, text = 3, png = 6
+
+        var fileExtension: String {
+            switch self {
+            case .html: "html"
+            case .pdf: "pdf"
+            case .docx: "docx"
+            case .rtf: "rtf"
+            case .odt: "odt"
+            case .text: "txt"
+            case .png: "png"
+            }
+        }
 
         var type: UTType {
-            switch self {
-            case .html: .html
-            case .pdf: .pdf
-            case .docx: UTType(filenameExtension: "docx") ?? .data
-            }
+            UTType(filenameExtension: fileExtension) ?? .data
         }
 
         var name: String {
@@ -25,6 +35,10 @@ enum Export {
             case .html: "HTML"
             case .pdf: "PDF"
             case .docx: "Word"
+            case .rtf: "Rich Text"
+            case .odt: "OpenDocument"
+            case .text: "Plain Text"
+            case .png: "PNG Image"
             }
         }
     }
@@ -63,16 +77,46 @@ enum Export {
         case .docx:
             // Without a folder, relative images resolve in an empty one and keep their alt text.
             data = try exportWordDocument(text, folder: folder ?? URL(filePath: "/var/empty", directoryHint: .isDirectory))
-        case .html, .pdf:
+        case .text:
+            data = Data(exportPlainText(text).utf8)
+        case .rtf, .odt:
+            data = try richText(text, title: title, as: format == .rtf ? .rtf : .openDocument)
+        case .html, .pdf, .png:
             let light = Palette(.aqua)
             let dark = format == .html ? Palette(.darkAqua) : nil
             let page = exportPage(
                 text, title: title, css: stylesheet(light: light, dark: dark), folder: folder, colors: light.colors, dark: dark?.colors,
                 mathSize: ThemeStore.shared.bodySize
             )
-            data = format == .html ? Data(page.utf8) : try await PDFRenderer().pdf(of: page, paper: light.paper)
+            switch format {
+            case .html: data = Data(page.utf8)
+            case .pdf: data = try await PageRenderer().pdf(of: page, paper: light.paper)
+            default: data = try await PageRenderer().png(of: page, paper: light.paper)
+            }
         }
         try data.write(to: url, options: .atomic)
+    }
+
+    /// The page with diagrams and math as their source, task boxes as ballot boxes and images as their alt text, read
+    /// by AppKit's HTML reader in the editor's faces, the system's named as faces every Mac has.
+    private static func richText(_ text: String, title: String, as type: NSAttributedString.DocumentType) throws -> Data {
+        let store = ThemeStore.shared
+        let named = ["New York": "Georgia", "SF Pro": "Helvetica Neue", "SF Pro Rounded": "Helvetica Neue", "SF Mono": "Menlo"]
+        func face(_ name: String, _ generic: String) -> String { family(named[name] ?? name, generic) }
+        let css = """
+        body { font-family: \(face(store.bodyFace, "serif")); font-size: \(store.bodySize)px; }
+        h1, h2, h3, h4, h5, h6 { font-family: \(face(store.headingFace, "serif")); }
+        code, pre { font-family: \(face(store.codeFace, "monospace")); }
+        """
+        let page = previewPage(text, title: title, css: css, syntaxes: nil)
+            .replacing("<input type=\"checkbox\" disabled checked>", with: "\u{2611}")
+            .replacing("<input type=\"checkbox\" disabled>", with: "\u{2610}")
+            .replacing(/<img [^>]*?alt="([^"]*)"[^>]*>/) { $0.1.isEmpty ? "[image]" : "[image: \($0.1)]" }
+        let string = try NSAttributedString(
+            data: Data(page.utf8), options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+            documentAttributes: nil
+        )
+        return try string.data(from: NSRange(location: 0, length: string.length), documentAttributes: [.documentType: type])
     }
 
     /// `text` as the body of an HTML page, for the pasteboard: diagrams and math in the light palette, images at their
@@ -135,14 +179,14 @@ enum Export {
     private(set) static var lastExport: URL?
     static let didExport = Notification.Name("DewlineDidExport")
 
-    /// File > Export…: the save panel for the window's document with a Format menu (PDF, HTML, Word), starting on the
-    /// format last used, else `format`.
+    /// File > Export…: the save panel for the window's document with a Format menu, starting on the format last used,
+    /// else `format`.
     static func run(for document: MarkdownDocument, text: String, format: Format, in window: NSWindow) {
         let panel = NSSavePanel()
         let title = document.fileURL?.deletingPathExtension().lastPathComponent ?? document.displayName ?? "Untitled"
         let start = (UserDefaults.standard.object(forKey: formatKey) as? Int).flatMap(Format.init) ?? format
         let formats = NSPopUpButton(frame: .zero, pullsDown: false)
-        for choice in [Format.pdf, .html, .docx] {
+        for choice in Format.allCases {
             formats.addItem(withTitle: choice.name)
             formats.lastItem?.tag = choice.rawValue
         }
@@ -202,27 +246,29 @@ private final class PopUpTarget: NSObject {
     }
 
     @objc func changed(_ sender: NSPopUpButton) {
-        action(sender.indexOfSelectedItem)
+        action(sender.selectedTag())
     }
 }
 
-/// Lays out one page in a web view that runs no page script, keeps no data and follows no link, then cuts the PDF
-/// of it into pages of the default paper size, breaking between top-level blocks where one fits.
+/// Lays out one page in a web view that runs no page script, keeps no data and follows no link, as one tall PDF page.
+/// `pdf` cuts it into pages of the default paper size, breaking between top-level blocks where one fits; `png` draws it
+/// at two pixels per CSS pixel.
 @MainActor
-private final class PDFRenderer: NSObject, WKNavigationDelegate {
+private final class PageRenderer: NSObject, WKNavigationDelegate {
     /// CSS pixels to points, as browsers print.
     private static let scale = 0.75
+    /// The tallest PNG, in pixels: about nine Letter pages.
+    static let maxHeight = 16_384
     private var loaded: CheckedContinuation<Void, any Error>?
     private var navigations = 0
 
-    func pdf(of html: String, paper: NSColor) async throws -> Data {
+    /// The page as one PDF page as wide as the paper, and the top of each of the body's blocks, in CSS pixels.
+    private func layout(_ html: String) async throws -> (page: CGPDFPage, document: CGPDFDocument, tops: [Double]) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        let info = NSPrintInfo.shared
-        let paperSize = info.paperSize
-        let margin = 54.0
-        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: paperSize.width / Self.scale, height: 1000), configuration: configuration)
+        let width = NSPrintInfo.shared.paperSize.width / Self.scale
+        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: 1000), configuration: configuration)
         view.navigationDelegate = self
         try await withCheckedThrowingContinuation { continuation in
             loaded = continuation
@@ -236,6 +282,13 @@ private final class PDFRenderer: NSObject, WKNavigationDelegate {
         guard let document = CGDataProvider(data: tall as CFData).flatMap(CGPDFDocument.init), let page = document.page(at: 1) else {
             throw Export.Failure(errorDescription: "The page couldn’t be laid out as a PDF.")
         }
+        return (page, document, tops)
+    }
+
+    func pdf(of html: String, paper: NSColor) async throws -> Data {
+        let (page, document, tops) = try await layout(html)
+        let paperSize = NSPrintInfo.shared.paperSize
+        let margin = 54.0
         let box = page.getBoxRect(.mediaBox)
         let capacity = (paperSize.height - 2 * margin) / Self.scale
         var starts = [0.0]
@@ -262,6 +315,33 @@ private final class PDFRenderer: NSObject, WKNavigationDelegate {
             context.endPDFPage()
         }
         context.closePDF()
+        withExtendedLifetime(document) {}
+        return out as Data
+    }
+
+    func png(of html: String, paper: NSColor) async throws -> Data {
+        let (page, document, _) = try await layout(html)
+        let box = page.getBoxRect(.mediaBox)
+        let (width, height) = (Int((box.width * 2).rounded(.up)), Int((box.height * 2).rounded(.up)))
+        guard height <= Self.maxHeight else {
+            throw Export.Failure(errorDescription: "The note is too long for one image: it would be \(height) pixels tall, and a PNG export stops at \(Self.maxHeight). Export it as PDF instead.")
+        }
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { throw Export.Failure(errorDescription: "The image couldn’t be drawn.") }
+        context.setFillColor(paper.usingColorSpace(.sRGB)?.cgColor ?? .white)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: 2, y: 2)
+        context.translateBy(x: -box.minX, y: -box.minY)
+        context.drawPDFPage(page)
+        withExtendedLifetime(document) {}
+        let out = NSMutableData()
+        guard let image = context.makeImage(), let destination = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else {
+            throw Export.Failure(errorDescription: "The image couldn’t be drawn.")
+        }
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw Export.Failure(errorDescription: "The PNG couldn’t be written.") }
         return out as Data
     }
 

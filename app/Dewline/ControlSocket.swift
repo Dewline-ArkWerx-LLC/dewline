@@ -5,9 +5,10 @@ import Synchronization
 /// carries one request, a JSON line such as `{"v":1,"op":"open","path":"/Users/me/plan.md","line":12,"col":4,
 /// "wait":true}`. The answers are JSON lines too: `{"reply":"opened","v":1}`, then `{"reply":"closed","v":1}` once
 /// the document closes or the app quits if the request waits, or `{"error":"not_a_file","reply":"error","v":1}`.
-/// Only absolute paths of existing regular files get through. `dewline export --to pdf` sends
-/// `{"v":1,"op":"export","path":"/Users/me/plan.md","out":"/Users/me/plan.pdf"}`, the one request that writes a file:
-/// a Markdown file's PDF to the `.pdf` the command was given, answered `{"reply":"exported","v":1}` once written.
+/// Only absolute paths of existing regular files get through. `dewline export --to rtf` sends
+/// `{"v":1,"op":"export","path":"/Users/me/plan.md","out":"/Users/me/plan.rtf","format":"rtf"}`, the one request that
+/// writes a file: a Markdown file's export to the path the command was given, which ends in the format's extension,
+/// answered `{"reply":"exported","v":1}` once written. A request without a format asks for a PDF.
 /// `dewline notify` sends a hook's claim, such as `{"v":1,"op":"notify","event":"PreToolUse","vendor":"claude",
 /// "session":"s1","tool_use_id":"toolu_1","tool":"Edit","path":"/Users/me/plan.md","hash":"…","declared":"…"}`;
 /// a valid one gets no answer, only the close.
@@ -19,11 +20,12 @@ final class ControlSocket: @unchecked Sendable {
         let wait: Bool
     }
 
-    struct PDFExport: Sendable, Equatable {
+    struct FileExport: Sendable, Equatable {
         /// An existing regular file with a Markdown extension.
         let path: String
-        /// An absolute path ending in `.pdf`.
+        /// An absolute path ending in the format's extension.
         let out: String
+        let format: Export.Format
     }
 
     /// Why a request was refused, as its `error` field names it.
@@ -42,7 +44,7 @@ final class ControlSocket: @unchecked Sendable {
 
     enum Request: Sendable, Equatable {
         case open(Open)
-        case export(PDFExport)
+        case export(FileExport)
         case notify(Claim)
     }
 
@@ -120,7 +122,7 @@ final class ControlSocket: @unchecked Sendable {
     private let uid: uid_t
     private let handler: @MainActor @Sendable (Open, Connection) -> Void
     private let notify: @MainActor @Sendable (Claim) -> Void
-    private let export: @MainActor @Sendable (PDFExport, Connection) -> Void
+    private let export: @MainActor @Sendable (FileExport, Connection) -> Void
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.control")
     // Touched only on `queue`.
     private var listener: DispatchSourceRead?
@@ -131,7 +133,7 @@ final class ControlSocket: @unchecked Sendable {
     /// `export` must to each valid export request; `notify` gets each valid claim on the main actor.
     init(
         path: String, uid: uid_t = geteuid(), notify: @escaping @MainActor @Sendable (Claim) -> Void = { _ in },
-        export: @escaping @MainActor @Sendable (PDFExport, Connection) -> Void = { $1.reply(.refused(.unknownOp)) },
+        export: @escaping @MainActor @Sendable (FileExport, Connection) -> Void = { $1.reply(.refused(.unknownOp)) },
         handler: @escaping @MainActor @Sendable (Open, Connection) -> Void
     ) {
         self.path = path
@@ -195,7 +197,7 @@ final class ControlSocket: @unchecked Sendable {
     }
 
     /// The request in `line`, without its newline, when it is well formed: an open request naming an absolute path,
-    /// an export from one absolute path to another ending in `.pdf`, or a claim claims.rs would take.
+    /// an export from one absolute path to another ending in its format's extension, or a claim claims.rs would take.
     static func parse(_ line: Data) -> Result<Request, Failure> {
         struct Wire: Decodable {
             let v: Int
@@ -212,6 +214,7 @@ final class ControlSocket: @unchecked Sendable {
             let hash: String?
             let declared: String?
             let out: String?
+            let format: String?
         }
         guard let wire = try? JSONDecoder().decode(Wire.self, from: line) else { return .failure(.malformed) }
         guard wire.v == version else { return .failure(.version) }
@@ -225,11 +228,12 @@ final class ControlSocket: @unchecked Sendable {
             path.map { !$0.utf8.contains(0) && $0.utf8.count < PATH_MAX } ?? false
         }
         if wire.op == "export" {
-            guard let path = wire.path, let out = wire.out, valid(path), valid(out),
-                (out as NSString).pathExtension.lowercased() == "pdf"
+            let format = Export.Format.allCases.first { $0.fileExtension == wire.format ?? "pdf" }
+            guard let path = wire.path, let out = wire.out, let format, valid(path), valid(out),
+                (out as NSString).pathExtension.lowercased() == format.fileExtension
             else { return .failure(.malformed) }
             guard path.hasPrefix("/"), out.hasPrefix("/") else { return .failure(.notAbsolute) }
-            return .success(.export(PDFExport(path: path, out: out)))
+            return .success(.export(FileExport(path: path, out: out, format: format)))
         }
         guard wire.op == "open" else { return .failure(.unknownOp) }
         guard let path = wire.path, valid(path), wire.line ?? 1 >= 1, wire.col ?? 1 >= 1, wire.line != nil || wire.col == nil

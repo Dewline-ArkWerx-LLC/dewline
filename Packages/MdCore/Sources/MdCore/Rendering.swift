@@ -64,6 +64,11 @@ public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure
     }
 }
 
+/// `text` as plain text: markers dropped, bullets, numbers and table columns kept.
+public func exportPlainText(_ text: String) -> String {
+    exportText(markdown: text)
+}
+
 /// Display math typeset by RaTeX at `size` points and `scale` pixels per point, in `color` (0xRRGGBBAA).
 public func ratexImage(_ tex: String, size: Double, scale: Double, color: UInt32) throws(RenderFailure) -> CGImage {
     try decode(try engine { try renderMath(tex: tex, size: Float(size), scale: Float(scale), color: color) })

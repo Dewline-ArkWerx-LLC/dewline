@@ -76,6 +76,8 @@ final class EditorTextView: CaretTextView {
         }
     }
     private var meta: NSTextField?
+    /// What Tab inserts in a code file, its own indentation; nil in a note, or a code file that indents nothing yet.
+    private var codeIndent: String?
     /// The room the meta line takes over the text.
     private static let metaRoom: CGFloat = 36
 
@@ -165,6 +167,25 @@ final class EditorTextView: CaretTextView {
         return scrollView
     }
 
+    /// Shows a code file in `language`, before its text arrives: no Markdown, every line on one line with a number,
+    /// the view scrolling sideways, and no smart punctuation or spelling. Tab inserts `indent` when given.
+    func showCode(_ language: String, indent: String?) {
+        styler.code = language
+        codeIndent = indent
+        smartInsertDeleteEnabled = false
+        isAutomaticSpellingCorrectionEnabled = false
+        isHorizontallyResizable = true
+        textContainer?.widthTracksTextView = false
+        textContainer?.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        if let scrollView = enclosingScrollView {
+            scrollView.hasHorizontalScroller = true
+            scrollView.verticalRulerView = LineNumbers(textView: self, in: scrollView)
+            scrollView.hasVerticalRuler = true
+            scrollView.rulersVisible = true
+        }
+        applyTheme()
+    }
+
     /// Paper, selection and typing attributes from the theme, and the column at its measure.
     private func applyTheme() {
         let store = ThemeStore.shared
@@ -174,9 +195,10 @@ final class EditorTextView: CaretTextView {
         typingAttributes = styler.baseAttributes
         vimStatus?.textColor = store.color(.ink2)
         meta?.textColor = store.color(.ink3)
-        isAutomaticQuoteSubstitutionEnabled = store.smartPunctuation
-        isAutomaticDashSubstitutionEnabled = store.smartPunctuation
-        if isContinuousSpellCheckingEnabled != store.spellCheck { isContinuousSpellCheckingEnabled = store.spellCheck }
+        let prose = styler.code == nil
+        isAutomaticQuoteSubstitutionEnabled = prose && store.smartPunctuation
+        isAutomaticDashSubstitutionEnabled = prose && store.smartPunctuation
+        if isContinuousSpellCheckingEnabled != (prose && store.spellCheck) { isContinuousSpellCheckingEnabled = prose && store.spellCheck }
         fitColumn(to: frame.width)
         if store.vimMode != (vim != nil) { vim = store.vimMode ? VimEngine() : nil }
         updateFocus()
@@ -203,6 +225,11 @@ final class EditorTextView: CaretTextView {
     /// Centers the column at the measure, with margins of at least 32 pt; a narrower view fills. Typewriter lets the
     /// first and last lines scroll to the middle.
     private func fitColumn(to width: CGFloat) {
+        // Code starts at the line numbers, room left for the margin rules of changes.
+        if styler.code != nil {
+            if textContainerInset != NSSize(width: 24, height: 16) { textContainerInset = NSSize(width: 24, height: 16) }
+            return
+        }
         let padding = textContainer?.lineFragmentPadding ?? 0
         let margin = max(32, ((width - ThemeStore.shared.measure) / 2 - padding).rounded(.down))
         let top: CGFloat = metaLine == nil ? 24 : 24 + Self.metaRoom
@@ -378,7 +405,7 @@ final class EditorTextView: CaretTextView {
 
     override func paste(_ sender: Any?) {
         history.perform("Paste") {
-            if !pasteHTMLAsMarkdown(from: .general) { super.paste(sender) }
+            if styler.code != nil || !pasteHTMLAsMarkdown(from: .general) { super.paste(sender) }
         }
     }
 
@@ -446,6 +473,8 @@ final class EditorTextView: CaretTextView {
 
     /// Switches between the rendered document and its source, holding the caret's line (or the first visible line) in place.
     @objc func toggleSource(_ sender: Any?) {
+        // A code file has no rendering to switch from.
+        guard styler.code == nil else { return }
         guard !defersStyling else {
             toggleWaits.toggle()
             return
@@ -568,6 +597,7 @@ final class EditorTextView: CaretTextView {
     }
 
     override func insertTab(_ sender: Any?) {
+        if let codeIndent, !hasMarkedText() { return insertText(codeIndent, replacementRange: selectedRange()) }
         guard hasMarkedText() || !(editTable(.nextCell) || indentItems(outdent: false)) else { return }
         let width = ThemeStore.shared.tabWidth
         if width > 0, !hasMarkedText() {

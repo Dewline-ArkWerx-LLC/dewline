@@ -112,6 +112,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var section: Int?
     private var watch: FolderWatch?
     private var showsIgnored: Bool
+    /// Whether code files opened when the rows were listed.
+    private var listsCode: Bool
     /// The rows are listed once the window has drawn its first frame; until then the sidebar shows empty.
     private var filled = false
     /// The open file as `show` last had it before the rows were listed.
@@ -131,6 +133,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         header = folder.map { _ in SidebarHeader() }
         gitStates = folder.map { GitStates(folder: $0.url) }
         showsIgnored = Preferences.shared.showsIgnored
+        listsCode = CodeFile.isOn
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
@@ -459,8 +462,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     @objc private func preferencesChanged() {
-        guard Preferences.shared.showsIgnored != showsIgnored else { return }
+        guard Preferences.shared.showsIgnored != showsIgnored || CodeFile.isOn != listsCode else { return }
         showsIgnored = Preferences.shared.showsIgnored
+        listsCode = CodeFile.isOn
         relist { _ in true }
     }
 
@@ -472,14 +476,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         reload()
     }
 
-    /// A click opens a note in this tab and a Command-click in a new one; any other file opens in Quick Look.
+    /// A click opens a note or code file in this tab and a Command-click in a new one; any other file opens in Quick Look.
     @objc private func clicked(_ sender: Any?) {
         guard let node = outlineView.item(atRow: outlineView.clickedRow) as? SidebarNode else { return }
         let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
         switch node.kind {
         case .entry(let entry) where entry.isFolder:
             outlineView.isItemExpanded(node) ? outlineView.collapseItem(node) : outlineView.expandItem(node)
-        case .entry(let entry) where entry.isMarkdown || isAgentFile(entry.url):
+        case .entry(let entry) where entry.opens || isAgentFile(entry.url):
             open(entry.url, newTab)
         case .entry(let entry):
             quickLook(entry.url)
@@ -496,7 +500,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func doubleClicked(_ sender: Any?) {
         guard let node = outlineView.item(atRow: outlineView.clickedRow) as? SidebarNode,
-            case .entry(let entry) = node.kind, entry.isMarkdown
+            case .entry(let entry) = node.kind, entry.opens
         else { return }
         open(entry.url, true)
     }
@@ -676,7 +680,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             item.target = mine ? self : nil
             item.representedObject = object
         }
-        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) {
+        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) || CodeFile.opened(url) != nil {
             add("Open in New Tab", #selector(openInNewTab(_:)), mine: true)
         }
         let container = isFolder ? url : url.deletingLastPathComponent()

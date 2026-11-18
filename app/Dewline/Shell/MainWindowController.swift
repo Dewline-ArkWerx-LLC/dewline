@@ -501,6 +501,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let document = MarkdownDocument()
         NSDocumentController.shared.addDocument(document)
         addTab(document)
+        FileActions.nameFromFirstLine(document)
     }
 
     @discardableResult
@@ -942,6 +943,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     func windowWillClose(_ notification: Notification) {
         toolbar.wake()
+        if let document = document as? MarkdownDocument { FileActions.stopNaming(document) }
         if let url = (document as? NSDocument)?.fileURL { Self.closed.append((url, folder)) }
         tabs.remove(self)
         Self.all.remove(self)

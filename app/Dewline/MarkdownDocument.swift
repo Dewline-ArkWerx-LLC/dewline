@@ -355,12 +355,7 @@ final class MarkdownDocument: NSDocument {
         firstSave?.cancel()
         guard isNew, fileURL == nil, !windowControllers.isEmpty else { return }
         let folder = newNoteFolder
-        var url = folder.appending(path: "Untitled.md")
-        var number = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appending(path: "Untitled \(number).md")
-            number += 1
-        }
+        let url = FileActions.free("Untitled", extension: "md", in: folder)
         let error: (any Error)? = await withCheckedContinuation { continuation in
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

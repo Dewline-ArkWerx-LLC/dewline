@@ -111,46 +111,65 @@ enum FileActions {
 
     // MARK: Naming a new note
 
-    private static var naming: [ObjectIdentifier: (observer: NSObjectProtocol, check: Task<Void, Never>?)] = [:]
+    /// New notes Dewline made: what watches each one, and the name it gave the note's file last.
+    private static var naming: [ObjectIdentifier: (observers: [NSObjectProtocol], named: URL?)] = [:]
 
-    /// While `document`'s name starts with "Untitled", the first save after its first line has text renames it to
-    /// that line, once: 60 characters at most, without `/` or `:`, numbered when the name is taken. Autosave writes
-    /// 2 s after typing stops, so the check comes half a second after that, and again while edits wait.
+    /// Names `document`, a note Dewline just made, from its first line each time the note loses focus and as it
+    /// closes, while its file has the name Dewline gave it: 60 characters at most, without `/` or `:`, numbered when
+    /// the name is taken. Renaming it by hand ends that. Closing it empty removes the file Dewline made.
     static func nameFromFirstLine(_ document: MarkdownDocument) {
         let key = ObjectIdentifier(document)
         guard naming[key] == nil, let textView = document.textView else { return }
-        let observer = NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView, queue: .main) { [weak document] _ in
+        let center = NotificationCenter.default
+        let blur: @Sendable (Notification) -> Void = { [weak document] note in
+            let window = (note.object as? NSWindow).map(ObjectIdentifier.init)
             MainActor.assumeIsolated {
-                naming[key]?.check?.cancel()
-                naming[key]?.check = Task { [weak document] in
-                    while !Task.isCancelled, let document {
-                        try? await Task.sleep(for: .milliseconds(2500))
-                        guard !Task.isCancelled, !document.isDocumentEdited else { continue }
-                        nameIfUntitled(document)
-                        return
-                    }
+                guard let document, window == nil || window == document.textView?.window.map(ObjectIdentifier.init) else { return }
+                Task {
+                    guard await document.flush(), !document.isDocumentEdited else { return }
+                    nameIfUntitled(document)
                 }
             }
         }
-        naming[key] = (observer, nil)
+        naming[key] = (
+            [
+                center.addObserver(forName: NSText.didEndEditingNotification, object: textView, queue: .main, using: blur),
+                center.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main, using: blur),
+                center.addObserver(forName: MarkdownDocument.didCloseNotification, object: document, queue: .main) { [weak document] _ in
+                    MainActor.assumeIsolated { if let document { stopNaming(document) } }
+                },
+            ], nil
+        )
     }
 
-    /// Renames `document` from its first line if it is still Untitled and has one; true once it no longer waits.
-    @discardableResult
-    static func nameIfUntitled(_ document: MarkdownDocument) -> Bool {
+    /// Renames `document` from its first line while its file has the name Dewline gave it: "Untitled" until the
+    /// first naming, the name it took after.
+    static func nameIfUntitled(_ document: MarkdownDocument) {
         let key = ObjectIdentifier(document)
-        func done() -> Bool {
-            if let waiting = naming.removeValue(forKey: key) {
-                NotificationCenter.default.removeObserver(waiting.observer)
-                waiting.check?.cancel()
+        guard let state = naming[key], let url = document.fileURL,
+            state.named.map({ $0.standardizedFileURL == url.standardizedFileURL }) ?? url.lastPathComponent.hasPrefix("Untitled"),
+            let text = document.textView?.string ?? (try? String(contentsOf: url, encoding: .utf8)), let name = title(of: text)
+        else { return }
+        let target = free(name, extension: url.pathExtension.isEmpty ? "md" : url.pathExtension, in: url.deletingLastPathComponent(), except: url)
+        guard target.lastPathComponent != url.lastPathComponent, (try? relocate(url, to: target, named: "Rename", undo: nil)) != nil else { return }
+        naming[key]?.named = target
+    }
+
+    /// Names `document` once more as it closes and stops watching it. A file Dewline made that is still Untitled and
+    /// holds only blanks goes instead: never one the user or another app wrote in.
+    static func stopNaming(_ document: MarkdownDocument) {
+        guard let state = naming[ObjectIdentifier(document)] else { return }
+        if !document.isDocumentEdited, let url = document.fileURL {
+            if state.named == nil, url.lastPathComponent.hasPrefix("Untitled"),
+                let data = FileManager.default.contents(atPath: url.path), String(decoding: data, as: UTF8.self).allSatisfy(\.isWhitespace)
+            {
+                try? FileManager.default.removeItem(at: url)
+            } else {
+                nameIfUntitled(document)
             }
-            return true
         }
-        guard let url = document.fileURL, url.lastPathComponent.hasPrefix("Untitled") else { return done() }
-        guard let text = document.textView?.string, let name = title(of: text) else { return false }
-        let target = free(name, extension: url.pathExtension.isEmpty ? "md" : url.pathExtension, in: url.deletingLastPathComponent())
-        _ = try? relocate(url, to: target, named: "Rename", undo: nil)
-        return done()
+        state.observers.forEach(NotificationCenter.default.removeObserver)
+        naming[ObjectIdentifier(document)] = nil
     }
 
     /// A note's first line as a file name: Markdown's heading, list and quote marks dropped, then `cleaned`.
@@ -207,14 +226,14 @@ enum FileActions {
         return one.isEqual(two)
     }
 
-    /// `stem.ext` in `folder`, or `stem 2.ext`, `stem 3.ext` and on, whichever is free first.
-    static func free(_ stem: String, extension ext: String?, in folder: URL) -> URL {
+    /// `stem.ext` in `folder`, or `stem 2.ext`, `stem 3.ext` and on, whichever is free first or is `current`.
+    static func free(_ stem: String, extension ext: String?, in folder: URL, except current: URL? = nil) -> URL {
         func named(_ name: String) -> URL {
             folder.appending(path: ext.map { name + "." + $0 } ?? name)
         }
         var url = named(stem)
         var number = 2
-        while FileManager.default.fileExists(atPath: url.path) {
+        while FileManager.default.fileExists(atPath: url.path), url.lastPathComponent.caseInsensitiveCompare(current?.lastPathComponent ?? "") != .orderedSame {
             url = named("\(stem) \(number)")
             number += 1
         }

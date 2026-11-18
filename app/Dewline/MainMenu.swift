@@ -79,6 +79,7 @@ enum MainMenu {
         menu.addItem(withTitle: "Join Shared Note\u{2026}", action: #selector(AppDelegate.joinSharedNote(_:)), keyEquivalent: "")
         #endif
         menu.addItem(.separator())
+        menu.addItem(NSDocumentController.shared.standardShareMenuItem())
         menu.addItem(withTitle: "Export\u{2026}", action: #selector(MarkdownDocument.exportDocument(_:)), keyEquivalent: "E").tag = Export.Format.pdf.rawValue
         menu.addItem(withTitle: "Print\u{2026}", action: #selector(AppDelegate.printNote(_:)), keyEquivalent: "p")
         return menu

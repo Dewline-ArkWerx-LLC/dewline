@@ -157,7 +157,7 @@ struct JourneyTests {
     }
 
     /// File > New Note makes "Untitled.md" in the folder at once, then "Untitled 2.md"; once it saves with a first
-    /// line, the note takes that line as its name, once, and the open document follows the file.
+    /// line, the note takes that line as its name while its name is still Dewline's, and the open document follows.
     @Test func j1NewNoteIsMadeInTheFolderAndNamedByItsFirstLine() async throws {
         let vault = try Vault(["Launch plan.md": "# Taken\n"])
         defer { vault.remove() }
@@ -174,14 +174,18 @@ struct JourneyTests {
         textView.history.undoManager.groupsByEvent = false
         Self.type("# Launch plan\nShip it.", into: textView)
         try await Self.save(document, to: url)
-        #expect(FileActions.nameIfUntitled(document))
+        FileActions.nameFromFirstLine(document)
+        FileActions.nameIfUntitled(document)
         let named = vault.url("Launch plan 2.md")
         #expect(document.fileURL?.standardizedFileURL == named.standardizedFileURL)
         #expect(vault.text("Launch plan 2.md") == "# Launch plan\nShip it.")
         #expect(!FileManager.default.fileExists(atPath: url.path))
-        // Named once: a later first line leaves it.
-        #expect(FileActions.nameIfUntitled(document))
+        // Naming again keeps the name it gave; a name given by hand stays.
+        FileActions.nameIfUntitled(document)
         #expect(document.fileURL?.lastPathComponent == "Launch plan 2.md")
+        try FileActions.rename(named, to: "Mine")
+        FileActions.nameIfUntitled(document)
+        #expect(document.fileURL?.lastPathComponent == "Mine.md")
 
         #expect(FileActions.title(of: "\n  ## Q3: plans/goals\nbody") == "Q3 plansgoals")
         #expect(FileActions.title(of: "- [ ] ") == "[ ]")

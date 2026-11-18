@@ -4,15 +4,15 @@ import PDFKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// A document as a standalone HTML page, a paged PDF or one tall PNG in the current theme, or as a Word, rich text,
-/// OpenDocument or plain text file: the PDF and PNG in the light palette, as paper is, and the HTML in both, switched by
-/// the reader's appearance. The source file is never read
+/// A document as a standalone HTML page, a paged PDF, an EPUB book or one tall PNG in the current theme, or as a Word,
+/// rich text, OpenDocument or plain text file: the PDF, book and PNG in the light palette, as paper is, and the HTML in
+/// both, switched by the reader's appearance. The source file is never read
 /// or written: the page comes from the text passed in, and images inline from the document's folder.
 @MainActor
 enum Export {
     enum Format: Int, CaseIterable {
         /// The raw values are stored in the defaults; the order is the Format menu's.
-        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, text = 3, png = 6
+        case pdf = 1, docx = 2, html = 0, rtf = 4, odt = 5, epub = 7, text = 3, png = 6
 
         var fileExtension: String {
             switch self {
@@ -21,6 +21,7 @@ enum Export {
             case .docx: "docx"
             case .rtf: "rtf"
             case .odt: "odt"
+            case .epub: "epub"
             case .text: "txt"
             case .png: "png"
             }
@@ -37,6 +38,7 @@ enum Export {
             case .docx: "Word"
             case .rtf: "Rich Text"
             case .odt: "OpenDocument"
+            case .epub: "EPUB"
             case .text: "Plain Text"
             case .png: "PNG Image"
             }
@@ -81,6 +83,11 @@ enum Export {
             data = Data(exportPlainText(text).utf8)
         case .rtf, .odt:
             data = try richText(text, title: title, as: format == .rtf ? .rtf : .openDocument)
+        case .epub:
+            let light = Palette(.aqua)
+            data = try exportEPUB(
+                text, title: title, css: stylesheet(light: light, dark: nil), folder: folder, colors: light.colors, mathSize: ThemeStore.shared.bodySize
+            )
         case .html, .pdf, .png:
             let light = Palette(.aqua)
             let dark = format == .html ? Palette(.darkAqua) : nil

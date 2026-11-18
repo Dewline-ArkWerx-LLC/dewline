@@ -151,4 +151,18 @@ struct ExportTests {
         }
         #expect(!FileManager.default.fileExists(atPath: refused.path))
     }
+
+    /// The EPUB is a zip whose first entry is its uncompressed mimetype, with the diagram as an SVG file in the book.
+    @Test func epubPackagesTheChapterAndItsDiagram() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appending(path: "report.epub")
+        try await Export.write(sample, title: "report", as: .epub, to: url, folder: folder)
+        let book = try Data(contentsOf: url)
+        #expect(book.starts(with: Data([0x50, 0x4B, 0x03, 0x04])) && book[30..<58] == Data("mimetypeapplication/epub+zip".utf8))
+        for name in ["META-INF/container.xml", "OEBPS/content.opf", "OEBPS/nav.xhtml", "OEBPS/chapter.xhtml", "OEBPS/images/diagram-2.svg"] {
+            #expect(book.range(of: Data(name.utf8)) != nil, "\(name)")
+        }
+        #expect(book.range(of: Data("<dc:title>Report</dc:title>".utf8)) != nil)
+    }
 }

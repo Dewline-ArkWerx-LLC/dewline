@@ -276,6 +276,118 @@ struct LiveFileTests {
         try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!?\n" }
     }
 
+    // MARK: Autosave without asking
+
+    @Test func typingWithoutAPauseSavesWithin10Seconds() async throws {
+        let file = try OpenFile("# Plan\n")
+        defer { file.close() }
+        let start = ContinuousClock.now
+        var typed = 0
+        while (try String(contentsOf: file.url, encoding: .utf8)) == "# Plan\n", ContinuousClock.now - start < .seconds(12) {
+            file.textView.insertText("a", replacementRange: NSRange(location: 6 + typed, length: 0))
+            typed += 1
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        let waited = ContinuousClock.now - start
+        #expect(waited > .seconds(9) && waited < .seconds(11), "\(waited)")
+        #expect(try String(contentsOf: file.url, encoding: .utf8).hasPrefix("# Planaaa"))
+    }
+
+    @Test func closingSavesWithoutASheet() async throws {
+        let file = try OpenFile("# Plan\n", events: true)
+        defer { file.close() }
+        file.type("!", at: 6)
+        #expect(file.document.isDocumentEdited)
+        #expect(await CloseProbe.canClose(file.document))
+        #expect(file.textView.window?.attachedSheet == nil)
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
+        #expect(!file.document.isDocumentEdited)
+    }
+
+    @Test func quittingSavesEveryNoteWithoutAReview() async throws {
+        #expect(NSDocumentController.shared is DocumentController)
+        // A controller of its own, so the review sees only this test's note.
+        let controller = DocumentController()
+        let file = try OpenFile("# Plan\n", events: true)
+        defer { file.close() }
+        controller.addDocument(file.document)
+        defer { controller.removeDocument(file.document) }
+        file.type("!", at: 6)
+        let probe = CloseProbe()
+        let reviewed = await withCheckedContinuation { continuation in
+            probe.answered = { continuation.resume(returning: $0) }
+            controller.reviewUnsavedDocuments(
+                withAlertTitle: nil, cancellable: true, delegate: probe,
+                didReviewAllSelector: #selector(CloseProbe.documentController(_:didReviewAll:contextInfo:)), contextInfo: nil)
+        }
+        #expect(reviewed)
+        #expect(NSApp.windows.allSatisfy { $0.attachedSheet == nil })
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
+    }
+
+    @Test func closingDuringAHoldKeepsTheDraftAndOpeningOffersIt() async throws {
+        // Closing during the agent's Write keeps your text in the draft; its write then lands on the closed file.
+        let file = try OpenFile("# Plan\n", events: true)
+        defer { try? FileManager.default.removeItem(at: file.folder) }
+        file.record("PreToolUse", tool: "Write", id: "toolu_1")
+        file.type(" for Friday", at: 6)
+        #expect(await CloseProbe.canClose(file.document))
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan\n")
+        file.document.close()
+        try Data("# Agent\n".utf8).write(to: file.url)
+
+        let again = MarkdownDocument()
+        again.engine = file.document.engine
+        try again.read(from: file.url, ofType: Self.type)
+        again.makeWindowControllers()
+        defer { again.close() }
+        let window = try #require(again.windowControllers.first as? MainWindowController)
+        let live = try #require(again.live)
+        try await until { live.draft != nil }
+        let message = try #require(window.statusBar.shown)
+        #expect(message.text.hasPrefix("Unsaved text from ") && message.text.hasSuffix(" was kept"))
+        #expect(message.actions.map(\.title) == ["Restore", "Discard"])
+        message.actions[0].run(window.statusBar)
+        try await until { again.textView?.string == "# Plan for Friday\n" }
+        #expect(window.statusBar.shown == nil)
+        #expect(await live.keptDraft() == nil)
+    }
+
+    @Test func theStatusSaysOnlyWhyANoteIsNotSaved() async throws {
+        let file = try OpenFile("# Plan\n", events: true)
+        defer { file.close() }
+        // Save Now saves to the note's file, as a tab's note has one.
+        file.document.fileURL = file.url
+        let window = try #require(file.document.windowControllers.first as? MainWindowController)
+        #expect(window.statusBar.shown == nil)
+        #expect(window.savedState?.hasPrefix("Saved") == true)
+
+        // Edited and unsaved: the tab's dot and tooltip, nothing in the status bar.
+        file.type("!", at: 6)
+        #expect(file.document.isDocumentEdited)
+        #expect(window.savedState == "Not saved yet")
+        #expect(window.statusBar.shown == nil)
+
+        // Held: one reason and Save Now, which writes through the hold.
+        file.record("PreToolUse", tool: "Edit", id: "toolu_1")
+        #expect(await file.live.autosave() == .held)
+        let held = try #require(window.statusBar.shown)
+        #expect(held.text == "Not saved: an agent is writing this note")
+        #expect(held.actions.map(\.title) == ["Save Now"])
+        held.actions[0].run(window.statusBar)
+        try await until { window.statusBar.shown == nil && !file.document.isDocumentEdited }
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
+        #expect(window.savedState?.hasPrefix("Saved") == true)
+
+        // Deleted: says so.
+        file.record("PostToolUse", tool: "Edit", id: "toolu_1")
+        try FileManager.default.removeItem(at: file.url)
+        await file.live.refresh()
+        file.type("?", at: 7)
+        #expect(await file.live.autosave() == .deleted)
+        #expect(window.statusBar.shown?.text == "Not saved: the file was deleted")
+    }
+
     @Test func restoringASnapshotIsOneUndo() async throws {
         let file = try OpenFile("# Plan\n", events: true)
         defer { file.close() }
@@ -601,6 +713,29 @@ struct LiveFileTests {
         func close() {
             document.close()
             try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// The delegate AppKit answers after a close or a quit review.
+    private final class CloseProbe: NSObject {
+        var answered: ((Bool) -> Void)?
+
+        @objc func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            answered?(shouldClose)
+        }
+
+        @objc func documentController(_ controller: NSDocumentController, didReviewAll: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            answered?(didReviewAll)
+        }
+
+        /// Asks `document` whether it can close, as a tab's close button does.
+        @MainActor static func canClose(_ document: NSDocument) async -> Bool {
+            let probe = CloseProbe()
+            return await withCheckedContinuation { continuation in
+                probe.answered = { continuation.resume(returning: $0) }
+                document.canClose(
+                    withDelegate: probe, shouldClose: #selector(CloseProbe.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+            }
         }
     }
 }

@@ -1,0 +1,41 @@
+name: perf-measure
+
+# Temporary: measures PerfTests.folderWindow on the CI runner to set perf/ci-budgets.jq. Deleted before merge.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CARGO_TARGET_DIR: ${{ github.workspace }}/core/target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+      - run: scripts/build-xcframework.sh
+      - run: xcodegen generate --spec app/project.yml
+      - name: Measure five times
+        run: |
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize; sw_vers -productVersion
+          for n in 1 2 3 4 5; do
+            out=$RUNNER_TEMP/perf-$n.json
+            TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$out xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline \
+              -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO -quiet \
+              '-only-testing:DewlineTests/PerfTests/folderWindow()'
+            jq -c --arg n "$n" '{run: $n} + .folderWindow' "$out" | tee -a "$GITHUB_STEP_SUMMARY"
+          done

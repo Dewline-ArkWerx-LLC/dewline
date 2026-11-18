@@ -43,13 +43,13 @@ Dewline opens an Obsidian vault as it is, so you can use it instead of Obsidian 
 | Open an existing vault or folder in place, no import | Yes | No | Yes |
 | Wikilinks, embeds, #tags, callouts, front matter | Yes | Partial | Yes |
 | Backlinks pane, graph view, Canvas, Bases | Yes | n/a | No (backlinks only through `dewline mcp`) |
-| Community plugins and themes | 2,000+ | Integrations | No, by design (ten built-in themes) |
+| Community plugins and themes | 2,000+ | Integrations | No, by design (four built-in themes) |
 | Phone and tablet apps | Yes | Yes | No |
 | Sync between your devices | Paid Sync | Cloud | No (planned for 1.1, Mac to Mac) |
 | Databases, views, relations | Bases | Yes | No |
 | Web access, public pages | Publish (paid) | Yes | No |
 | Team workspace, permissions | No | Yes | No |
-| Live co-editing | Plugins | Yes | Yes: invite link, peer to peer, both Macs online |
+| Live co-editing | Plugins | Yes | No (off for now) |
 | Works offline, files on disk | Yes | Limited | Yes |
 | Export HTML, PDF, DOCX | PDF, plugins | Yes, with losses | Yes |
 | Native Mac app | No (Electron) | No (Electron) | Yes (AppKit, TextKit 2) |

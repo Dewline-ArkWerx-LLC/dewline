@@ -59,7 +59,7 @@ impl Socket {
         connect(&self.path, euid())
     }
 
-    /// Asks the app to open `target`, starting the app when nothing listens.
+    /// Asks the app to open `target`, a file or a folder, starting the app when nothing listens.
     pub fn open(&self, target: &Target, wait: bool) -> Result<Connection, String> {
         let stream = self.connect()?;
         let failed = |error: io::Error| format!("{}: talking to Dewline: {error}", target.path);
@@ -387,6 +387,7 @@ mod tests {
             path: path.into(),
             line,
             column,
+            folder: false,
         }
     }
 

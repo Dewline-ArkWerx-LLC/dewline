@@ -170,9 +170,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Opens a file for the `dewline` command as Markdown, whatever its extension (git's COMMIT_EDITMSG has none),
-    /// with the caret at the line and column asked for.
+    /// with the caret at the line and column asked for, or a folder in its window.
     func open(_ request: ControlSocket.Open, for connection: ControlSocket.Connection) {
         let url = URL(fileURLWithPath: request.path)
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            let window = openFolder(at: url)
+            connection.reply(.opened)
+            return resume(after: window)
+        }
         let controller = NSDocumentController.shared
         if let open = controller.document(for: url) as? MarkdownDocument {
             return show(open, for: request, connection)

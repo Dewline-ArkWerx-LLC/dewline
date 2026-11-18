@@ -41,6 +41,8 @@ final class EditorTextView: CaretTextView {
     }
     /// Where wikilinks resolve: the window's folder, else the document's.
     var noteFolder: URL?
+    /// The notes `[[` offers, listed when it opens.
+    var wikilinkNames: [String] = []
     /// Opens a note a link points to, at a heading.
     var openNote: ((URL, String?) -> Void)?
     /// Runs Find in Files for a tag; a window without a folder has none, and Cmd-clicking a tag beeps.
@@ -369,6 +371,7 @@ final class EditorTextView: CaretTextView {
         history.typing = false
         composing = false
         if commits { compositionEnded() }
+        completeWikilink(after: string)
     }
 
     override func unmarkText() {

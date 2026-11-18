@@ -79,7 +79,7 @@ jobs:
       - name: Sample the test host
         run: |
           mkdir -p "$RUNNER_TEMP/samples"
-          for test in folderWindow typing; do
+          for test in folderWindow; do
             TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$RUNNER_TEMP/s.json xcodebuild test-without-building -project app/Dewline.xcodeproj \
               -scheme Dewline -configuration Test -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/dd" \
               CODE_SIGNING_ALLOWED=NO -quiet "-only-testing:DewlineTests/PerfTests/$test()" &
@@ -87,8 +87,8 @@ jobs:
             pid=
             for _ in $(seq 1 600); do pid=$(pgrep -n -x Dewline) && break; sleep 0.1; done
             echo "test $test host pid $pid"
-            sleep 4
-            sudo sample "$pid" 40 1 -mayDie -file "$RUNNER_TEMP/samples/$test.txt" || true
+            sleep 2
+            sudo sample "$pid" 22 1 -mayDie -file "$RUNNER_TEMP/samples/$test.txt" || true
             wait $xc || true
             jq -c . "$RUNNER_TEMP/s.json" || true
             sudo chmod a+r "$RUNNER_TEMP/samples/$test.txt" || true

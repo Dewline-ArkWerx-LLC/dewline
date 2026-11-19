@@ -677,12 +677,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .entry(let entry):
             let path = entry.url.standardizedFileURL.path
             let expanded = entry.isFolder && outlineView.isItemExpanded(node)
-            let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : node === fileNode ? [] : waitingChanges[path] ?? []
+            let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : waitingChanges[path] ?? []
             cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: index?.git.state(of: entry.url))
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
-                waiting: path == fileNode?.url?.standardizedFileURL.path ? [] : waitingChanges[path] ?? [], git: nil)
+                waiting: waitingChanges[path] ?? [], git: nil)
         default:
             break
         }
@@ -690,9 +690,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// A closed folder's roll-up: each writer with changes waiting in a note under it, without counts.
     private func rollUp(under folder: String) -> [WaitingCount] {
-        let open = fileNode?.url?.standardizedFileURL.path
         var writers: [WaitingCount] = []
-        for (path, counts) in waitingChanges.sorted(by: { $0.key < $1.key }) where path.hasPrefix(folder + "/") && path != open {
+        for (path, counts) in waitingChanges.sorted(by: { $0.key < $1.key }) where path.hasPrefix(folder + "/") {
             for count in counts where !writers.contains(where: { $0.writer.name == count.writer.name }) {
                 writers.append(WaitingCount(writer: count.writer, count: nil))
             }

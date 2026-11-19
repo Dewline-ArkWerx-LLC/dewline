@@ -2,6 +2,24 @@
 
 What changed in each Dewline release, newest first.
 
+## 0.3.0 (19 Nov 2026)
+
+iCloud conflicts ask which version stays, files you open from Finder get the right folder, Revert works after you type around a change, and agent edits from shell commands and Cursor are marked.
+
+- When iCloud keeps two versions of a note, a sheet names the other version's device and time and asks which stays. Use the Other Version lands as a marked change that Revert undoes. Saves now go through file coordination, so iCloud sees them. Welcome and the docs have a new Sync and mobile page. (#146, #165)
+- A file opened from Finder, `dewline open` or Open Recent opens in the window whose folder holds it, else on its git root, else on its parent folder. Command-N there writes in that window's folder. The open tabs are saved as you change them, so a crash reopens them. Many tabs on one folder share one watch and one scan. (#147)
+- A note in your home folder opens as a single-file window instead of scanning all of home and `~/Library`. Closing or quitting after another app deletes a note you have typed in shows the save sheet. Settings > General and a first-launch sheet offer to make Dewline the default app, and `.mdc`, `.mdx` and `.qmd` files open from File > Open and Open With. Code file types leave Open With. (#164)
+- A change from a Claude Code shell command is marked "During Claude Code's shell command" instead of Another app. Setup installs Cursor hooks, so Cursor's file edits carry its name; Settings shows Codex as Needs trust until you trust it. (#149)
+- Revert works after you type next to a change and keeps your typing. When you typed inside the change, the stamp says so. (#155)
+- The sidebar, Quick Open, Find in Files and [[ completion follow .gitignore the way git does: nested files, `.git/info/exclude`, your global ignore file, and negations. `[[` completion lists notes without freezing the window. (#153, #150, #166)
+- Git status shows a staged rename with edits as Renamed, and a rename into a subfolder as Renamed. (#150)
+- Exported HTML, PDF and the preview page color code blocks. (#150)
+- Source mode shows line numbers. The scroller rail ticks H1, H2 and H3. Wide Mermaid flowcharts fold into bands so labels stay readable, and inline code in a wrapped table column no longer breaks at a slash. (#151)
+- A new note takes its name from its first line when you leave it or close it, Command-T notes too, and an empty Untitled note you never typed in is removed when you close it. File > Share is the system share menu. (#156)
+- Return in a CRLF note inserts CRLF. Links to a note follow it when you rename it from File > Rename, drag it in the sidebar, or move or rename its folder. Replace All and link rewrites in closed notes show as yours, not Another app. (#166)
+- Only Markdown files list as changed while a note is closed; a hooked write to a `.env` or other file no longer does. Notes in `.claude`, `.cursor` and `.github` get closed-note changes, and `.mdc` files count as Markdown. Marks for undecided changes survive a crash. (#165)
+- Security fixes: a dangling symlink as the last part of a note path is refused, so a save cannot follow it to `~/.ssh`; moving a symlinked folder no longer rewrites the files it points to; and a Rust panic in any of twenty core calls shows an error or an empty result instead of crashing the app. (#157, #158, #168)
+
 ## 0.2.0 (18 Nov 2026)
 
 Notes save themselves, undecided changes survive closing, and export gains seven more formats; live collaboration, the agent chat panel, Follow Changes, the Preview pane and the font catalog are gone.

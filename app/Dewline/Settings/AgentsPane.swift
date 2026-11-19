@@ -55,7 +55,7 @@ struct AgentsPane: View {
     var body: some View {
         SettingsPage {
             SettingsSection(title: "Hooks", note: "Hooks tell Dewline which agent wrote a change.") {
-                SettingsRow(label: "Claude Code", detail: "Edits made by its shell commands show as Another app.") {
+                SettingsRow(label: "Claude Code", detail: "Edits its shell commands make show as \u{201C}\(ChangeStamp.duringShell)\u{201D}.") {
                     status(hooks.claude ? "Installed" : nil)
                 }
                 SettingsRow(label: "Codex", detail: "Codex runs them once you trust them: type /hooks in Codex.") {

@@ -103,12 +103,15 @@ final class WelcomeDemo {
         claim(.turnEnd)
     }
 
-    /// Stops listening once Demo's change has landed and been kept or reverted.
+    /// Stops listening once Demo's change has landed and been kept or reverted, then offers to set up agent hooks.
     private func changed(_ live: LiveFile) {
         let pending = live.changes.values.contains { change in
             if case .agent(.demo, _) = change.origin { change.marked } else { false }
         }
-        if pending { landed = true } else if landed { stop() }
+        guard !pending else { return landed = true }
+        guard landed else { return }
+        stop()
+        if let window = document?.windowForSheet { HookSetup.offer(on: window) }
     }
 
     private static func hex(_ data: Data) -> String {

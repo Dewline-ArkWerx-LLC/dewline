@@ -1,8 +1,18 @@
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import Dewline
 
 struct ShellTests {
+    /// Use Dewline binds Markdown, its dialects and the types other apps give their extensions, and nothing else.
+    @MainActor @Test func defaultAppTypesAreAllMarkdown() throws {
+        let markdown = try #require(UTType("net.daringfireball.markdown"))
+        let types = DefaultApp.types
+        #expect(types.contains(markdown))
+        #expect(types.contains { $0.identifier == "dev.arkwerx.dewline.markdown-dialect" })
+        #expect(types.allSatisfy { $0.conforms(to: markdown) })
+    }
+
     @Test func gitIgnoreMatchesNamesAnchorsAndFolders() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

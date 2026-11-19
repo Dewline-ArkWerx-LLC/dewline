@@ -26,17 +26,20 @@ enum HookSetup {
 
     /// Names in a folder that say an agent works there.
     private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
-    /// The folders already checked, "" for the first launch's.
+    /// The folders already checked, "" for the demo's.
     private static let offeredKey = "DewlineOfferedHookSetup"
+    /// True once the user has said Not Now to Set Up anywhere; no offer shows after that.
+    private static let declinedKey = "DewlineDeclinedHookSetup"
     /// The folders doctor is checking now.
     private static var checking: Set<String> = []
 
-    /// Offers Set Up on `window` if an agent's hooks are missing, checking once at the first launch and once for each
+    /// Offers Set Up on `window` if an agent's hooks are missing, checking once after the demo and once for each
     /// folder that holds an agent's files; doctor reads `folder`'s project settings too. A folder counts as checked
-    /// once doctor has run and found nothing missing or the sheet has shown.
+    /// once doctor has run and found nothing missing or the sheet has shown. One Not Now ends every offer.
     static func offer(on window: NSWindow, in folder: URL? = nil) {
         let key = folder?.path ?? ""
-        guard !checking.contains(key), !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
+        guard !checking.contains(key), !UserDefaults.standard.bool(forKey: declinedKey),
+            !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
             folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
         else { return }
@@ -72,13 +75,18 @@ enum HookSetup {
                     : "Every agent Dewline knows has its hooks."
                 return present(alert, on: window) { _ in done(true) }
             }
-            alert.messageText = "Mark your agents\u{2019} edits"
-            alert.informativeText = "Dewline adds a hook to each file below, so it knows which agent wrote a change.\n\n"
+            alert.messageText = "Name your agents\u{2019} edits"
+            alert.informativeText = "Dewline adds a hook to each file below, so a change shows which agent wrote it. The hook runs \u{201C}"
+                + command.path + " notify\u{201D}, which sends Dewline a file\u{2019}s path and hash, never its content. "
+                + "A backup of each file stays beside it.\n\n"
                 + missing.map { "\($0.agent): \(($0.file as NSString).abbreviatingWithTildeInPath)" }.joined(separator: "\n")
-            alert.addButton(withTitle: "Set Up")
-            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Add Hooks")
+            alert.addButton(withTitle: "Not Now")
             present(alert, on: window) { response in
-                guard response == .alertFirstButtonReturn else { return done(false) }
+                guard response == .alertFirstButtonReturn else {
+                    UserDefaults.standard.set(true, forKey: declinedKey)
+                    return done(false)
+                }
                 Task {
                     let result = await run(command, ["doctor", "--install-hooks"], answers: missing.count, in: folder)
                     let after = await run(command, ["doctor"], answers: 0, in: folder)

@@ -79,9 +79,12 @@ targets:
         # Ink, not Apple blue, fills the controls AppKit draws: default buttons, checkboxes, selected segments. Signal
         # draws lines and never fills a control (Station rule 1).
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        DEWLINE_MARKDOWN_RANK: Alternate
       configs:
         Test:
           PRODUCT_BUNDLE_IDENTIFIER: dev.arkwerx.dewline.testhost
+          # The test host never becomes a Markdown handler.
+          DEWLINE_MARKDOWN_RANK: None
     entitlements:
       path: Dewline/Dewline.entitlements
       properties:
@@ -113,8 +116,9 @@ targets:
         CFBundleDocumentTypes:
           - CFBundleTypeName: Markdown
             CFBundleTypeRole: Editor
-            LSHandlerRank: Alternate
+            LSHandlerRank: $(DEWLINE_MARKDOWN_RANK)
             LSItemContentTypes: [net.daringfireball.markdown, dev.arkwerx.dewline.markdown-dialect]
+            CFBundleTypeIconSystemGenerated: 1
             NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
           # Code files (CodeFile.extensions), which open only while Settings > Editor > Open code files is on. At None,
           # so Finder's Open With never lists Dewline for them while File > Open and a drop on the Dock icon still
@@ -191,7 +195,7 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewProvider
           NSExtensionAttributes:
             QLIsDataBasedPreview: true
-            QLSupportedContentTypes: [net.daringfireball.markdown]
+            QLSupportedContentTypes: [net.daringfireball.markdown, dev.arkwerx.dewline.markdown-dialect, io.typora.markdown, com.mdxjs.mdx]
             QLSupportsSearchableItems: false
 
   DewlineTests:

@@ -4,12 +4,18 @@ struct AppearancePane: View {
     @Bindable var store: ThemeStore
 
     var body: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 4)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 2)
         SettingsPage {
-            SettingsSection(title: "Theme", note: "Light windows use one of the first two, dark windows one of the last two.") {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                    ForEach(Theme.light) { ThemeCard(theme: $0, store: store, dark: false) }
-                    ForEach(Theme.dark) { ThemeCard(theme: $0, store: store, dark: true) }
+            SettingsSection(title: "Theme") {
+                SettingsRow(label: "Light") {
+                    LazyVGrid(columns: columns, alignment: .leading) {
+                        ForEach(Theme.light) { ThemeCard(theme: $0, store: store, dark: false) }
+                    }
+                }
+                SettingsRow(label: "Dark") {
+                    LazyVGrid(columns: columns, alignment: .leading) {
+                        ForEach(Theme.dark) { ThemeCard(theme: $0, store: store, dark: true) }
+                    }
                 }
             }
             SettingsSection(note: "Match system follows macOS between the light theme and the dark one.") {
@@ -48,7 +54,7 @@ struct AppearancePane: View {
     }
 }
 
-/// A theme as a window in miniature, in its own mode, with its name and mode under it. A 1.5 pt signal ring, 2 pt
+/// A theme as a window in miniature, in its own mode, with its name under it. A 1.5 pt signal ring, 2 pt
 /// out, marks the theme its mode uses.
 private struct ThemeCard: View {
     let theme: Theme
@@ -72,16 +78,10 @@ private struct ThemeCard: View {
                         RoundedRectangle(cornerRadius: 12.5, style: .continuous)
                             .strokeBorder(selected ? Station.color(.accent) : .clear, lineWidth: 1.5)
                     )
-                HStack(alignment: .firstTextBaseline) {
-                    Text(theme.name)
-                        .font(selected ? Station.labelActive : Station.label)
-                        .foregroundStyle(Station.color(selected ? .ink : .ink2))
-                    Spacer(minLength: 4)
-                    Text(dark ? "dark" : "light")
-                        .font(Station.mono(11))
-                        .foregroundStyle(Station.color(.ink3))
-                }
-                .padding(.horizontal, 3.5)
+                Text(theme.name)
+                    .font(selected ? Station.labelActive : Station.label)
+                    .foregroundStyle(Station.color(selected ? .ink : .ink2))
+                    .padding(.horizontal, 3.5)
             }
         }
         .buttonStyle(BareButtonStyle(radius: 12.5))

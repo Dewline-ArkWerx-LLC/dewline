@@ -65,7 +65,7 @@ struct ThemeTests {
                     for text in [Token.ink, .ink2, .gitModified] {
                         #expect(tokens[text]!.contrast(with: tokens[ground]!) >= 4.5, "\(label) \(text) on \(ground)")
                     }
-                    for glyph in [Token.ink3, .cursor, .writerClaude, .writerCodex, .writerApp] {
+                    for glyph in [Token.ink3, .cursor, .writerClaude, .writerCodex, .writerCursor, .writerGemini, .writerCopilot, .writerApp] {
                         #expect(tokens[glyph]!.contrast(with: tokens[ground]!) >= 3, "\(label) \(glyph) on \(ground)")
                     }
                 }
@@ -81,10 +81,9 @@ struct ThemeTests {
 
     @MainActor @Test func namedWritersMarkInTheirOwnInk() {
         let store = ThemeStore.shared
-        let inks = [Writer.claude, .codex, .git, .unknown].map { store.writerColor($0) }
+        let inks = [Writer.claude, .codex, .cursor, .gemini, .copilot, .git, .unknown].map { store.writerColor($0) }
         #expect(Set(inks).count == inks.count)
         #expect(store.writerColor(.collaborator) == store.color(.ink2))
-        #expect(store.writerColor(.cursor) == store.writerColor(.unknown))
         #expect(Writer.unknown.name == "Another app")
     }
 

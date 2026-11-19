@@ -2,7 +2,7 @@ import AppKit
 
 /// The dew line: the editor's vertical scroller. Its hairline is the whole note, a tick marks each H1, H2 and H3 (13, 9
 /// and 5 pt long), a bracket spans what is on screen, and each waiting change is a 3 x 10 pt rule in its writer's ink
-/// at its place in the note.
+/// at its place in the note, hollow for another app.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
 final class Rail: NSScroller {
@@ -216,20 +216,27 @@ final class Rail: NSScroller {
         path.stroke()
     }
 
-    /// Each change's rule in its writer's ink, ringed in paper; the labeled one has a halo.
+    /// Each change's rule in its writer's ink, ringed in paper, hollow for another app as its underline is dashed; the
+    /// labeled one has a halo.
     private func drawMarks() {
         let lit = hovering.flatMap { mark(at: $0) }?.id ?? arrival
         for mark in marks {
             let rect = markRect(mark.y)
-            let color = MarkWriter(mark.change.origin).color
+            let writer = MarkWriter(mark.change.origin)
+            let color = writer.color
             if mark.id == lit {
                 color.withAlphaComponent(0.28).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: -4, dy: -4), xRadius: 5.5, yRadius: 5.5).fill()
             }
             ThemeStore.shared.color(.paper).setFill()
             NSBezierPath(roundedRect: rect.insetBy(dx: -1.5, dy: -1.5), xRadius: 3, yRadius: 3).fill()
-            color.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+            if writer.dashed {
+                color.setStroke()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 1, yRadius: 1).stroke()
+            } else {
+                color.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+            }
         }
     }
 

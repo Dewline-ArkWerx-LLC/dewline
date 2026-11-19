@@ -28,20 +28,26 @@ enum HookSetup {
     private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
     /// The folders already checked, "" for the first launch's.
     private static let offeredKey = "DewlineOfferedHookSetup"
+    /// The folders doctor is checking now.
+    private static var checking: Set<String> = []
 
     /// Offers Set Up on `window` if an agent's hooks are missing, checking once at the first launch and once for each
-    /// folder that holds an agent's files; doctor reads `folder`'s project settings too.
+    /// folder that holds an agent's files; doctor reads `folder`'s project settings too. A folder counts as checked
+    /// once doctor has run and found nothing missing or the sheet has shown.
     static func offer(on window: NSWindow, in folder: URL? = nil) {
-        let offered = UserDefaults.standard.stringArray(forKey: offeredKey) ?? []
         let key = folder?.path ?? ""
-        guard !offered.contains(key), ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+        guard !checking.contains(key), !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
             folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
         else { return }
-        UserDefaults.standard.set(offered + [key], forKey: offeredKey)
+        checking.insert(key)
         Task {
             let report = await run(command(), ["doctor"], answers: 0, in: folder)
-            guard report.ran, !missing(in: report.output).isEmpty, window.isVisible else { return }
-            install(from: window, in: folder)
+            checking.remove(key)
+            let hooksMissing = !missing(in: report.output).isEmpty
+            guard report.ran, !hooksMissing || window.isVisible else { return }
+            UserDefaults.standard.set((UserDefaults.standard.stringArray(forKey: offeredKey) ?? []) + [key], forKey: offeredKey)
+            if hooksMissing { install(from: window, in: folder) }
         }
     }
 

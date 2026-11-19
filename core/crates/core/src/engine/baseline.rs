@@ -21,8 +21,11 @@ use crate::store::{self, Seen};
 use crate::{merge, text};
 
 /// The extensions of the files whose last seen version the engine keeps:
-/// Markdown, MDX, Quarto, and Cursor's rules (.mdc), as the sidebar lists them.
-const MARKDOWN: [&str; 7] = ["md", "markdown", "mdown", "mkd", "mdc", "mdx", "qmd"];
+/// Markdown, MDX, Quarto, and Cursor's rules (.mdc), as the sidebar lists them,
+/// and the Typst and LaTeX sources Dewline typesets.
+const TRACKED: [&str; 9] = [
+    "md", "markdown", "mdown", "mkd", "mdc", "mdx", "qmd", "typ", "tex",
+];
 /// The hidden folders that hold what agents read, which a scan notes.
 const AGENT_FOLDERS: [&str; 9] = [
     ".agents",
@@ -84,7 +87,7 @@ impl Engine {
         wall: SystemTime,
     ) -> io::Result<Earlier> {
         let disk = blake3::hash(bytes);
-        let kept = !private(path) && !private(real) && markdown(real);
+        let kept = !private(path) && !private(real) && tracked(real);
         let seen = if kept { self.store.seen(real)? } else { None };
         let write = {
             let mut state = self.state();
@@ -123,7 +126,7 @@ impl Engine {
     /// Keeps `bytes` as the seen version of the Markdown file at `path`,
     /// unless it is private.
     pub(super) fn see(&self, path: &Path, private: bool, bytes: &[u8], wall: SystemTime) {
-        if !private && markdown(path) {
+        if !private && tracked(path) {
             let _ = self.keep_seen(path, bytes, &[], wall);
         }
     }
@@ -161,7 +164,7 @@ impl Engine {
         declared: Hash,
     ) -> io::Result<()> {
         let real = fs::canonicalize(path)?;
-        if private(path) || private(&real) || !markdown(&real) {
+        if private(path) || private(&real) || !tracked(&real) {
             return Ok(());
         }
         let hash = blake3::hash(before);
@@ -243,7 +246,7 @@ impl Engine {
                 }
                 let path = entry.path();
                 let folder = kind.is_dir();
-                if !(folder && deep || kind.is_file() && markdown(&path) && !private(&path)) {
+                if !(folder && deep || kind.is_file() && tracked(&path) && !private(&path)) {
                     continue;
                 }
                 let relative = path.strip_prefix(&root).unwrap_or(&path).as_os_str();
@@ -389,7 +392,7 @@ impl Engine {
         let (path, base, marks) = {
             let state = self.state();
             let d = state.docs.get(&doc).ok_or_else(closed)?;
-            if d.private || !markdown(&d.path) {
+            if d.private || !tracked(&d.path) {
                 return Ok(());
             }
             let marks = strip(&d.base, d.bom)
@@ -400,12 +403,11 @@ impl Engine {
     }
 }
 
-/// Whether the engine keeps the file's last seen version: Markdown, by its
-/// extension.
-pub(super) fn markdown(path: &Path) -> bool {
+/// Whether the engine keeps the file's last seen version, by its extension.
+pub(super) fn tracked(path: &Path) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
-        .is_some_and(|extension| MARKDOWN.contains(&extension.to_ascii_lowercase().as_str()))
+        .is_some_and(|extension| TRACKED.contains(&extension.to_ascii_lowercase().as_str()))
 }
 
 /// The undecided changes and conflicts at `ranges`, UTF-16 in `buffer`, as

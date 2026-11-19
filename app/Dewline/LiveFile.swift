@@ -488,6 +488,7 @@ final class LiveFile {
             return
         }
         apply(landing, to: textView)
+        if let document { Typeset.written(document) }
     }
 
     private func waitsForInput(_ textView: EditorTextView) -> Bool {
@@ -845,6 +846,7 @@ final class LiveFile {
         switch result {
         case .success:
             document.saved(token: token)
+            Typeset.written(document)
             reloadSnapshots()
             if changes.values.contains(where: \.marked) { keepMarks() }
             return nil

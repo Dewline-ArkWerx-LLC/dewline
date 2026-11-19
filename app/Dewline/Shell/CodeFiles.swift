@@ -5,7 +5,7 @@ import AppKit
 enum CodeFile {
     static let key = "DewlineOpenCodeFiles"
 
-    /// The highlighting pack's 50 languages by extension, Markdown aside, with JSON, YAML, TOML and INI. Launch
+    /// The highlighting pack's 51 languages by extension, Markdown aside, with JSON, YAML, TOML and INI. Launch
     /// Services gets the same list from project.yml.
     static let extensions: Set<String> = [
         "py", "pyi", "pyw", "js", "jsx", "mjs", "cjs", "ts", "tsx", "cts", "java", "c", "h", "cpp", "cc", "cxx", "c++",
@@ -13,7 +13,7 @@ enum CodeFile {
         "pm", "hs", "ex", "exs", "erl", "hrl", "clj", "cljs", "cljc", "fs", "fsx", "fsi", "ml", "mli", "jl", "m", "mm",
         "groovy", "gradle", "ps1", "psm1", "sh", "bash", "zsh", "fish", "sql", "html", "htm", "css", "scss", "sass",
         "json", "jsonc", "json5", "yaml", "yml", "toml", "xml", "mk", "cmake", "graphql", "gql", "proto", "tf", "hcl",
-        "nix", "zig", "diff", "patch", "tex", "asm", "s", "ini", "dockerfile",
+        "nix", "zig", "diff", "patch", "tex", "typ", "asm", "s", "ini", "dockerfile",
     ]
 
     /// Files known by their whole name, lowercased, and the language each is highlighted as.
@@ -85,6 +85,10 @@ final class LineNumbers: NSRulerView {
     private weak var textView: EditorTextView?
     /// The UTF-16 offset each line starts at, moved with each edit.
     private var starts: [Int]?
+    /// The lines the last typesetting found errors on, whose numbers draw in `codeDeleted`.
+    var errors: Set<Int> = [] {
+        didSet { needsDisplay = true }
+    }
 
     init(textView: EditorTextView, in scrollView: NSScrollView) {
         self.textView = textView
@@ -188,6 +192,7 @@ final class LineNumbers: NSRulerView {
         else { return }
         let starts = lineStarts()
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeStore.shared.color(.ink3)]
+        let failed: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeStore.shared.color(.codeDeleted)]
         let origin = textView.textContainerOrigin
         layout.enumerateTextLayoutFragments(from: viewport.location) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else { return false }
@@ -195,7 +200,8 @@ final class LineNumbers: NSRulerView {
             guard let line = fragment.textLineFragments.first else { return true }
             let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
             let y = convert(NSPoint(x: 0, y: baseline), from: textView).y
-            let number = NSAttributedString(string: "\(Self.count(starts, through: offset))", attributes: attributes)
+            let index = Self.count(starts, through: offset)
+            let number = NSAttributedString(string: "\(index)", attributes: errors.contains(index) ? failed : attributes)
             number.draw(at: NSPoint(x: ruleThickness - 8 - number.size().width, y: y - font.ascender))
             return true
         }

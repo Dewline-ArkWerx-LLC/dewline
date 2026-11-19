@@ -71,6 +71,7 @@ const LANGUAGES: &[(&str, Option<&str>)] = &[
     ("Terraform", Some("Terraform")),
     ("TypeScript", Some("TypeScript")),
     ("TypeScriptReact", Some("TypeScript")),
+    ("Typst", Some("Typst")),
     ("XML", None),
     ("YAML", None),
     ("Zig", Some("Zig")),

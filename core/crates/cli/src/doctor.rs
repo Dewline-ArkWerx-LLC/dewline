@@ -78,9 +78,11 @@ const AGENTS: [Agent; 3] = [
 ];
 
 /// Each companion's command and its Homebrew formula.
-const COMPANIONS: [(&str, &str); 4] = [
+const COMPANIONS: [(&str, &str); 6] = [
     ("pandoc", "pandoc"),
     ("typst", "typst"),
+    ("latexmk", "--cask mactex"),
+    ("tectonic", "tectonic"),
     ("vale", "vale"),
     ("harper-ls", "harper"),
 ];

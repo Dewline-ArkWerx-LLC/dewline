@@ -2,6 +2,12 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- With Open code files on, `.typ` files open as highlighted Typst. After Dewline saves a `.typ` or `.tex` file, or an agent's write lands in it, Dewline typesets it with the `typst`, `latexmk` or `tectonic` you have installed; the status bar shows errors with Go to Line, and error lines number in red. File > Export writes the PDF. Dewline bundles no compiler.
+- A scan of closed files also covers `.typ` and `.tex`, so an agent's write to one while it was closed opens marked.
+- `dewline doctor` lists `latexmk` and `tectonic`.
+
 ## 0.5.1 (19 Nov 2026)
 
 - Math, Mermaid diagrams and images are sharp on Retina screens. Math and diagrams are drawn as vector outlines at the screen's own scale, and redraw when a window moves between screens.

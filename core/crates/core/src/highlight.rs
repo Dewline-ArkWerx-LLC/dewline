@@ -1013,6 +1013,7 @@ mod tests {
             "typescript",
             "// c\nconst f = (a: number): string => `${a}`;\n",
         ),
+        ("typst", "// c\n= Title\n#let x = 1 + 2\n"),
         (
             "tsx",
             "// c\nconst A = () => <div className=\"x\">{1}</div>;\n",
@@ -1101,6 +1102,7 @@ mod tests {
             ("tf", "Terraform"),
             ("tex", "LaTeX"),
             ("latex", "LaTeX"),
+            ("typ", "Typst"),
             ("asm", "x86_64 Assembly"),
             ("nasm", "x86_64 Assembly"),
             ("conf", "INI"),

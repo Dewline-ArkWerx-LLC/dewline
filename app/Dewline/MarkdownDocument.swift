@@ -239,6 +239,7 @@ final class MarkdownDocument: NSDocument {
     /// Opens the export sheet in the format of the menu item's tag.
     @objc func exportDocument(_ sender: Any?) {
         guard let window = windowControllers.first?.window else { return }
+        if let fileURL, Typeset.typesets(fileURL) { return Typeset.export(self, in: window) }
         let format = (sender as? NSMenuItem).flatMap { Export.Format(rawValue: $0.tag) } ?? .pdf
         Export.run(for: self, text: shownText, format: format, in: window)
     }

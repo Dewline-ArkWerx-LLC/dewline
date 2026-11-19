@@ -32,10 +32,20 @@ struct MarkWriter: Equatable {
         dashed ? "the other" : "\(name)'s"
     }
 
-    /// The name as the margin stamp sets it, SF Mono capitals in the writer's ink: CLAUDE, GIT.
+    /// The name as the margin stamp sets it, small capitals in the writer's ink: CLAUDE, GIT.
     @MainActor var stamp: NSAttributedString {
-        NSAttributedString(string: name.uppercased(), attributes: [.font: Chrome.mono(10.5, weight: .semibold), .foregroundColor: color, .kern: 0.84])
+        NSAttributedString(string: name, attributes: [.font: Self.stampFont, .foregroundColor: color, .kern: 0.4])
     }
+
+    /// SF Pro semibold with both cases set as small capitals.
+    @MainActor static let stampFont: NSFont = {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: [
+            [NSFontDescriptor.FeatureKey.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
+            [NSFontDescriptor.FeatureKey.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
+        ]])
+        return NSFont(descriptor: descriptor, size: 11) ?? font
+    }()
 
     /// "Claude changed 2 places".
     func spoken(places: Int) -> String {
@@ -543,8 +553,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return changes.filter { !$0.value.conflict }.min { $0.value.range.location < $1.value.range.location }?.key
     }
 
-    /// The changes Keep and Revert decide with `id`: every waiting change from the same writer's session in the note,
-    /// which the stamp counts; a conflict alone.
+    /// The changes the stamp counts with `id`: every waiting change from the same writer's session in the note; a
+    /// conflict alone.
     func group(of id: UInt64) -> [UInt64] {
         guard let change = changes[id], !change.conflict else { return [id] }
         let key = Review.key(change.origin)
@@ -668,7 +678,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     private func decideStamped(keep: Bool) {
         guard let id = stamped else { return }
-        live?.decide(group(of: id), keep: keep)
+        textView?.decide(id, keep: keep)
     }
 
     /// One announcement per marked landing.

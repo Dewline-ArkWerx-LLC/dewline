@@ -309,9 +309,10 @@ final class EditorTextView: CaretTextView {
         }
     }
 
-    /// The text's children plus one image per rendered block, labeled with its source, and one checkbox per task box.
+    /// The text's children plus one image per rendered block, labeled with its source, one checkbox per task box, and
+    /// the change stamp, removed text and conflict cards over the text.
     override func accessibilityChildren() -> [Any]? {
-        var children = super.accessibilityChildren() ?? []
+        var children = (super.accessibilityChildren() ?? []) + subviews.filter { ($0 is ChangeStamp || $0 is Hanging) && !$0.isHidden }
         let storage = textStorage!
         storage.enumerateAttribute(.dewlineBlock, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             switch (value as? BlockLine)?.role {
@@ -434,20 +435,42 @@ final class EditorTextView: CaretTextView {
         marks.layoutIfDirty()
     }
 
-    /// The change Keep Change and Revert Change decide, with the rest of its writer's (`ChangeMarks.group`): the one
-    /// under the caret, else the one the stamp shows.
+    /// The change Keep Change and Revert Change decide: the one under the caret, else the one the stamp shows.
     var changeToDecide: UInt64? {
         marks.changeAtCaret ?? marks.stamped
     }
 
     /// Cmd-Return.
     @objc func keepChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: true) }
+        if let id = changeToDecide { decide(id, keep: true) }
     }
 
     /// Option-Cmd-Delete.
     @objc func revertChange(_ sender: Any?) {
-        if let id = changeToDecide { marks.live?.decide(marks.group(of: id), keep: false) }
+        if let id = changeToDecide { decide(id, keep: false) }
+    }
+
+    /// Keeps or reverts the one change, then moves to the next one waiting.
+    func decide(_ id: UInt64, keep: Bool) {
+        guard let live = marks.live, let at = live.changes[id]?.range.location else { return }
+        live.decide([id], keep: keep)
+        if live.changes[id] == nil { Review.step(from: self, forward: true, at: at) }
+    }
+
+    /// Keep and Revert for the change at the caret, as VoiceOver custom actions.
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard let id = changeToDecide, let change = marks.live?.changes[id] else { return super.accessibilityCustomActions() }
+        let writer = MarkWriter(change.origin).possessive
+        return (super.accessibilityCustomActions() ?? []) + [
+            NSAccessibilityCustomAction(name: "Keep \(writer) change") { [weak self] in
+                MainActor.assumeIsolated { self?.keepChange(nil) }
+                return true
+            },
+            NSAccessibilityCustomAction(name: "Revert \(writer) change") { [weak self] in
+                MainActor.assumeIsolated { self?.revertChange(nil) }
+                return true
+            },
+        ]
     }
 
     /// Shift-Cmd-Return: keeps every marked change in this file.
@@ -707,12 +730,12 @@ final class EditorTextView: CaretTextView {
         ThemeStore.shared.smartPunctuation.toggle()
     }
 
-    /// Cmd-click follows a link, wikilink, embed, footnote or tag. A click in the margin beside a foldable block folds or
+    /// Cmd-click follows a link, wikilink, embed, footnote or tag; a plain click follows a dewline: link. A click in the margin beside a foldable block folds or
     /// unfolds it; a click on a task box toggles it and leaves the caret where it was.
     override func mouseDown(with event: NSEvent) {
         history.breakCoalescing()
         let point = convert(event.locationInWindow, from: nil)
-        if event.modifierFlags.contains(.command), follow(at: point) { return }
+        if event.modifierFlags.contains(.command) || link(at: point)?.url?.scheme?.lowercased() == "dewline", follow(at: point) { return }
         if let box = taskBox(at: point) { return toggleTask(at: box) }
         guard point.x < textContainerOrigin.x, let (block, _) = foldable(at: point) else { return super.mouseDown(with: event) }
         let anchor = NSMaxRange(textStorage!.mutableString.lineRange(for: NSRange(location: block.range.location, length: 0)))

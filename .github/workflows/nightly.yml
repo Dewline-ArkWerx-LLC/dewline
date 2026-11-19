@@ -1,8 +1,9 @@
 name: nightly
 
 # What pull requests skip, once a day on main: each cargo-fuzz target for 10 minutes, the workspace tests in release
-# with 10,000 proptest cases, merge3's survey against git merge-file, and the latest Claude Code and Codex run over
-# scripts/agent-conformance.sh's notes. A step whose files are not on the commit is skipped. A fuzz crash becomes a
+# with 10,000 proptest cases, merge3's survey against git merge-file, the latest Claude Code and Codex run over
+# scripts/agent-conformance.sh's notes, release.yml's perf measurement against perf/ci-budgets.jq, and a build of the
+# app with collaboration (COLLAB) so that code keeps compiling. A step whose files are not on the commit is skipped. A fuzz crash becomes a
 # private advisory (SECURITY.md), so the fuzzer's output and inputs stay on the runner and the job prints the SHA-256
 # of each input it left.
 on:
@@ -97,7 +98,7 @@ jobs:
             exit 1
           fi
 
-  # Each agent runs only when its API key secret is set; the script skips one without it.
+  # Each agent needs its API key secret, ANTHROPIC_API_KEY or OPENAI_API_KEY; the script fails while either is missing.
   agents:
     if: github.ref == 'refs/heads/main'
     runs-on: xcode-27
@@ -127,10 +128,78 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: scripts/agent-conformance.sh core/target/debug/dewline
 
+  # release.yml's perf job on main: a regression past perf/ci-budgets.jq, main's slowest run plus headroom, fails it.
+  perf:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CARGO_TARGET_DIR: ${{ github.workspace }}/core/target
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+      - run: scripts/build-xcframework.sh
+      - run: xcodegen generate --spec app/project.yml
+      - name: Measure a folder window with tabs and a 10 MB note
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          out=$RUNNER_TEMP/perf-ci.json
+          TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$out xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline \
+            -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO -quiet \
+            '-only-testing:DewlineTests/PerfTests/folderWindow()'
+          jq .folderWindow "$out"
+          scripts/perf-gate.sh "$out" "$REF" perf/ci-budgets.jq
+
+  # Release builds leave collaboration out, so this build is the only one that compiles it.
+  collab:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/core/target
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+      - run: COLLAB=1 scripts/build-xcframework.sh
+      - run: xcodegen generate --spec app/project.yml
+      - run: |
+          xcodebuild build-for-testing -project app/Dewline.xcodeproj -scheme Dewline -configuration Test \
+            -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) COLLAB'
+
   # A failure on main opens an issue, or comments on the one still open, with a link to the run. The run's logs hold
   # the details; a fuzz crash's inputs stay on the runner as above.
   report:
-    needs: [fuzz, proptest, agents]
+    needs: [fuzz, proptest, agents, perf, collab]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -146,10 +215,12 @@ jobs:
           FUZZ: ${{ needs.fuzz.result }}
           PROPTEST: ${{ needs.proptest.result }}
           AGENTS: ${{ needs.agents.result }}
+          PERF: ${{ needs.perf.result }}
+          COLLAB: ${{ needs.collab.result }}
           SHA: ${{ github.sha }}
         run: |
           title="Nightly fails on main"
-          body="$(date -u +%F): fuzz $FUZZ, proptest $PROPTEST, agents $AGENTS at $SHA. $RUN"
+          body="$(date -u +%F): fuzz $FUZZ, proptest $PROPTEST, agents $AGENTS, perf $PERF, collab $COLLAB at $SHA. $RUN"
           number=$(gh issue list --state open --author app/github-actions --search "in:title \"$title\"" \
             --json number,title --jq "map(select(.title == \"$title\"))[0].number // empty")
           if [[ -n $number ]]; then

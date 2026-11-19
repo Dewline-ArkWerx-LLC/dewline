@@ -18,3 +18,4 @@ Date: 2026-10-25. Each line is the owner's decision unless marked as recommended
 
 [0002](0002-1.0-scope.md) replaced the release order and 1.0 scope rows on 2026-10-25.
 [0003](0003-full-app.md) replaced the design row on 2026-10-25.
+[0011](0011-paid-sync-pricing.md) replaced the pricing row on 2026-11-19.

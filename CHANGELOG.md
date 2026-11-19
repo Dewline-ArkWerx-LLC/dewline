@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- README and the site say Dewline is free to start. Decision 0011 replaces 0001's pricing promise: every feature in the app is free for everyone, and paid plans cover only services that run on our servers.
+
 ## 0.5.1 (19 Nov 2026)
 
 - Math, Mermaid diagrams and images are sharp on Retina screens. Math and diagrams are drawn as vector outlines at the screen's own scale, and redraw when a window moves between screens.

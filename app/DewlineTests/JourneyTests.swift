@@ -445,8 +445,7 @@ struct JourneyTests {
         }
         #expect(weight(at: (line.string as NSString).range(of: ", revised").location) > weight(at: 0))
 
-        // The stamp names the writer and counts its changes. A row's Revert takes one out; the stamp's Keep keeps the
-        // rest it counts.
+        // The stamp names the writer and counts its changes. A row's Revert takes one out; Keep All keeps the rest.
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
         let stamp = try #require(Self.stamp(in: tab))
@@ -455,7 +454,7 @@ struct JourneyTests {
         tab.live.revert(changes[1].id)
         #expect(tab.marked.map(\.id) == [changes[0].id, changes[2].id, changes[3].id])
         #expect(Self.stamp(in: tab)?.accessibilityLabel()?.hasSuffix(", 3 changes") == true)
-        try Self.press("Keep Claude's 3 changes", on: try #require(Self.stamp(in: tab)))
+        tab.textView.keepAllChanges(nil)
         #expect(tab.marked.isEmpty)
         #expect(Self.stamp(in: tab) == nil)
         let expected = Self.agentPlan.replacingOccurrences(of: "Bravo line, revised.", with: "Bravo line.")
@@ -874,8 +873,8 @@ struct JourneyTests {
         #expect(Self.enabled(#selector(EditorTextView.keepChange(_:)), in: chain) == false)
     }
 
-    /// The keys act as the stamp's buttons do: on every change the stamp counts, wherever the caret is.
-    @Test func theChangeKeysFollowTheStamp() async throws {
+    /// The keys act as the stamp's buttons do: on the one change the stamp sits on, then on to the next one waiting.
+    @Test func theChangeKeysDecideOneChangeAndAdvance() async throws {
         let vault = try Vault(["plan.md": Self.plan])
         defer { vault.remove() }
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
@@ -884,9 +883,13 @@ struct JourneyTests {
         await waitForMain { tab.marked.count == 4 }
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: changes[2].change.range.location, length: 0))
+        #expect(try #require(Self.stamp(in: tab)).subviews.contains { $0.accessibilityLabel() == "Revert Claude's change, 1 of 4" })
         tab.textView.revertChange(nil)
-        #expect(tab.marked.isEmpty)
-        #expect(tab.textView.string == Self.plan)
+        #expect(tab.marked.map(\.id) == [changes[0].id, changes[1].id, changes[3].id])
+        #expect(tab.textView.changeToDecide == changes[3].id)
+        tab.textView.keepChange(nil)
+        #expect(tab.marked.map(\.id) == [changes[0].id, changes[1].id])
+        #expect(tab.textView.string == Self.agentPlan.replacingOccurrences(of: "Charlie line, revised.", with: "Charlie line."))
     }
 
     /// The responders a menu command looks through, in AppKit's order, for a window that is never key.

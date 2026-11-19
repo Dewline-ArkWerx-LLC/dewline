@@ -15,8 +15,8 @@ private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regul
     return label
 }
 
-/// A button that calls `action` when clicked: the prominent one filled with ink and set in paper, the others bare text
-/// in `ink2`.
+/// A button that calls `action` when clicked: the prominent one filled with the accent and set in white, the others
+/// bare text in `ink2`.
 @MainActor
 private final class ActionButton: NSButton {
     private var handler: () -> Void = {}
@@ -46,7 +46,7 @@ private final class ActionButton: NSButton {
 
     override func updateLayer() {
         layer?.cornerRadius = 6
-        layer?.backgroundColor = prominent ? ThemeStore.shared.color(.ink).resolved(for: effectiveAppearance).cgColor : nil
+        layer?.backgroundColor = prominent ? NSColor.controlAccentColor.resolved(for: effectiveAppearance).cgColor : nil
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -57,7 +57,7 @@ private final class ActionButton: NSButton {
     @objc private func paint() {
         attributedTitle = NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 13, weight: prominent ? .medium : .regular),
-            .foregroundColor: ThemeStore.shared.color(prominent ? .paper : .ink2),
+            .foregroundColor: prominent ? NSColor.white : ThemeStore.shared.color(.ink2),
         ])
         needsDisplay = true
     }
@@ -277,6 +277,10 @@ final class ChangeStamp: NSView {
         fatalError("ChangeStamp is built in code")
     }
 
+    override func accessibilityChildren() -> [Any]? {
+        [revert, keep, setUp].filter { !$0.isHidden }
+    }
+
     override var isFlipped: Bool { true }
 
     override func resetCursorRects() {
@@ -290,7 +294,8 @@ final class ChangeStamp: NSView {
     }
 
     /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`, during Claude
-    /// Code's shell command when `shell`, and why Revert left one when `refused`; Keep and Revert decide them all.
+    /// Code's shell command when `shell`, and why Revert left one when `refused`; Keep and Revert decide the stamped one,
+    /// "Keep 1 of 3" when the session has more.
     func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool, refused: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
@@ -302,9 +307,11 @@ final class ChangeStamp: NSView {
         note.stringValue = refused ? Self.typedInside : Self.duringShell
         note.isHidden = !(shell || refused)
         setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (note.isHidden ? "" : ", \(note.stringValue)"))
-        let changes = count == 1 ? "change" : "\(count) changes"
-        revert.setAccessibilityLabel("Revert \(writer.possessive) \(changes)")
-        keep.setAccessibilityLabel("Keep \(writer.possessive) \(changes)")
+        let of = count == 1 ? "" : " 1 of \(count)"
+        revert.title = "Revert" + of
+        keep.title = "Keep" + of
+        revert.setAccessibilityLabel("Revert \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
+        keep.setAccessibilityLabel("Keep \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
         // Set Up names no shell command's change, so a change during one doesn't offer it.
         setUp.isHidden = !(offering && external && !shell)
         if changed { needsDisplay = true }
@@ -326,7 +333,7 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 1 change": the writer in SF Mono capitals in its ink, the time in SF Mono, the count in SF Pro.
+    /// "CLAUDE 3:25 PM · 1 change": the writer in small capitals in its ink, the time with fixed-width digits, the count.
     private var line: NSAttributedString {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
@@ -336,7 +343,7 @@ final class ChangeStamp: NSView {
             let ink = OKLCH(ThemeStore.shared.color(.ink).resolved(for: effectiveAppearance)) {
             line.addAttribute(.foregroundColor, value: name.mixed(with: ink, by: 0.25).color, range: NSRange(location: 0, length: line.length))
         }
-        line.append(NSAttributedString(string: "  " + time, attributes: [.font: Chrome.mono(10.5), .foregroundColor: ink2]))
+        line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
         line.append(NSAttributedString(string: " \u{00B7} \(count) \(count == 1 ? "change" : "changes")", attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
         ]))
@@ -344,7 +351,7 @@ final class ChangeStamp: NSView {
     }
 
     private var ascent: CGFloat {
-        ceil(max(Chrome.mono(10.5, weight: .semibold).ascender, NSFont.systemFont(ofSize: 11).ascender))
+        ceil(max(MarkWriter.stampFont.ascender, NSFont.systemFont(ofSize: 11).ascender))
     }
 
     private var buttonsWidth: CGFloat {
@@ -420,7 +427,7 @@ final class ChangeStamp: NSView {
     }
 }
 
-/// Revert (outlined), Keep (filled with ink, set in paper) and a quiet link, each with its keys drawn as keycaps in
+/// Revert (outlined), Keep (filled with the accent, set in white) and a quiet link, each with its keys drawn as keycaps in
 /// SF Pro: ⌥⌘⌫ for Revert, ⌘ and the SF Symbol `return` for Keep.
 @MainActor
 final class StampButton: NSButton {
@@ -463,17 +470,17 @@ final class StampButton: NSButton {
         if style == .link {
             return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
         }
-        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
+        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: style == .filled ? NSColor.white : store.color(.ink)])
     }
 
     private var keycaps: NSAttributedString {
-        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink2)
+        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink2)
         return NSAttributedString(string: keys, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color])
     }
 
     private var returnImage: NSImage? {
         guard returnKey else { return nil }
-        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink2)
+        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink2)
         let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
         return NSImage(systemSymbolName: "return", accessibilityDescription: nil)?.withSymbolConfiguration(config)
     }
@@ -489,7 +496,7 @@ final class StampButton: NSButton {
         let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5.5, yRadius: 5.5)
         switch style {
         case .filled:
-            store.color(.ink).withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
+            NSColor.controlAccentColor.withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         case .outlined:
             if isHighlighted {

@@ -2,9 +2,11 @@
 //! link to a note, and the edits that keep links on a note through a rename.
 
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::ops::Range;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
@@ -12,6 +14,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 use crate::engine::{Engine, Origin};
 use crate::file;
 use crate::git::status::Ignores;
+use crate::jail::Jail;
 
 /// `walk` lists at most this many notes.
 pub const MAX_NOTES: usize = 20_000;
@@ -530,17 +533,30 @@ fn encode(name: &str) -> String {
 
 /// A note's text, byte-order mark and all, when it is UTF-8 of at most 8 MB.
 pub fn read(path: &Path) -> Option<String> {
-    let info = fs::metadata(path).ok()?;
+    read_file(
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .ok()?,
+    )
+}
+
+fn read_file(mut file: File) -> Option<String> {
+    let info = file.metadata().ok()?;
     if !info.is_file() || info.len() > MAX_NOTE {
         return None;
     }
-    String::from_utf8(fs::read(path).ok()?).ok()
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    Some(text)
 }
 
 /// Keeps the links in the notes under `root` on their files after `moves`, as `relink` does, and returns the notes it
 /// rewrote, where they are now. A note is read where `moves` puts it, or where it was until it moves. Notes in
-/// `skipping`, and notes that change while they are rewritten, are left alone. `engine` notes each write as yours, so it
-/// isn't another app's change to a closed note.
+/// `skipping`, notes that resolve outside `root`, and notes that change while they are rewritten, are left alone. A note
+/// is opened from the root with no symlink on the way. `engine` notes each write as yours, so it isn't another app's
+/// change to a closed note.
 pub fn rewrite(
     root: &Path,
     notes: &Notes,
@@ -549,6 +565,9 @@ pub fn rewrite(
     engine: Option<&Engine>,
 ) -> Vec<PathBuf> {
     let mut rewritten = Vec::new();
+    let Ok(jail) = Jail::new(root) else {
+        return rewritten;
+    };
     for source in notes.paths() {
         let on_disk = moves
             .iter()
@@ -557,10 +576,13 @@ pub fn rewrite(
         if skipping.iter().any(|skip| same(skip, on_disk)) {
             continue;
         }
-        let path = root.join(on_disk);
-        let Some(text) = read(&path) else {
+        let Ok((file, relative)) = jail.open(on_disk) else {
             continue;
         };
+        let Some(text) = read_file(file) else {
+            continue;
+        };
+        let path = jail.root().join(relative);
         let bom = if text.starts_with('\u{feff}') { 3 } else { 0 };
         let edits = relink(&text[bom..], source, notes, moves);
         if edits.is_empty() {

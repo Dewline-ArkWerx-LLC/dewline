@@ -45,13 +45,12 @@ private struct Caret {
     }
 }
 
-/// Runs the body with the Motion setting in the volatile argument domain, which a launch argument would fill.
+/// Runs the body at a Motion level, standing in for Reduce Motion: on for Off, off for Calm.
 @MainActor
 private func motion(_ level: Motion, _ body: () throws -> Void) rethrows {
-    let defaults = UserDefaults.standard
-    let arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
-    defaults.setVolatileDomain(arguments.merging(["DewlineMotion": level.rawValue]) { $1 }, forName: UserDefaults.argumentDomain)
-    defer { defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain) }
+    let reduced = Motion.reduced
+    Motion.reduced = { level == .off }
+    defer { Motion.reduced = reduced }
     try body()
 }
 
@@ -61,7 +60,6 @@ private final class Moment {
 }
 
 private let systemAllowsMotion = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-private let systemAllowsLively = systemAllowsMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
 
 @MainActor
 struct CaretTests {
@@ -180,7 +178,7 @@ extension CaretTests {
         let caret = try Caret()
         defer { caret.close() }
         let view = caret.view
-        try motion(.lively) {
+        try motion(.calm) {
             view.jump(toLine: 4)
             #expect(caret.streaking)
             let at = view.selectedRange().location
@@ -209,7 +207,7 @@ extension CaretTests {
         }
     }
 
-    /// Acceptance test 2's property: 1,000 random edits at Lively, half of them right after a jump that may start
+    /// Acceptance test 2's property: 1,000 random edits, half of them right after a jump that may start
     /// a streak; once the text changes no streak runs, and an edit never starts one.
     @Test(.enabled(if: systemAllowsMotion)) func editsNeverRunTheStreak() throws {
         let caret = try Caret(lines: 40)
@@ -228,7 +226,7 @@ extension CaretTests {
         try #require(undo.groupingLevel == 0)
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
-        motion(.lively) {
+        motion(.calm) {
             for step in 0..<1000 {
                 if random.next() % 2 == 0 {
                     let length = view.textStorage?.length ?? 0
@@ -270,43 +268,6 @@ extension CaretTests {
 }
 
 extension CaretTests {
-    /// Lively adds the streak to long keyboard moves and clicks; Calm snaps them, and so do plain arrows.
-    @Test(.enabled(if: systemAllowsLively)) func livelyStreaksLongMovesAndClicks() throws {
-        let caret = try Caret()
-        defer { caret.close() }
-        let view = caret.view
-        motion(.calm) {
-            view.doCommand(by: #selector(NSResponder.moveToEndOfLine(_:)))
-            #expect(view.selectedRange().location > 12 && !caret.streaking)
-        }
-        try motion(.lively) {
-            view.doCommand(by: #selector(NSResponder.moveToBeginningOfLine(_:)))
-            #expect(view.selectedRange().location == 0 && caret.streaking)
-            view.effects.removeStreak()
-            view.doCommand(by: #selector(NSResponder.moveDown(_:)))
-            #expect(!caret.streaking)
-            let word = view.firstRect(forCharacterRange: NSRange(location: 300, length: 1), actualRange: nil)
-            let point = caret.window.convertPoint(fromScreen: NSPoint(x: word.midX, y: word.midY))
-            let click = { (type: NSEvent.EventType) in
-                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                   windowNumber: caret.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
-            }
-            let down = try #require(click(.leftMouseDown))
-            NSApp.postEvent(try #require(click(.leftMouseUp)), atStart: false)
-            view.mouseDown(with: down)
-            #expect(abs(view.selectedRange().location - 300) <= 1 && caret.streaking)
-        }
-    }
-
-    @Test func reduceMotionRunsOffAndLowPowerRunsLivelyAsCalm() {
-        for setting in [Motion.off, .calm, .lively] {
-            #expect(Motion.resolve(setting, reduceMotion: true, lowPower: false) == .off)
-            #expect(Motion.resolve(setting, reduceMotion: true, lowPower: true) == .off)
-            #expect(Motion.resolve(setting, reduceMotion: false, lowPower: false) == setting)
-            #expect(Motion.resolve(setting, reduceMotion: false, lowPower: true) == (setting == .lively ? .calm : setting))
-        }
-    }
-
     /// The text view's first layout passes read `marking` before the effects view has a backing layer.
     @Test func aNewEffectsViewShowsNoMark() {
         #expect(!CaretEffectsView().marking)

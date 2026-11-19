@@ -104,7 +104,6 @@
       <h2 id="live-rendering">Live rendering</h2>
       <p>Type <code>**bold**</code> and the asterisks hide, leaving bold text. Move the caret onto the word and they come back. Only the span under the caret shows its markers; a selection shows every span it touches.</p>
       <p>A diagram, a <code>$$</code> formula, an image alone on its line and front matter draw as a picture until the caret moves in. If one fails to draw, its source shows with the error under it.</p>
-      <p>Settings &gt; Editor &gt; Heading style offers Standard and Editorial. Editorial sets the first heading as a display title and section heads in small caps.</p>
 
       <h2 id="source">Source view</h2>
       <p>View &gt; Show Source <span class="keys"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>U</kbd></span> shows every character, in the code font. The caret's line stays where it was on screen.</p>
@@ -147,7 +146,7 @@
       <ul>
         <li><strong>View &gt; Focus</strong> <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>D</kbd></span> dims every block but the caret's.</li>
         <li><strong>View &gt; Typewriter</strong> keeps the caret's line in the middle of the window.</li>
-        <li><strong>Settings &gt; Editor &gt; Motion</strong> sets how the caret travels on a far jump: Off, Calm or Lively. With Reduce Motion on in macOS, it is Off.</li>
+        <li><strong>Motion</strong>: the caret travels on a far jump. With Reduce Motion on in macOS, it jumps without moving.</li>
       </ul>
 
       <h2 id="folding">Folding</h2>
@@ -187,7 +186,7 @@
       <p>Each Format command, line move, file action and Keep or Revert is one undo step, named in the Edit menu. A change from another app lands without clearing your undo history.</p>
 
       <h2 id="palette">Command palette</h2>
-      <p>View &gt; Command Palette… <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd></span> runs any command in the menu bar. It also changes Theme, Appearance, Smart Punctuation, Vim Mode, Heading Style and Show Ignored Files in place. Commands you ran lately rank first, and <kbd>⎋</kbd> steps back out.</p>
+      <p>View &gt; Command Palette… <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd></span> runs any command in the menu bar. It also changes Theme, Appearance, Smart Punctuation, Vim Mode and Show Ignored Files in place. Commands you ran lately rank first, and <kbd>⎋</kbd> steps back out.</p>
 
       <h2 id="settings">Settings</h2>
       <p>Dewline &gt; Settings… <span class="keys"><kbd>⌘</kbd><kbd>,</kbd></span> opens on the pane you used last. Changes apply at once.</p>
@@ -195,8 +194,8 @@
         <table>
           <thead><tr><th scope="col">Pane</th><th scope="col">What it sets</th></tr></thead>
           <tbody>
-            <tr><td>General</td><td>When Dewline opens, Live or Source for new windows, ignored files, where pasted images go, the inbox, updates</td></tr>
-            <tr><td>Editor</td><td>Vim mode, heading style, motion, Tab key, spelling, Smart Punctuation, link previews</td></tr>
+            <tr><td>General</td><td>Default Markdown app, ignored files, where pasted images go, the inbox, updates</td></tr>
+            <tr><td>Editor</td><td>Vim mode, link previews, code files, Tab key, spelling</td></tr>
             <tr><td>Appearance</td><td><a href="/docs/themes-and-fonts/">Themes, fonts</a>, text size, line height, line width</td></tr>
             <tr><td>Agents</td><td><a href="/docs/agents/#install">Agent hooks</a></td></tr>
           </tbody>

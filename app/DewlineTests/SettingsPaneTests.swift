@@ -16,8 +16,6 @@ struct SettingsPaneTests {
         withDefaults { defaults in
             let home = URL(filePath: "/Users/someone", directoryHint: .isDirectory)
             let preferences = Preferences(defaults: defaults, home: home)
-            #expect(preferences.launchBehavior == .lastFiles)
-            #expect(preferences.newFileFolder.path == "/Users/someone/Documents/Dewline")
             #expect(!preferences.showsIgnored)
             #expect(preferences.attachments == .beside)
             #expect(preferences.inbox.path == "/Users/someone/Documents/Dewline/Inbox.md")
@@ -28,38 +26,26 @@ struct SettingsPaneTests {
     @Test func preferencesKeepWhatIsSetUnderTheirKeys() {
         withDefaults { defaults in
             let preferences = Preferences(defaults: defaults)
-            preferences.launchBehavior = .launchWindow
-            preferences.newFileFolder = URL(filePath: "/tmp/notes", directoryHint: .isDirectory)
             preferences.showsIgnored = true
             preferences.attachments = .subfolder
             preferences.inbox = URL(filePath: "/tmp/notes/Inbox.md")
-            #expect(defaults.string(forKey: "DewlineOnLaunch") == "launchWindow")
-            #expect(defaults.object(forKey: "NSQuitAlwaysKeepsWindows") as? Bool == false)
-            #expect(defaults.string(forKey: "DewlineNewFileFolder") == "/tmp/notes")
             #expect(defaults.bool(forKey: "DewlineShowIgnored"))
             #expect(defaults.string(forKey: "DewlineAttachments") == "subfolder")
             #expect(defaults.string(forKey: Preferences.inboxKey) == "/tmp/notes/Inbox.md")
 
             let reread = Preferences(defaults: defaults)
-            #expect(reread.launchBehavior == .launchWindow)
-            #expect(reread.newFileFolder.path == "/tmp/notes")
             #expect(reread.showsIgnored)
             #expect(reread.attachments == .subfolder)
             #expect(reread.inbox.path == "/tmp/notes/Inbox.md")
-
-            reread.launchBehavior = .lastFiles
-            #expect(defaults.object(forKey: "NSQuitAlwaysKeepsWindows") as? Bool == true)
         }
     }
 
     @Test func preferencesRefuseValuesTheyCannotUse() {
         withDefaults { defaults in
-            defaults.set("sometimes", forKey: "DewlineOnLaunch")
-            defaults.set("relative/folder", forKey: "DewlineNewFileFolder")
+            defaults.set("relative/Inbox.md", forKey: Preferences.inboxKey)
             defaults.set("cloud", forKey: "DewlineAttachments")
             let preferences = Preferences(defaults: defaults, home: URL(filePath: "/Users/someone", directoryHint: .isDirectory))
-            #expect(preferences.launchBehavior == .lastFiles)
-            #expect(preferences.newFileFolder.path == "/Users/someone/Documents/Dewline")
+            #expect(preferences.inbox.path == "/Users/someone/Documents/Dewline/Inbox.md")
             #expect(preferences.attachments == .beside)
         }
     }

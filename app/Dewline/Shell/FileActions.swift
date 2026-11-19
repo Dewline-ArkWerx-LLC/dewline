@@ -4,7 +4,7 @@ import MdCore
 /// Making, naming, moving and trashing notes and folders on disk, each one undoable. An open note follows its file.
 @MainActor
 enum FileActions {
-    /// ~/Documents/Dewline: Welcome.md and Inbox.md live here, and new notes go here unless Settings > General says otherwise.
+    /// ~/Documents/Dewline: Inbox.md lives here, and a new note goes here when no window shows a folder.
     static var notesFolder: URL {
         URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory).appending(path: "Documents/Dewline", directoryHint: .isDirectory)
     }

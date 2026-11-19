@@ -1,10 +1,11 @@
 import AppKit
 import MdCore
 
-/// Welcome.md: the bundled guide, written once into the notes folder, where it is a note like any other.
+/// Welcome.md: the bundled guide, written once into Dewline's own folder in Application Support, where it is a note
+/// like any other.
 @MainActor
 enum Welcome {
-    /// True once the first launch wrote the guide and opened the notes folder.
+    /// True once the first launch wrote the guide and opened it.
     static let shownKey = "DewlineWelcomeShown"
     /// The sentence the demo extends, in the paragraph that holds its link, and what it adds.
     static let paragraph = "Dewline marks each change so you can keep or revert it."
@@ -14,13 +15,18 @@ enum Welcome {
         Bundle.main.url(forResource: "Welcome", withExtension: "md")!
     }
 
-    static func url(in folder: URL = FileActions.notesFolder) -> URL {
+    /// Dewline's own folder, which holds its snapshots too.
+    static var folder: URL {
+        URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "dev.arkwerx.dewline", directoryHint: .isDirectory)
+    }
+
+    static func url(in folder: URL = folder) -> URL {
         folder.appending(path: "Welcome.md")
     }
 
     /// Writes the bundled guide into `folder` unless a Welcome.md is already there; true when it wrote one.
     @discardableResult
-    static func write(in folder: URL = FileActions.notesFolder) throws -> Bool {
+    static func write(in folder: URL = folder) throws -> Bool {
         let url = url(in: folder)
         guard !FileManager.default.fileExists(atPath: url.path) else { return false }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

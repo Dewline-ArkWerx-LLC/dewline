@@ -218,10 +218,13 @@ enum QuickOpen {
 /// The files under a folder that open, by the folder that holds them, listed the way the sidebar lists them.
 struct FileTree: Sendable {
     let folder: Folder
+    /// Lists what .gitignore hides too, as the sidebar does while Settings shows it.
+    var showsIgnored: Bool
     private var listings: [String: (files: [QuickOpenFile], folders: [String])] = [:]
 
-    init(_ folder: Folder) {
+    init(_ folder: Folder, showsIgnored: Bool = false) {
         self.folder = folder
+        self.showsIgnored = showsIgnored
     }
 
     /// Every file in the sidebar's order: each folder's subfolders with what they hold, then its own files.
@@ -274,7 +277,7 @@ struct FileTree: Sendable {
     }
 
     private func list(_ path: String) -> (files: [QuickOpenFile], folders: [String]) {
-        let entries = folder.children(of: URL(filePath: path, directoryHint: .isDirectory)).entries
+        let entries = folder.children(of: URL(filePath: path, directoryHint: .isDirectory), showingIgnored: showsIgnored).entries
         return (
             entries.filter(\.opens).map { QuickOpenFile($0.url, in: folder) },
             entries.filter(\.isFolder).map(\.url.path)
@@ -307,6 +310,8 @@ final class FolderIndex {
     private var update: Task<Void, Never>?
     /// Whether code files opened at the last whole listing; turning them on or off lists the folder again.
     private var listsCode = CodeFile.isOn
+    /// Whether the last whole listing held what .gitignore hides; Settings > General turns it on or off.
+    private var showsIgnored = Preferences.shared.showsIgnored
     private var settings: (any NSObjectProtocol)?
 
     private init(_ folder: Folder) {
@@ -322,8 +327,9 @@ final class FolderIndex {
         relist(nil)
         settings = NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.listsCode != CodeFile.isOn else { return }
+                guard let self, self.listsCode != CodeFile.isOn || self.showsIgnored != Preferences.shared.showsIgnored else { return }
                 self.listsCode = CodeFile.isOn
+                self.showsIgnored = Preferences.shared.showsIgnored
                 self.relist(nil)
             }
         }
@@ -337,8 +343,9 @@ final class FolderIndex {
     private func relist(_ paths: [String]?) {
         update = Task { [previous = update, weak self] in
             await previous?.value
-            guard let tree = self?.tree else { return }
-            let listed = await Task.detached(priority: .utility) {
+            guard var tree = self?.tree, let showsIgnored = self?.showsIgnored else { return }
+            tree.showsIgnored = showsIgnored
+            let listed = await Task.detached(priority: .utility) { [tree] in
                 var tree = tree
                 tree.relist(paths)
                 return (tree, tree.files)

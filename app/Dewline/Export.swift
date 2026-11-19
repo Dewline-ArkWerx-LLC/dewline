@@ -247,6 +247,7 @@ enum Export {
         formats.target = chooser
         formats.action = #selector(PopUpTarget.changed(_:))
         let folder = document.fileURL?.deletingLastPathComponent()
+        if let folder { panel.directoryURL = folder }
         panel.beginSheetModal(for: window) { response in
             withExtendedLifetime(chooser) {}
             guard response == .OK, let url = panel.url, let format = Format(rawValue: formats.selectedTag()) else { return }

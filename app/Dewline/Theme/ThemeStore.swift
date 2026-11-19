@@ -2,17 +2,13 @@ import AppKit
 import Observation
 
 /// The owner's look, kept in user defaults: a theme for the light slot and one for the dark, which appearance windows
-/// take, the page's faces, size, leading, measure and heading style, and Smart Punctuation. Posts `didChange` after
+/// take, the page's faces, size, leading and measure, and Smart Punctuation. Posts `didChange` after
 /// every change.
 @MainActor @Observable
 final class ThemeStore {
     enum Appearance: String, CaseIterable, Identifiable {
         case light, dark, auto
         var id: Self { self }
-    }
-
-    enum HeadingStyle: String {
-        case standard, editorial
     }
 
     static let shared: ThemeStore = {
@@ -51,7 +47,6 @@ final class ThemeStore {
     var bodySize: Double { didSet { save(bodySize, "BodySize") } }
     var lineHeight: Double { didSet { save(lineHeight, "LineHeight") } }
     var columnWidth: Double { didSet { save(columnWidth, "ColumnWidth") } }
-    var headingStyle: HeadingStyle { didSet { save(headingStyle.rawValue, "HeadingStyle") } }
     var vimMode: Bool { didSet { save(vimMode, "VimMode") } }
     /// The system's smart quotes and dashes, outside code; off by default.
     var smartPunctuation: Bool { didSet { save(smartPunctuation, "SmartPunctuation") } }
@@ -76,7 +71,6 @@ final class ThemeStore {
         bodySize = number("BodySize", in: Self.bodySizes) ?? 16
         lineHeight = number("LineHeight", in: Self.lineHeights) ?? 1.5
         columnWidth = number("ColumnWidth", in: Self.columnWidths) ?? 68
-        headingStyle = string("HeadingStyle").flatMap(HeadingStyle.init) ?? .standard
         vimMode = defaults.bool(forKey: "DewlineVimMode")
         smartPunctuation = defaults.bool(forKey: "DewlineSmartPunctuation")
         spellCheck = defaults.object(forKey: "DewlineSpellCheck") as? Bool ?? true
@@ -209,20 +203,12 @@ final class ThemeStore {
         let kern: CGFloat
     }
 
-    /// Heading levels 1 to 6 (synthesis 2.3), scaled with the body size. Standard follows the site: H1 34 / 620 with
+    /// Heading levels 1 to 6 (synthesis 2.3), scaled with the body size, as the site sets them: H1 34 / 620 with
     /// -0.025 em tracking, H2 22 / 600, H3 17 / 600; those weights and the optical size axis apply to Bricolage, and
     /// other faces set semibold.
-    /// Editorial sets the title large and section heads in small caps.
     func heading(_ level: Int) -> Heading {
         if let heading = headings[level] { return heading }
         let scale = bodySize / 17
-        func smallCaps(_ font: NSFont) -> NSFont {
-            let features: [[NSFontDescriptor.FeatureKey: Int]] = [
-                [.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
-                [.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
-            ]
-            return NSFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)!
-        }
         func display(_ size: CGFloat, _ weight: CGFloat, opticalSize: CGFloat? = nil) -> NSFont {
             guard headingFace == "Bricolage Grotesque" else { return Faces.font(headingFace, size: size, weight: .semibold) }
             // The variable font's default instance is 96 pt ExtraBold, so every axis is set.
@@ -231,16 +217,12 @@ final class ThemeStore {
             return NSFont(descriptor: NSFontDescriptor(fontAttributes: [.family: headingFace, .variation: variation]), size: size)
                 ?? Faces.font(headingFace, size: size, weight: .semibold)
         }
-        let heading = switch (level, headingStyle) {
-        case (1, .editorial):
-            Heading(font: Faces.font(headingFace, size: 44 * scale), lineHeight: 50 * scale, kern: 0)
-        case (2, .editorial):
-            Heading(font: smallCaps(Faces.font(headingFace, size: 15 * scale, weight: .medium)), lineHeight: 25 * scale, kern: 0.75 * scale)
-        case (1, _):
+        let heading = switch level {
+        case 1:
             Heading(font: display(34 * scale, 620, opticalSize: 48), lineHeight: 40 * scale, kern: -0.85 * scale)
-        case (2, _):
+        case 2:
             Heading(font: display(22 * scale, 600), lineHeight: 28 * scale, kern: 0)
-        case (3, _):
+        case 3:
             Heading(font: display(17 * scale, 600), lineHeight: 24 * scale, kern: 0)
         default:
             Heading(font: Faces.font(bodyFace, size: bodySize, weight: .semibold), lineHeight: bodyLineHeight, kern: 0)

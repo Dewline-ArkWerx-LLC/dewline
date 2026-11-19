@@ -1,5 +1,5 @@
 #!/bin/bash
-# Acceptance test 3 of the caret on the Release app at Lively: a jump streak, a click streak and a landing mark,
+# Acceptance test 3 of the caret on the Release app: a jump streak and a landing mark,
 # then the app's CPU, idle wakeups and context switches over the next 5 s and the 60 s after them (top, as
 # scripts/perf.sh measures idle), the display modes the system caret takes, two screenshots of the caret 1 s apart
 # and its color on screen. The window comes to the front; screencapture needs Screen Recording for the terminal and
@@ -46,10 +46,9 @@ if [[ $(defaults read -g AppleInterfaceStyle 2>/dev/null || true) == Dark ]]; th
 if [[ $(defaults read com.apple.universalaccess reduceMotion 2>/dev/null || true) == 1 ]]; then
     echo "Reduce Motion is on, which runs Off: the streaks will not run." >&2
 fi
-if pmset -g | grep -q -E 'lowpowermode +1'; then echo "Low Power Mode is on, which runs Lively as Calm: the click streak will not run." >&2; fi
 
 out=$work/probe
-open -n --env DEWLINE_CARET_PROBE=1 --stdout "$out" -a "$app" "$work/idle.md" --args -ApplePersistenceIgnoreState YES -DewlineMotion lively
+open -n --env DEWLINE_CARET_PROBE=1 --stdout "$out" -a "$app" "$work/idle.md" --args -ApplePersistenceIgnoreState YES
 for _ in {1..50}; do pid=$(pgrep -n -f "$app/Contents/MacOS/Dewline") && break; sleep 0.1; done
 for _ in {1..150}; do grep -q ' done$' "$out" 2>/dev/null && break; sleep 0.1; done
 first=$(front)
@@ -82,7 +81,7 @@ echo "  active 5 s: CPU $active_cpu%, idle wakeups $active_wakeups, context swit
 echo "  idle 60 s:  CPU $cpu%, idle wakeups $wakeups, context switches $switches"
 echo "  caret on screen: rgb $color, accent ${accent[*]}, largest channel difference $off"
 check "in front for the whole run" "$([[ $first == "$pid_was" && $last == "$pid_was" ]] && echo true || echo false)"
-check "jump streak, click streak and landing mark ran" "$(grep -c -E '(streak|mark) true$' "$out" | grep -qx 3 && echo true || echo false)"
+check "jump streak and landing mark ran" "$(grep -c -E '(streak|mark) true$' "$out" | grep -qx 2 && echo true || echo false)"
 check "solid 5 to 6.5 s after the last input (${solid_after:-never})" "$(awk -v s="${solid_after:-0}" 'BEGIN { print (s >= 5 && s <= 6.5) ? "true" : "false" }')"
 check "held solid: modes after the input were [ ${modes}]" "$([[ $modes =~ ^(2 )+$ ]] && echo true || echo false)"
 check "idle CPU 0.0% and 0 idle wakeups" "$([[ $cpu == 0.0 && $wakeups == 0 ]] && echo true || echo false)"

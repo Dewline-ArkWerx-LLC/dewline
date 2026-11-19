@@ -129,7 +129,6 @@ final class EditorTextView: CaretTextView {
 
     static func scrollView() -> NSScrollView {
         let textView = EditorTextView()
-        if Preferences.shared.opensInSource { textView.styler.toggleSource(restyling: NSRange()) }
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         let rail = Rail()

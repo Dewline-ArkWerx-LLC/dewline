@@ -1,7 +1,7 @@
 import AppKit
 
 /// The system caret in the cursor orange and solid after five seconds without input, with the streak or landing mark a
-/// jump, a click or a long move shows. Edits, arrows and key repeat always snap.
+/// jump shows. Edits, arrows, clicks and key repeat always snap.
 class CaretTextView: NSTextView {
     let effects = CaretEffectsView()
     private var monitor: Any?
@@ -143,14 +143,7 @@ class CaretTextView: NSTextView {
         }
     }
 
-    private enum Cause { case jump, find, click, longMove }
-
-    private static let longMoves: Set<Selector> = [
-        #selector(moveToBeginningOfDocument(_:)), #selector(moveToEndOfDocument(_:)),
-        #selector(moveToBeginningOfLine(_:)), #selector(moveToEndOfLine(_:)),
-        #selector(moveToLeftEndOfLine(_:)), #selector(moveToRightEndOfLine(_:)),
-        #selector(pageUp(_:)), #selector(pageDown(_:)),
-    ]
+    private enum Cause { case jump, find }
 
     /// Moves the selection as Go to Line does.
     func jump(to range: NSRange) {
@@ -201,42 +194,25 @@ class CaretTextView: NSTextView {
         move(.find) { super.performFindPanelAction(sender) }
     }
 
-    override func mouseDown(with event: NSEvent) {
-        guard window?.isKeyWindow == true else { return super.mouseDown(with: event) }
-        move(.click) { super.mouseDown(with: event) }
-    }
-
-    override func doCommand(by selector: Selector) {
-        guard Self.longMoves.contains(selector) else { return super.doCommand(by: selector) }
-        move(.longMove) { super.doCommand(by: selector) }
-    }
-
-    /// Runs a move the user asked for, then shows what the Motion level allows: the streak when the view did not
-    /// scroll and both caret rects are visible, otherwise the landing mark after a jump. A key repeat snaps. Find
-    /// has no landing mark because its selected match marks the target.
+    /// Runs a jump the user asked for, then shows what Motion allows: the streak when the view did not scroll and both
+    /// caret rects are visible, otherwise the landing mark. A key repeat snaps. Find has no landing mark because its
+    /// selected match marks the target.
     private func move(_ cause: Cause, _ body: () -> Void) {
         let level = Motion.current
-        let jumps = cause == .jump || cause == .find
         let repeating = NSApp.currentEvent.map { $0.type == .keyDown && $0.isARepeat } ?? false
-        guard let window, jumps || level == .lively, !repeating, !hasMarkedText() else { return body() }
-        let from = selectedRange().location
-        let old = caretRect(at: from, in: window)
+        guard let window, !repeating, !hasMarkedText() else { return body() }
+        let old = caretRect(at: selectedRange().location, in: window)
         let visible = visibleRect
         body()
         // TextKit 2 corrects its estimated layout around the new selection now instead of at the next display.
         layoutSubtreeIfNeeded()
         effects.removeStreak()
-        let selection = selectedRange()
-        let new = caretRect(at: selection.location, in: window)
+        let new = caretRect(at: selectedRange().location, in: window)
         let streaks = level != .off && new != old && visibleRect.origin == visible.origin && visible.contains(old) && visibleRect.contains(new)
-        if jumps {
-            if streaks {
-                effects.streak(from: old, to: new, color: cursorColor)
-            } else if cause == .jump {
-                effects.mark(line(around: new), color: cursorColor, fades: level != .off)
-            }
-        } else if streaks, selection.length == 0, abs(new.midY - old.midY) >= 1.5 * old.height || abs(selection.location - from) >= 12 {
+        if streaks {
             effects.streak(from: old, to: new, color: cursorColor)
+        } else if cause == .jump {
+            effects.mark(line(around: new), color: cursorColor, fades: level != .off)
         }
     }
 

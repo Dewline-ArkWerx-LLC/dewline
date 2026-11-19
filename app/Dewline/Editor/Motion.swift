@@ -1,21 +1,16 @@
 import AppKit
 
-/// The Motion setting, the user default `DewlineMotion`. Reduce Motion runs Off; Low Power Mode runs Lively as Calm.
-enum Motion: String {
-    case off, calm, lively
+/// How much the editor animates: Calm, or Off while Reduce Motion is on in System Settings.
+enum Motion {
+    case off, calm
 
-    /// Read when an effect starts, so a change to the setting or to the system applies without a relaunch.
+    /// Read when an effect starts, so turning Reduce Motion on or off applies without a relaunch.
     @MainActor
     static var current: Motion {
-        resolve(
-            UserDefaults.standard.string(forKey: "DewlineMotion").flatMap(Motion.init) ?? .calm,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-            lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled
-        )
+        reduced() ? .off : .calm
     }
 
-    static func resolve(_ setting: Motion, reduceMotion: Bool, lowPower: Bool) -> Motion {
-        if reduceMotion { return .off }
-        return setting == .lively && lowPower ? .calm : setting
-    }
+    /// Reduce Motion in System Settings; tests stand in their own.
+    @MainActor
+    static var reduced: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 }

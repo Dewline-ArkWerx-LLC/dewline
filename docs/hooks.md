@@ -73,4 +73,4 @@ What `afterFileEdit` carries, checked on 2026-11-17 against cursor.com/docs/agen
 
 ## What stays Unknown
 
-Bash edits stay Unknown. A hook around a shell command can't say which bytes the command wrote, so a change made by Claude Code's Bash tool, Codex's shell, Cursor's terminal, `codex exec`, or any edit that skips the hooks shows as "Unknown app". So does a tool call whose result `dewline notify` can't compute exactly, such as an Edit of a file that mixes CRLF and LF line endings or starts with a byte-order mark. `scripts/agent-conformance.sh` runs the real Claude Code and Codex over such files each night and fails when a declared hash differs from what the tool wrote.
+Bash edits stay Unknown. A hook around a shell command can't say which bytes the command wrote, so a change made by Claude Code's Bash tool, Codex's shell, Cursor's terminal, `codex exec`, or any edit that skips the hooks shows as "Another app". So does a tool call whose result `dewline notify` can't compute exactly, such as an Edit of a file that mixes CRLF and LF line endings or starts with a byte-order mark.

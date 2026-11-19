@@ -75,7 +75,6 @@
         <li><a href="/docs/files/">Files</a></li>
         <li><a href="/docs/sync/">Sync and mobile</a></li>
         <li><a href="/docs/agents/">Agents</a></li>
-        <li><a href="/docs/collaboration/">Collaboration</a></li>
       </ul>
     </div>
     <div class="dnav-group">
@@ -105,12 +104,10 @@
       <p>You never sign up or sign in. The code has no analytics, no usage reporting and no crash reporter. The app's logs go to the macOS unified log on your Mac and nowhere else. Sparkle's system profile is off, so an update check sends no hardware details.</p>
 
       <h2 id="network">What goes over the network</h2>
-      <p>The app makes three kinds of request. Nothing else in the code opens a connection.</p>
+      <p>The app makes two kinds of request. Nothing else in the code opens a connection.</p>
       <dl>
         <dt>Updates</dt>
         <dd>Once a day, once the first-run line about updates has shown, and whenever you choose Check Now. The app asks <code>dewline.arkwerx.com/appcast.xml</code> for the feed and downloads an update from GitHub. Each request carries the user agent <code>Dewline</code>. Turn off the daily check in Settings &gt; General &gt; Updates. Debug and unsigned builds never contact the feed.</dd>
-        <dt>Collaboration</dt>
-        <dd>Only while you share a file or join one. Edits and cursors go to the other Mac directly, or through n0's relay, <code>use1-1.relay.n0.iroh.link</code>, when no direct path opens. The relay sees node ids, addresses and timing. The content is encrypted end to end.</dd>
         <dt>Link previews</dt>
         <dd>Only while Settings &gt; Editor &gt; Link previews is on, which it is not by default. When a note shows a web link, Dewline asks that site for the page's title, icon and picture, as Messages does. It asks only for links on screen, only for http and https addresses, and never for addresses on your own network. The site sees your IP address and a request like a browser's. Previews are kept for 7 days in <code>~/Library/Caches/dev.arkwerx.dewline/LinkPreviews</code>. Turning previews off deletes the saved ones.</dd>
       </dl>
@@ -124,18 +121,10 @@
         <dd><code>decisions.jsonl</code> in the snapshots folder: one line for each agent change you kept or reverted.</dd>
         <dt>Control socket</dt>
         <dd><code>~/Library/Application Support/dev.arkwerx.dewline/run/control.sock</code>, in a <code>0700</code> folder, itself <code>0600</code>. The app removes it when it quits.</dd>
-        <dt>Collaboration keys</dt>
-        <dd>Your login Keychain, service <code>dev.arkwerx.dewline.sync</code>: this Mac's node key and each share's document key. They are readable only while the Mac is unlocked and never sync to another device.</dd>
         <dt>Inbox</dt>
         <dd><code>~/Documents/Dewline/Inbox.md</code>, unless you choose another file. Every capture appends to it.</dd>
-        <dt>Shared copies</dt>
-        <dd><code>~/Documents/Dewline Shared/</code>, unless you choose another folder. A guest's copy of a shared file goes here, and a file already there is never overwritten.</dd>
       </dl>
       <p>Files that may hold secrets are never snapshotted: any <code>.jsonl</code> file (agent transcripts), <code>.claude.json</code>, and anything in a <code>file-history</code> folder. Neither are <code>.json</code> or <code>.toml</code> files in a <code>.claude</code> or <code>.codex</code> folder.</p>
-      <aside class="callout caution">
-        <p class="callout-title">Caution</p>
-        <p>The collaboration keys sit in the login Keychain, so any app you allow to read them can (<a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a>). The data-protection Keychain needs an entitlement and a provisioning profile that this build does not have yet.</p>
-      </aside>
 
       <h2 id="threats">Threats and controls</h2>
       <p>Each row names a control in the code and where it lives.</p>
@@ -153,7 +142,6 @@
             <tr><th scope="row">Another process on the control socket</th><td>The socket sits in a folder only you can enter, and both ends check that the peer runs as your user. A request is one line of at most 16 KB, sent within 2 s, with at most 16 connections. An open request must name an absolute path to an existing regular file. The one write is <code>dewline export --to pdf</code>'s: a PDF of an existing Markdown file, to the absolute <code>.pdf</code> path the command names. A hook's claim carries ids, a path and BLAKE3 hashes, never content, and can only label a change. <span class="src">(<code>ControlSocket.swift</code>, <code>cli/src/control.rs</code>)</span></td></tr>
             <tr><th scope="row">A crafted <code>dewline://</code> link</th><td>A link opens only a Markdown file, and its path goes through the jail: inside your home folder, never in <code>~/Library</code> or a <code>.ssh</code> folder. No link exports; the one link that writes is the Welcome demo's, which adds a sentence to Welcome.md in the notes folder. <span class="src">(<code>SchemeLinks.swift</code>)</span></td></tr>
             <tr><th scope="row">A tampered update</th><td>The feed and each archive are signed with EdDSA, and Sparkle checks the archive before it extracts it. Releases are signed with the ArkWerx Developer ID and notarized. Release notes render with JavaScript off. <span class="src">(<code>app/project.yml</code>, <code>Updates.swift</code>)</span></td></tr>
-            <tr><th scope="row">A stolen invite or a hostile collaborator</th><td>An invite admits one join attempt, and the host approves each one by name. Edits are sealed under the document key and signed by a member's node key; anything else is dropped. Removing someone rotates the key. A guest's Mac takes only a file name from the host, reduced to a bare name in the shared folder. <span class="src">(<code>core/crates/sync</code>, <a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a>)</span></td></tr>
             <tr><th scope="row">A writer racing your save</th><td>Saves are compare-and-swap against the bytes you last absorbed. A refused save writes your text to the file's draft snapshot, never over the newer file. <span class="src">(<code>core::file</code>, <code>core::engine</code>)</span></td></tr>
           </tbody>
         </table>

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The testing rules of interfere-inc/landmines, ported to the Swift and Rust tests: no fixed sleeps, no flake masking,
-# no wall-clock asserts. scripts/landmines.allow holds each file's exact count of the violations it had when a rule
-# came in; a file over its count fails, and so does one under it, so the list only shrinks.
+# no wall-clock asserts. A call to a function in the same file whose body sleeps, itself or through another such call,
+# counts as a sleep, so a helper such as settle() or until {} counts at each call. scripts/landmines.allow holds each
+# file's exact count of the violations it had when a rule came in; a file over its count fails, and so does one under
+# it, so the list only shrinks.
 # Usage: scripts/landmines.sh
 set -euo pipefail
 
@@ -26,6 +28,19 @@ hits=$(
         sub(/^[ \t]+/, "", text)
         printf "%s\t%s\t%d\t%s\n", rule, FILENAME, line, text
     }
+    # Each call to a function of the file that sleeps, once every sleeping function is known.
+    function helpers(   n, changed) {
+        do {
+            changed = 0
+            for (n = 1; n <= calls; n++) {
+                if ((called[n] in sleeps) && caller[n] != "" && !(caller[n] in sleeps)) { sleeps[caller[n]] = 1; changed = 1 }
+            }
+        } while (changed)
+        for (n = 1; n <= calls; n++) {
+            if (called[n] in sleeps) printf "no-fixed-sleep\t%s\t%d\t%s() sleeps: %s\n", file, at[n], called[n], said[n]
+        }
+        split("", sleeps); calls = 0
+    }
     function assertion(text, from, measured) {
         if (text !~ / (<|>|<=|>=) /) return
         measured = "elapsed|ContinuousClock|clock\\.now|Instant::now|\\.(milli|micro|nano)?seconds\\(|Duration::from_|as_(secs|millis|micros|nanos)\\("
@@ -33,6 +48,7 @@ hits=$(
         if (text ~ measured) report("no-wall-clock-asserts", from, text)
     }
     FNR == 1 {
+        helpers(); file = FILENAME; braces = 0; top = 0
         kind = (FILENAME ~ /\.(swift|rs)$/) ? "test" : "ci"
         inside = (FILENAME !~ /\.rs$/ || FILENAME ~ /\/tests\// || FILENAME ~ /\/tests\.rs$/)
         armed = 0; depth = 0; buffer = ""; timers = ""
@@ -48,8 +64,32 @@ hits=$(
     }
     $0 ~ /^[ \t]*\/\// { next }
     {
-        if ($0 ~ /Thread\.sleep|usleep\(|Task\.sleep|\.run\(until:|before: Date\(timeIntervalSinceNow|asyncAfter\(|thread::sleep|time::sleep\(|(^|[^.:A-Za-z_])sleep\(/)
+        # The function each line is in: a stack of declarations, each popped when the braces it opened close.
+        line = $0
+        opens = gsub(/\{/, "", line); closes = gsub(/\}/, "", line)
+        declared = ""
+        if (match($0, /(^|[^A-Za-z0-9_])(func|fn) [A-Za-z_][A-Za-z0-9_]*/)) {
+            declared = substr($0, RSTART, RLENGTH); sub(/^.*(func|fn) /, "", declared)
+            if (top && !opened[top] && base[top] == braces) top--
+            fns[++top] = declared; base[top] = braces; opened[top] = 0
+        }
+        if ($0 ~ /Thread\.sleep|usleep\(|Task\.sleep|\.run\(until:|before: Date\(timeIntervalSinceNow|asyncAfter\(|thread::sleep|time::sleep\(|(^|[^.:A-Za-z_])sleep\(/) {
             report("no-fixed-sleep", FNR, $0)
+            if (top) sleeps[fns[top]] = 1
+        }
+        rest = $0
+        while (match(rest, /(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*[ \t]*[({]/)) {
+            callee = substr(rest, RSTART, RLENGTH); before = substr(rest, 1, RSTART); rest = substr(rest, RSTART + RLENGTH)
+            sub(/^[^A-Za-z_]/, "", callee); sub(/[ \t]*[({]$/, "", callee)
+            if (callee == declared || (top && callee == fns[top])) continue
+            # A static function of another type, such as MainWindowController.resume, is no helper of this file.
+            if (before ~ /(^|[^A-Za-z0-9_])[A-Z][A-Za-z0-9_]*\.$/ && before !~ /(^|[^A-Za-z0-9_])Self\.$/) continue
+            calls++; called[calls] = callee; caller[calls] = top ? fns[top] : ""; at[calls] = FNR
+            said[calls] = $0; sub(/^[ \t]+/, "", said[calls])
+        }
+        braces += opens - closes
+        if (top && braces > base[top]) opened[top] = 1
+        while (top && braces <= base[top] && (opened[top] || opens)) top--
         if ($0 ~ /\.timeLimit\(|executionTimeAllowance|for (attempt|retry|tries|rerun)[A-Za-z]* in /)
             report("no-flake-masking", FNR, $0)
         if (match($0, /(let|var) (mut )?[A-Za-z_][A-Za-z0-9_]* = /) && $0 ~ /\.elapsed\(\)|\.measure \{|ContinuousClock\.now - |clock\.now - /) {
@@ -65,6 +105,7 @@ hits=$(
             if (depth < 1 || FNR - from > 20) { depth = 0; assertion(buffer, from) }
         }
     }
+    END { helpers() }
     ' $files
 )
 

@@ -4,7 +4,7 @@
 # feed signing can be rehearsed before the budgets hold. Missed budgets go to the job summary when there is one.
 # A v* tag with no result passes with a warning when perf/<version>.waived holds the owner's reason for shipping
 # unmeasured; the log and the job summary say the gate was waived and why. The budgets are perf/budgets.jq unless a
-# third argument names another file, as release.yml's perf job does with perf/ci-budgets.jq.
+# third argument names another file, as the perf jobs in release.yml and nightly.yml do with perf/ci-budgets.jq.
 # Usage: scripts/perf-gate.sh <perf/<version>.json> <tag> [budgets.jq]
 set -euo pipefail
 

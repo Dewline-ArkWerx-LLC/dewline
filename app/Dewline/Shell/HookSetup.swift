@@ -26,22 +26,21 @@ enum HookSetup {
 
     /// Names in a folder that say an agent works there.
     private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
+    /// The folders already checked, "" for the first launch's.
     private static let offeredKey = "DewlineOfferedHookSetup"
-    private static var checking = false
 
-    /// Offers Set Up on `window` once, at the first launch or when `folder` holds an agent's files, if an agent's
-    /// hooks are missing; doctor reads `folder`'s project settings too.
+    /// Offers Set Up on `window` if an agent's hooks are missing, checking once at the first launch and once for each
+    /// folder that holds an agent's files; doctor reads `folder`'s project settings too.
     static func offer(on window: NSWindow, in folder: URL? = nil) {
-        guard !UserDefaults.standard.bool(forKey: offeredKey), !checking,
-            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+        let offered = UserDefaults.standard.stringArray(forKey: offeredKey) ?? []
+        let key = folder?.path ?? ""
+        guard !offered.contains(key), ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
             folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
         else { return }
-        checking = true
+        UserDefaults.standard.set(offered + [key], forKey: offeredKey)
         Task {
             let report = await run(command(), ["doctor"], answers: 0, in: folder)
-            checking = false
-            guard report.ran, !missing(in: report.output).isEmpty, window.isVisible, !UserDefaults.standard.bool(forKey: offeredKey) else { return }
-            UserDefaults.standard.set(true, forKey: offeredKey)
+            guard report.ran, !missing(in: report.output).isEmpty, window.isVisible else { return }
             install(from: window, in: folder)
         }
     }

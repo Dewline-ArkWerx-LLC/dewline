@@ -500,7 +500,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         controller.textView?.jump(toHeading: heading)
     }
 
+    /// A new tab; with no folder here or remembered, asks for one first, as New Note does, so the note saves itself.
     override func newWindowForTab(_ sender: Any?) {
+        guard folder != nil || (NSApp.delegate as? AppDelegate)?.frontFolder() != nil else { return }
         let document = MarkdownDocument()
         NSDocumentController.shared.addDocument(document)
         addTab(document)

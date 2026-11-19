@@ -68,17 +68,18 @@ struct AgentsPane: View {
                     status(hooks.cursor ? "Installed" : nil)
                 }
                 SettingsRow(label: "") {
-                    Button("Set Up All Hooks\u{2026}") { NSApp.sendAction(Self.setUpHooks, to: nil, from: nil) }
+                    Button("Set Up All Hooks\u{2026}") { HookSetup.install(from: NSApp.keyWindow) { _ in Task { await refresh() } } }
                         .fixedSize()
                         .help(hooks.version ?? "")
                 }
             }
         }
-        .task { hooks = await Task.detached { HookStatus.read() }.value }
+        .task { await refresh() }
     }
 
-    /// Answered by HookSetup, which lists the files the hooks change before it installs them.
-    static let setUpHooks = #selector(AppDelegate.setUpHooks(_:))
+    private func refresh() async {
+        hooks = await Task.detached { HookStatus.read() }.value
+    }
 
     /// `text`, or "Not set up" in the muted ink when it is nil.
     private func status(_ text: String?) -> some View {

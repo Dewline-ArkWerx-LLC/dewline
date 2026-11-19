@@ -39,12 +39,12 @@ enum Review {
         if let origin = live.changes[change]?.origin { times[key(origin)] = Date() }
     }
 
-    /// Next Change and Previous Change: reveals the marked change after or before the caret, then the first or last
-    /// one in each of the window's other tabs in order, wrapping back to `textView`'s file.
-    static func step(from textView: EditorTextView, forward: Bool) {
+    /// Next Change and Previous Change: reveals the marked change after or before the caret, or from offset `at` on,
+    /// then the first or last one in each of the window's other tabs in order, wrapping back to `textView`'s file.
+    static func step(from textView: EditorTextView, forward: Bool, at start: Int? = nil) {
         guard let live = textView.marks.live else { return }
         let files = files(in: textView.window)
-        let caret = textView.selectedRange().location
+        let caret = start.map { $0 - 1 } ?? textView.selectedRange().location
         func marked(_ file: LiveFile) -> [UInt64] {
             file.changes.filter(\.value.marked).sorted { $0.value.range.location < $1.value.range.location }.map(\.key)
         }
@@ -115,7 +115,12 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
     private(set) var rows: [Row] = []
     private weak var source: NSWindow?
     private let table = NSTableView()
-    private let empty = NSTextField(labelWithString: "Nothing to review.")
+    private let empty = NSTextField(wrappingLabelWithString: """
+        Nothing to review.
+
+        When Claude Code, Codex or git changes a note in this folder, the change shows here and in the note, waiting \
+        for Keep or Revert.
+        """)
     private var reloading = false
     private var flags: Any?
     private(set) var optionDown = false
@@ -159,7 +164,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            empty.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            empty.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             empty.centerYAnchor.constraint(equalTo: root.centerYAnchor),
         ])
         view = root
@@ -282,8 +288,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
     }
 
-    /// The change's whole line, trimmed, with the changed words in bold; a change that only removed text shows the
-    /// line with the removed words struck.
+    /// The change's whole line, trimmed, with the changed words in bold after the words they replaced, struck; a change
+    /// that only removed text shows the line with the removed words struck.
     static func line(of id: UInt64, in live: LiveFile, text: NSString?) -> NSAttributedString {
         let store = ThemeStore.shared
         let regular: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: store.color(.ink)]
@@ -295,13 +301,15 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
         let shown = NSMutableAttributedString(string: text.substring(with: line), attributes: regular)
         let local = NSIntersectionRange(NSRange(location: range.location - line.location, length: range.length), NSRange(location: 0, length: shown.length))
-        if local.length > 0 {
-            shown.addAttribute(.font, value: NSFont.systemFont(ofSize: 13, weight: .semibold), range: local)
-        } else if change.conflict || !change.removed.isEmpty {
-            let removed = (change.conflict ? change.theirs : change.removed).split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-            shown.insert(NSAttributedString(string: removed, attributes: regular.merging([
+        if local.length > 0 { shown.addAttribute(.font, value: NSFont.systemFont(ofSize: 13, weight: .semibold), range: local) }
+        // A conflict's other version is no removal once the change holds text.
+        let removed = change.conflict ? (local.length > 0 ? "" : change.theirs) : change.removed
+        if let first = removed.split(whereSeparator: \.isNewline).first {
+            let struck = NSMutableAttributedString(string: String(first), attributes: regular.merging([
                 .strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: store.color(.ink2),
-            ]) { $1 }), at: min(max(range.location - line.location, 0), shown.length))
+            ]) { $1 })
+            if local.length > 0 { struck.append(NSAttributedString(string: " ", attributes: regular)) }
+            shown.insert(struck, at: min(max(range.location - line.location, 0), shown.length))
         }
         let trimmed = shown.string
         let lead = trimmed.prefix { $0.isWhitespace }.utf16.count

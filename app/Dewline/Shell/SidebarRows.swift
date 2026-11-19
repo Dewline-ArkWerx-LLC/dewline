@@ -108,8 +108,8 @@ final class SidebarHeader: NSView {
     }
 }
 
-/// "tidepool main ⌄": the folder's name in 11 semibold, its branch in SF Mono 11, a chevron in `ink3`, on a 22 pt pill
-/// that fills on hover. Text sits 6 pt in, in `ink2` whether or not the window is key, so it holds 4.5:1.
+/// "tidepool main ⌄": the folder's name in 13 semibold `ink`, its branch in SF Mono 12 `ink2`, a chevron in `ink3`, on a
+/// 22 pt pill that fills on hover. Text sits 6 pt in, in the same inks whether or not the window is key.
 final class FolderPicker: NSView {
     var folderMenu: () -> NSMenu = { NSMenu() }
     private var name = ""
@@ -118,8 +118,8 @@ final class FolderPicker: NSView {
         didSet { needsDisplay = true }
     }
 
-    private static let nameFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-    private static let branchFont = Chrome.mono(11)
+    private static let nameFont = Chrome.labelStrong
+    private static let branchFont = Chrome.mono(12)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -166,7 +166,8 @@ final class FolderPicker: NSView {
         let text = Chrome.color(.ink2).resolved(for: appearance)
         var x: CGFloat = 6
         let nameSize = (name as NSString).size(withAttributes: [.font: Self.nameFont])
-        (name as NSString).draw(at: NSPoint(x: x, y: (bounds.height - nameSize.height) / 2), withAttributes: [.font: Self.nameFont, .foregroundColor: text])
+        (name as NSString).draw(at: NSPoint(x: x, y: (bounds.height - nameSize.height) / 2),
+            withAttributes: [.font: Self.nameFont, .foregroundColor: Chrome.color(.ink).resolved(for: appearance)])
         x += nameWidth
         if let branch {
             let size = (branch as NSString).size(withAttributes: [.font: Self.branchFont])
@@ -208,7 +209,7 @@ final class FolderPicker: NSView {
 }
 
 /// A sidebar row: a 22 pt pill in its 24 pt pitch, 8 pt in from each side, and under it the indent guides: 1 pt, ink at
-/// 10% (30% under Increase Contrast), one per enclosing folder. The selected row's pill carries the 2 x 12 cursor bar while its window is main.
+/// 10% (30% under Increase Contrast), one per enclosing folder.
 final class SidebarRowView: StationRowView {
     var guides: [CGFloat] = [] {
         didSet { if guides != oldValue { needsDisplay = true } }
@@ -222,13 +223,6 @@ final class SidebarRowView: StationRowView {
         for x in guides {
             NSRect(x: x, y: bounds.minY, width: 1, height: bounds.height).fill()
         }
-    }
-
-    override func drawSelection(in dirtyRect: NSRect) {
-        super.drawSelection(in: dirtyRect)
-        guard isWindowActive else { return }
-        Chrome.color(.cursor).resolved(for: effectiveAppearance).setFill()
-        NSBezierPath(roundedRect: NSRect(x: pill.minX + 3, y: pill.midY - 6, width: 2, height: 12), xRadius: 1, yRadius: 1).fill()
     }
 }
 
@@ -268,7 +262,7 @@ final class SidebarFileCell: NSTableCellView {
     }
 
     /// A file or folder; one that has `gone` from disk, one .gitignore hides, and any file Dewline doesn't edit show
-    /// dimmed. `waiting` is empty for the open note, whose changes show beside its text.
+    /// dimmed.
     func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?) {
         fullName = entry.url.lastPathComponent
         dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.opens || isAgentFile(entry.url))
@@ -435,7 +429,7 @@ nonisolated func truncatedName(_ name: String, fits: (String) -> Bool) -> String
         breaks.contains(text.last ?? "x") ? String(text.dropLast()) : text
     }
     func make(_ start: String, _ tail: String) -> String {
-        start + "\u{2026}" + (tail.isEmpty && !suffix.isEmpty ? "\u{2009}" : "") + tail + suffix
+        start + "\u{2026}" + tail + suffix
     }
     for kept in stride(from: words.count - 1, through: 0, by: -1) {
         let tail = words.suffix(kept).joined()

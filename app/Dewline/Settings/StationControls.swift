@@ -425,6 +425,7 @@ struct MenuField<Value: Hashable>: NSViewRepresentable {
         view.label = label
         view.sections = sections.map { ($0.0, $0.1.map(\.0)) }
         view.selected = flat.firstIndex { $0.1 == selection }
+        view.unlisted = "\(selection)"
         view.chose = { binding.wrappedValue = flat[$0].1 }
     }
 }
@@ -439,6 +440,10 @@ final class MenuFieldView: NSView {
         didSet { changed() }
     }
     var selected: Int? {
+        didSet { changed() }
+    }
+    /// The bound value's name, drawn when it is not among the choices.
+    var unlisted = "" {
         didSet { changed() }
     }
     var chose: (Int) -> Void = { _ in }
@@ -462,7 +467,7 @@ final class MenuFieldView: NSView {
 
     private var title: String {
         let flat = sections.flatMap(\.1)
-        return selected.map { flat[$0] } ?? ""
+        return selected.map { flat[$0] } ?? unlisted
     }
 
     private func changed() {

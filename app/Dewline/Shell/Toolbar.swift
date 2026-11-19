@@ -1,13 +1,12 @@
 import AppKit
 import MdCore
 
-/// The title row, a `.unifiedCompact` toolbar: the folder's tile over the sidebar, then from the sidebar's divider the
-/// tab strip, Activity, Search and New Note. Each item is a borderless button in a plain view, so no glass capsule
-/// draws behind it. The tile and the tabs outlast the others when the window narrows. After 1.5 s of typing, everything
-/// but the selected tab fades out until the pointer or a Command chord comes back.
+/// The title row, a `.unifiedCompact` toolbar: from the sidebar's divider the tab strip, Activity, Search and New Note.
+/// Each item is a borderless button in a plain view, so no glass capsule draws behind it. The tabs outlast the others
+/// when the window narrows. After 1.5 s of typing, everything but the selected tab fades out until the pointer or a
+/// Command chord comes back.
 @MainActor
 final class WindowToolbar: NSObject, NSToolbarDelegate {
-    static let tile = NSToolbarItem.Identifier("dev.arkwerx.dewline.tile")
     static let divider = NSToolbarItem.Identifier("dev.arkwerx.dewline.divider")
     static let tabs = NSToolbarItem.Identifier("dev.arkwerx.dewline.tabs")
     static let activity = NSToolbarItem.Identifier("dev.arkwerx.dewline.activity")
@@ -18,10 +17,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     /// The tab strip; it holds at least 160 pt and takes the row's free width.
     let strip = TabStrip()
     private let split: NSSplitView
-    private let folder: Folder?
     private let activity = ActivityButton()
     private var activityItem: NSToolbarItem?
-    /// The tile, Activity, Search and New Note, which fade out while typing.
+    /// Activity, Search and New Note, which fade out while typing.
     private var fading: [NSView] = []
     /// Whether the title row has faded for typing.
     private var quiet = false
@@ -39,9 +37,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         didSet { activity.owner = window }
     }
 
-    init(split: NSSplitView, folder: Folder?) {
+    init(split: NSSplitView) {
         self.split = split
-        self.folder = folder
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
@@ -56,7 +53,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.tile, Self.divider, Self.tabs, Self.activity, Self.search, Self.newNote]
+        [Self.divider, Self.tabs, Self.activity, Self.search, Self.newNote]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -67,10 +64,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         switch identifier {
         case Self.divider:
             return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: split, dividerIndex: 0)
-        case Self.tile:
-            let item = Self.item(identifier, "Folder", fades(ToolbarControl(tileButton())), priority: .high)
-            item.isHidden = folder == nil
-            return item
         case Self.tabs:
             return Self.item(identifier, "Tabs", strip, priority: .high)
         case Self.activity:
@@ -178,29 +171,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         button.setAccessibilityLabel(label)
         return button
     }
-
-    /// The folder's first letter on a 20 pt green tile; it opens the folder menu.
-    private func tileButton() -> NSButton {
-        let name = folder.map { FileManager.default.displayName(atPath: $0.url.path) } ?? ""
-        let letter = String(name.prefix(1))
-        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
-            Chrome.color(.accent).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
-            let text = NSAttributedString(string: letter, attributes: [.font: Chrome.mono(11, weight: .semibold), .foregroundColor: Chrome.color(.paper)])
-            let size = text.size()
-            text.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
-            return true
-        }
-        let button = NSButton(image: image, target: self, action: #selector(showFolderMenu(_:)))
-        button.toolTip = "Open Folder, Open Recent"
-        button.setAccessibilityLabel(name)
-        button.setAccessibilityRole(.popUpButton)
-        return button
-    }
-
-    @objc private func showFolderMenu(_ sender: NSButton) {
-        FolderMenu.menu(for: folder).popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
-    }
 }
 
 /// A title-row control: a borderless button in a plain view, filled with the hover ink at radius 6 under the pointer.
@@ -255,8 +225,8 @@ final class ToolbarControl: NSView {
     }
 }
 
-/// Activity: each writer with changes waiting in the window's notes, as its rule, name and count, then "waiting". It
-/// opens a menu of those notes. A note changed while closed counts once.
+/// Activity: a dot in the ink of each writer with changes waiting in the window's notes, then "3 to review". It opens a
+/// menu of those notes. A note changed while closed counts once.
 final class ActivityButton: NSButton {
     weak var owner: NSWindow? {
         didSet { update() }
@@ -321,30 +291,30 @@ final class ActivityButton: NSButton {
         width.constant = ceil(attributedTitle.size().width) + 4
         width.isActive = true
         let spoken = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")
-        setAccessibilityLabel("Changes waiting: \(spoken)")
-        toolTip = "Changes waiting (\u{21E7}\u{2318}R)"
+        setAccessibilityLabel("Changes to review: \(spoken)")
+        toolTip = "Review Changes (\u{21E7}\u{2318}R)"
         if shows != !counts.isEmpty {
             shows = !counts.isEmpty
             shown(shows)
         }
     }
 
-    /// "▍Claude 1  ▍Codex 3  waiting ⌄": a 3 x 12 rule in each writer's ink, the name in 13 medium, the count in SF Mono.
+    /// "● ● 4 to review ⌄": a 7 pt dot in each writer's ink, then the total in 13 medium with monospaced digits.
     private static func title(_ counts: [(writer: MarkWriter, count: Int)]) -> NSAttributedString {
         let title = NSMutableAttributedString()
-        let ink: [NSAttributedString.Key: Any] = [.font: Chrome.labelActive, .foregroundColor: Chrome.color(.ink)]
-        for (writer, count) in counts {
+        for (writer, _) in counts {
             let color = writer.color
-            let rule = NSImage(size: NSSize(width: 3, height: 12), flipped: false) { rect in
+            let dot = NSImage(size: NSSize(width: 7, height: 7), flipped: false) { rect in
                 color.setFill()
-                NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+                NSBezierPath(ovalIn: rect).fill()
                 return true
             }
-            title.append(attachment(rule, size: rule.size))
-            title.append(NSAttributedString(string: " \(writer.name) ", attributes: ink))
-            title.append(NSAttributedString(string: "\(count)   ", attributes: [.font: Chrome.mono(13, weight: .medium), .foregroundColor: Chrome.color(.ink)]))
+            title.append(attachment(dot, size: dot.size))
+            title.append(NSAttributedString(string: " "))
         }
-        title.append(NSAttributedString(string: "waiting ", attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink2)]))
+        let total = counts.reduce(0) { $0 + $1.count }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        title.append(NSAttributedString(string: "\(total) to review ", attributes: [.font: font, .foregroundColor: Chrome.color(.ink)]))
         if let chevron = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold).applying(.init(paletteColors: [Chrome.color(.ink3)])))
         {
@@ -399,48 +369,5 @@ final class ActivityButton: NSButton {
         item.attributedTitle = title
         item.representedObject = url
         return item
-    }
-}
-
-/// The folder menu, from the title row's tile and the sidebar's header: Open Folder, Open Recent, Copy Branch Name and
-/// Reveal in Finder.
-@MainActor
-final class FolderMenu: NSObject {
-    static func menu(for folder: Folder?) -> NSMenu {
-        let menu = NSMenu()
-        let open = menu.addItem(withTitle: "Open Folder\u{2026}", action: #selector(AppDelegate.openFolder(_:)), keyEquivalent: "o")
-        open.keyEquivalentModifierMask = [.command, .option]
-        let recent = NSMenu()
-        for visit in Library.recentFolders where visit.url.path != folder?.url.path {
-            let item = recent.addItem(withTitle: FileManager.default.displayName(atPath: visit.url.path), action: #selector(openRecent(_:)), keyEquivalent: "")
-            item.target = FolderMenu.self
-            item.representedObject = visit.url
-            item.toolTip = abbreviatedPath(visit.url)
-        }
-        menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = recent
-        guard let folder else { return menu }
-        menu.addItem(.separator())
-        if let branch = gitBranch(at: folder.url) {
-            let copy = menu.addItem(withTitle: "Copy Branch Name", action: #selector(copyBranch(_:)), keyEquivalent: "")
-            copy.target = FolderMenu.self
-            copy.representedObject = branch
-        }
-        let reveal = menu.addItem(withTitle: "Reveal in Finder", action: #selector(reveal(_:)), keyEquivalent: "")
-        reveal.target = FolderMenu.self
-        reveal.representedObject = folder.url
-        return menu
-    }
-
-    @objc private static func openRecent(_ sender: NSMenuItem) {
-        (NSApp.delegate as? AppDelegate)?.openFolder(at: sender.representedObject as! URL)
-    }
-
-    @objc private static func copyBranch(_ sender: NSMenuItem) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(sender.representedObject as! String, forType: .string)
-    }
-
-    @objc private static func reveal(_ sender: NSMenuItem) {
-        NSWorkspace.shared.activateFileViewerSelecting([sender.representedObject as! URL])
     }
 }

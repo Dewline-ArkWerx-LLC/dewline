@@ -62,7 +62,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
-        case .editor: "character.cursor.ibeam"
+        case .editor: "text.cursor"
         case .appearance: "paintpalette"
         case .agents: "terminal"
         #if COLLAB

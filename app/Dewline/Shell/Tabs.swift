@@ -110,7 +110,9 @@ final class WindowState {
 /// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
 /// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
-/// window is key. A tab's tooltip says when its note was saved and how many words it has.
+/// window is key. A tab whose note has changes waiting carries a 3 x 10 rule in the ink of the writer with the most of
+/// them after its name. A tab's tooltip says when its note was saved and how many words it has; its context menu
+/// renames or moves the note.
 final class TabStrip: NSView {
     private static let height: CGFloat = 26
     private static let padding: CGFloat = 16
@@ -157,7 +159,9 @@ final class TabStrip: NSView {
         setAccessibilityRole(.tabGroup)
         setAccessibilityLabel("Tabs")
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect], owner: self))
-        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: ThemeStore.didChange, object: nil)
+        for name in [ThemeStore.didChange, LiveFile.changesDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(reload), name: name, object: nil)
+        }
         // A full-screen title row sits in a window of its own, so the strip hears every window's key state.
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: nil)
@@ -205,8 +209,23 @@ final class TabStrip: NSView {
         tab.window?.isDocumentEdited == true
     }
 
+    /// The writer with the most changes waiting in the tab's note.
+    private static func waiting(_ tab: MainWindowController) -> MarkWriter? {
+        var counts: [String: (writer: MarkWriter, count: Int)] = [:]
+        for change in (tab.document as? MarkdownDocument)?.live?.changes.values.filter(\.marked) ?? [] {
+            let writer = MarkWriter(change.origin)
+            counts[writer.name, default: (writer, 0)].count += 1
+        }
+        return counts.values.max { $0.count < $1.count }?.writer
+    }
+
+    /// Room after the name for the writer rule and the edited dot.
+    private static func trailing(_ tab: MainWindowController) -> CGFloat {
+        (waiting(tab) == nil ? 0 : 9) + (edited(tab) ? 8 : 0)
+    }
+
     private static func width(_ tab: MainWindowController) -> CGFloat {
-        min(ceil(name(tab).size().width) + padding * 2 + (edited(tab) ? 8 : 0), widest)
+        min(ceil(name(tab).size().width) + padding * 2 + trailing(tab), widest)
     }
 
     private static func moreWidth(_ count: Int) -> CGFloat {
@@ -330,10 +349,14 @@ final class TabStrip: NSView {
         }
         let edited = Self.edited(slot.tab)
         let height = ceil(name.size().height)
-        let room = frame.width - Self.padding * 2 - (edited ? 8 : 0)
+        let room = frame.width - Self.padding * 2 - Self.trailing(slot.tab)
         name.draw(
             with: NSRect(x: frame.minX + Self.padding, y: frame.midY - height / 2, width: max(room, 0), height: height),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if let writer = Self.waiting(slot.tab) {
+            writer.color.setFill()
+            NSBezierPath(roundedRect: NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 5, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+        }
         if edited {
             Chrome.color(.ink2).setFill()
             NSBezierPath(ovalIn: NSRect(x: frame.maxX - Self.padding - 4, y: frame.midY - 3, width: 6, height: 6)).fill()
@@ -341,6 +364,15 @@ final class TabStrip: NSView {
     }
 
     // MARK: Pointer
+
+    /// Rename and Move To for the tab's note, as the File menu has them.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let document = slot(at: convert(event.locationInWindow, from: nil))?.tab.document as? NSDocument else { return nil }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Rename\u{2026}", action: #selector(NSDocument.rename(_:)), keyEquivalent: "").target = document
+        menu.addItem(withTitle: "Move To\u{2026}", action: #selector(NSDocument.move(_:)), keyEquivalent: "").target = document
+        return menu
+    }
 
     private func slot(at point: NSPoint) -> Slot? {
         slots.first { $0.frame.contains(point) }
@@ -419,7 +451,7 @@ final class TabStrip: NSView {
         let all = tabs?.tabs ?? []
         elements = slots.filter { othersAlpha > 0 || $0.tab === tabs?.selected }.flatMap { slot -> [NSAccessibilityElement] in
             let index = (all.firstIndex { $0 === slot.tab } ?? 0) + 1
-            let state = slot.tab.savedState.map { ", " + $0 } ?? ""
+            let state = (Self.waiting(slot.tab).map { ", \($0.name) changes waiting" } ?? "") + (slot.tab.savedState.map { ", " + $0 } ?? "")
             let tab = TabElement(slot.tab) { $0.showWindow(nil) }
             tab.setAccessibilityRole(.radioButton)
             tab.setAccessibilityLabel("\(slot.tab.tabFileName), tab \(index) of \(all.count)\(state)")

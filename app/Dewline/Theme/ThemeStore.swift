@@ -125,15 +125,18 @@ final class ThemeStore {
         return color
     }
 
-    /// The writer's ink: Claude's, Codex's, git's (its modified word), ink2 for you, your other Mac and collaborators,
-    /// and the other-app ink for everyone else.
+    /// The writer's ink: each named agent's, git's (its modified word), ink2 for you, your other Mac and collaborators,
+    /// and the other-app gray for everyone else.
     func writerColor(_ writer: Writer) -> NSColor {
         let token: Token = switch writer {
         case .claude: .writerClaude
         case .codex: .writerCodex
+        case .cursor: .writerCursor
+        case .gemini: .writerGemini
+        case .copilot: .writerCopilot
         case .git: .gitModified
         case .you, .otherMac, .collaborator: .ink2
-        case .cursor, .copilot, .gemini, .unknown, .demo: .writerApp
+        case .unknown, .demo: .writerApp
         }
         return color(token)
     }

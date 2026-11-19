@@ -94,14 +94,18 @@ extension OKLCH {
 enum Brand {
     /// Green, #107460 and #7BC5B2: structure and the system accent.
     static let accent = (light: OKLCH(l: 0.5009, c: 0.0907, h: 174.5), dark: OKLCH(l: 0.7694, c: 0.0793, h: 176.0))
-    /// Orange from the icon's cursor, #C9482A and #FF8A5C: the caret and the 2 x 12 pt bar beside it. Writers' inks,
-    /// #A8509F / #EBBCE8 for Claude, #3D4AB0 / #95A0F6 for Codex, #296B8D / #81B9DA for any other app. Git's words,
+    /// Orange from the icon's cursor, #C9482A and #FF8A5C: the caret and the 2 x 12 pt bar beside it. Writers' inks:
+    /// magenta for Claude, violet for Codex, cyan for Cursor, blue for Gemini, olive for Copilot, and a near-neutral
+    /// gray for any other app, so an unknown writer reads as unknown. Git's words,
     /// #7D550B / #BFA067 for modified (also git's ink as a writer), #22603B / #79C796 for new.
     static let marks: [Token: (light: OKLCH, dark: OKLCH)] = [
         .cursor: (OKLCH(l: 0.5753, c: 0.1700, h: 34.4), OKLCH(l: 0.7533, c: 0.1546, h: 41.6)),
         .writerClaude: (OKLCH(l: 0.5686, c: 0.1521, h: 331.4), OKLCH(l: 0.8502, c: 0.0788, h: 328.3)),
         .writerCodex: (OKLCH(l: 0.4595, c: 0.1615, h: 272.8), OKLCH(l: 0.7318, c: 0.1250, h: 277.3)),
-        .writerApp: (OKLCH(l: 0.5013, c: 0.0852, h: 234.7), OKLCH(l: 0.7590, c: 0.0752, h: 235.0)),
+        .writerCursor: (OKLCH(l: 0.5200, c: 0.0900, h: 205.0), OKLCH(l: 0.7800, c: 0.0900, h: 205.0)),
+        .writerGemini: (OKLCH(l: 0.5000, c: 0.1200, h: 245.0), OKLCH(l: 0.7600, c: 0.1000, h: 245.0)),
+        .writerCopilot: (OKLCH(l: 0.5200, c: 0.1000, h: 115.0), OKLCH(l: 0.7800, c: 0.1000, h: 115.0)),
+        .writerApp: (OKLCH(l: 0.5200, c: 0.0200, h: 250.0), OKLCH(l: 0.7600, c: 0.0200, h: 250.0)),
         .gitModified: (OKLCH(l: 0.4813, c: 0.0969, h: 75.7), OKLCH(l: 0.7207, c: 0.0833, h: 82.0)),
         .gitAdded: (OKLCH(l: 0.4384, c: 0.0884, h: 154.1), OKLCH(l: 0.7658, c: 0.1052, h: 155.4)),
     ]
@@ -120,11 +124,11 @@ enum Token: String, CaseIterable, Sendable {
     /// of the way from ink2 to the paper.
     case frame, islandEditor, islandSide, raised, sunken, keycap, hairline, ink3, signal, glow
     /// The cursor bar, writers' inks and git's words, from `Brand.marks` unless the theme authors them.
-    case cursor, writerClaude, writerCodex, writerApp, gitModified, gitAdded
+    case cursor, writerClaude, writerCodex, writerCursor, writerGemini, writerCopilot, writerApp, gitModified, gitAdded
 
     static let code: [Token] = [.codeKeyword, .codeString, .codeNumber, .codeType, .codeFunction, .codeComment, .codeTag, .codeInserted, .codeDeleted]
     static let station: [Token] = [.chrome, .rule, .frame, .islandEditor, .islandSide, .raised, .sunken, .keycap, .hairline, .ink3, .signal, .glow]
-    static let marks: [Token] = [.cursor, .writerClaude, .writerCodex, .writerApp, .gitModified, .gitAdded]
+    static let marks: [Token] = [.cursor, .writerClaude, .writerCodex, .writerCursor, .writerGemini, .writerCopilot, .writerApp, .gitModified, .gitAdded]
     static let required = allCases.filter { !code.contains($0) && !station.contains($0) && !marks.contains($0) }
 
     /// The name in words: "code keyword", "ink 2".

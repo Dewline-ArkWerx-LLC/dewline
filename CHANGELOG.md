@@ -2,10 +2,19 @@
 
 What changed in each Dewline release, newest first.
 
-## Unreleased
+## 0.5.0 (19 Nov 2026)
 
-- Dewline offers to install agent hooks once for each folder holding `.claude`, `.cursor`, `.codex`, `CLAUDE.md` or `AGENTS.md`. In 0.4.0 the first offer was the only one, so a later agent folder was never offered.
-- README and the site state iCloud and iPhone behavior as designed: the device test in `docs/sync.md` has not been run.
+First launch shows one sheet, and a note ignored by git no longer opens unmarked after an agent writes to it.
+
+- First launch offers to install agent hooks and no longer stacks the default-app sheet on Welcome; Settings > General still sets the default app. (#181)
+- Dewline offers to install agent hooks once for each folder holding `.claude`, `.cursor`, `.codex`, `CLAUDE.md` or `AGENTS.md`. In 0.4.0 the first offer was the only one, so a later agent folder was never offered. (#181)
+- Settings > Agents shows hooks as set up right after Set Up finishes. (#181)
+- Command-T in a window with no folder asks for one, like Command-N; Cancel opens no tab. (#181)
+- An agent write to a note that `.gitignore` ignores, such as `CLAUDE.local.md`, is marked again. This corrects 0.4.0, which skipped ignored notes. The scan lists tracked notes first, then ignored ones, newest first, within the 10,000-note cap. (#183)
+- A scan of closed notes also covers `.mdx` and `.qmd` files and the `.agents`, `.codex`, `.kiro`, `.ruler`, `.specify` and `.windsurf` folders. (#183)
+- Marks are kept on every landing of an outside change, including one that lands into unsaved typing or mid-conflict. (#183)
+- A save that waits more than 5 seconds on another app, such as a sync client, fails and retries, so quitting no longer hangs behind it. (#183)
+- README and the site state iCloud and iPhone behavior as designed: the device test in `docs/sync.md` has not been run. The README no longer quotes the 0.1.0 performance run. (#182)
 
 ## 0.4.0 (19 Nov 2026)
 

@@ -1,13 +1,14 @@
 //! `dewline export`: HTML and DOCX here, through core's exporters; the other formats through the app, which owns the
 //! layout, the theme and the diagram and math renderers.
 
-use std::fs;
 use std::path::{self, Path};
+use std::{env, fs};
 
 use clap::ValueEnum;
 use dewline_core::export::{self, ExportOptions};
+use dewline_core::highlight::Syntaxes;
 
-use crate::control::Socket;
+use crate::control::{Socket, enclosing_app};
 
 /// Each named by its extension, as the app names it on the socket.
 #[derive(Clone, Copy, ValueEnum)]
@@ -58,6 +59,22 @@ th, td { border: 1px solid rgba(127, 127, 127, 0.4); padding: 0.3em 0.6em; }
 img { max-width: 100%; }
 ";
 
+/// The file's text without a byte order mark, which the app drops on open too.
+fn read(source: &Path) -> Result<String, String> {
+    let text =
+        fs::read_to_string(source).map_err(|error| format!("{}: {error}", source.display()))?;
+    Ok(match text.strip_prefix('\u{feff}') {
+        Some(text) => text.to_owned(),
+        None => text,
+    })
+}
+
+/// The syntaxes of the app this command ships in, for coloring fenced code as File > Export does.
+fn syntaxes() -> Option<Syntaxes> {
+    let exe = env::current_exe().and_then(fs::canonicalize).ok()?;
+    Syntaxes::load(&enclosing_app(&exe)?.join("Contents/Resources/Syntaxes.packdump"))
+}
+
 pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String> {
     let source = fs::canonicalize(file).map_err(|error| format!("{}: {error}", file.display()))?;
     let out = match out {
@@ -72,8 +89,8 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
     }
     match format {
         Format::Html => {
-            let text = fs::read_to_string(&source)
-                .map_err(|error| format!("{}: {error}", source.display()))?;
+            let text = read(&source)?;
+            let syntaxes = syntaxes();
             let title = source.file_stem().unwrap_or_default().to_string_lossy();
             let page = export::html(
                 &text,
@@ -82,15 +99,14 @@ pub fn run(file: &Path, format: Format, out: Option<&Path>) -> Result<(), String
                     css: CSS,
                     diagram: &|_| None,
                     math: &|_, _| None,
-                    code: &|_, _| None,
+                    code: &|language, code| syntaxes.as_ref()?.html(language, code),
                     folder: source.parent(),
                 },
             );
             fs::write(&out, page).map_err(|error| format!("{}: {error}", out.display()))
         }
         Format::Docx => {
-            let text = fs::read_to_string(&source)
-                .map_err(|error| format!("{}: {error}", source.display()))?;
+            let text = read(&source)?;
             let folder = source.parent().unwrap_or(Path::new("/"));
             let bytes = export::docx::docx(&text, folder)
                 .map_err(|error| format!("{}: {error}", source.display()))?;
@@ -120,12 +136,16 @@ mod tests {
     fn html_lands_beside_the_file_with_its_images_inlined() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("launch plan.md");
-        fs::write(&file, "# Plan\n\n![dot](dot.png) <script>x</script>\n").unwrap();
+        fs::write(
+            &file,
+            "\u{feff}# Plan\n\n![dot](dot.png) <script>x</script>\n",
+        )
+        .unwrap();
         fs::write(dir.path().join("dot.png"), b"\x89PNG\r\n\x1a\nrest").unwrap();
         run(&file, Format::Html, None).unwrap();
         let page = fs::read_to_string(dir.path().join("launch plan.html")).unwrap();
         assert!(page.contains("<title>launch plan</title>"));
-        assert!(page.contains("<h1>Plan</h1>"));
+        assert!(page.contains("<h1 id=\"plan\">Plan</h1>"));
         assert!(page.contains("data:image/png;base64,"));
         assert!(!page.contains("<script>"));
         let out = dir.path().join("out/page.html");

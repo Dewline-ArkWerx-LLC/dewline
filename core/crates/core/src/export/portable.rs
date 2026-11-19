@@ -7,7 +7,7 @@ use std::fs;
 use std::ops::Range;
 use std::path::Path;
 
-use super::{files_folder, read_image};
+use super::{encode, files_folder, read_image, slug};
 use crate::md::{self, TokenKind};
 
 /// How many folder entries a wikilink's search reads at most.
@@ -206,32 +206,6 @@ fn find(folder: &Path, prefix: &str, stem: &str, entries: &mut usize) -> Option<
         }
     }
     best
-}
-
-/// A heading's anchor as GitHub writes it: lowercase, letters, digits, `-` and `_` kept, spaces as `-`.
-fn slug(heading: &str) -> String {
-    heading
-        .to_lowercase()
-        .chars()
-        .filter_map(|c| match c {
-            ' ' => Some('-'),
-            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
-            _ => None,
-        })
-        .collect()
-}
-
-/// `path` with every byte but ASCII letters, digits and `-._~/` percent-encoded.
-fn encode(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    for &byte in path.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 /// The byte offset in `text` of each UTF-16 offset in `points`.

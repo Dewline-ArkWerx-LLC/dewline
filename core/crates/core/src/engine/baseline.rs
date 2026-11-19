@@ -19,8 +19,12 @@ use super::{
 use crate::store::{self, Seen};
 use crate::{merge, text};
 
-/// The extensions of the files whose last seen version the engine keeps.
-const MARKDOWN: [&str; 4] = ["md", "markdown", "mdown", "mkd"];
+/// The extensions of the files whose last seen version the engine keeps:
+/// Markdown, and Cursor's rules (.mdc), as the sidebar lists them.
+const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "mdc"];
+/// The hidden folders that hold what agents read, which a scan notes as the
+/// sidebar shows them.
+const AGENT_FOLDERS: [&str; 3] = [".claude", ".cursor", ".github"];
 /// A scan notes at most this many files.
 const MAX_SCAN: usize = 10_000;
 /// A scan that finds a file unchanged dates its seen version again once it
@@ -133,10 +137,11 @@ impl Engine {
 
     /// Notes that `origin` is about to write the file at `path`, which holds
     /// `before`, and that the write makes bytes whose hash is `declared`.
-    /// Unless a document has the file open, `before` goes into the store and
-    /// the write names its writer when the file opens holding `declared`. A
-    /// second write keeps the first one's `before`, and names its writer only
-    /// if it is the same writer starting from the bytes the first declared.
+    /// Unless the file is not Markdown or a document has it open, `before`
+    /// goes into the store and the write names its writer when the file opens
+    /// holding `declared`. A second write keeps the first one's `before`, and
+    /// names its writer only if it is the same writer starting from the bytes
+    /// the first declared.
     pub fn closed_write(
         &self,
         path: &Path,
@@ -145,7 +150,7 @@ impl Engine {
         declared: Hash,
     ) -> io::Result<()> {
         let real = fs::canonicalize(path)?;
-        if private(path) || private(&real) {
+        if private(path) || private(&real) || !markdown(&real) {
             return Ok(());
         }
         let hash = blake3::hash(before);
@@ -176,9 +181,9 @@ impl Engine {
     }
 
     /// Notes the Markdown files in `folder`, and in its subfolders when
-    /// `deep`, hidden ones and `node_modules` aside. A file no document has
-    /// open and no seen version yet is seen as it is; one that differs from
-    /// its seen version is in `closed_changes`.
+    /// `deep`, hidden ones other than the agent folders and `node_modules`
+    /// aside. A file no document has open and no seen version yet is seen as
+    /// it is; one that differs from its seen version is in `closed_changes`.
     pub fn scan(&self, folder: &Path, deep: bool) -> io::Result<()> {
         let mut folders = vec![fs::canonicalize(folder)?];
         let mut files = Vec::new();
@@ -192,12 +197,13 @@ impl Engine {
             first = false;
             for entry in entries.flatten() {
                 let name = entry.file_name();
-                if name.as_encoded_bytes().starts_with(b".") || name == "node_modules" {
-                    continue;
-                }
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
+                let agents = kind.is_dir() && AGENT_FOLDERS.iter().any(|folder| name == *folder);
+                if name.as_encoded_bytes().starts_with(b".") && !agents || name == "node_modules" {
+                    continue;
+                }
                 let path = entry.path();
                 if kind.is_dir() && deep {
                     folders.push(path);
@@ -863,21 +869,38 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_skips_hidden_folders_node_modules_other_files_and_open_notes() {
+    fn a_scan_notes_agent_folders_and_skips_other_hidden_ones_other_files_and_open_notes() {
         let f = fixture();
         let open = f.file("open.md", "open\n");
+        let noted = [
+            f.file(".claude/commands/x.md", "x\n"),
+            f.file(".cursor/rules/x.mdc", "x\n"),
+            f.file(".github/copilot-instructions.md", "x\n"),
+        ];
         let skipped = [
             f.file(".obsidian/x.md", "x\n"),
             f.file("node_modules/pkg/README.md", "x\n"),
             f.file("notes.txt", "x\n"),
         ];
         let engine = f.engine();
+        // A hooked write to a file that is not Markdown keeps nothing.
+        engine
+            .closed_write(&skipped[2], claude(), b"x\n", blake3::hash(b"y\n"))
+            .unwrap();
+        fs::write(&skipped[2], "y\n").unwrap();
         let opened = engine.open(&open).unwrap();
         engine
             .store
             .see(&open, b"other\n", &[], UNIX_EPOCH)
             .unwrap();
         engine.scan(&f.notes, true).unwrap();
+        for path in &noted {
+            assert!(
+                engine.store.seen(path).unwrap().is_some(),
+                "{}",
+                path.display()
+            );
+        }
         for path in &skipped {
             assert!(
                 engine.store.seen(path).unwrap().is_none(),

@@ -70,6 +70,8 @@ final class LiveFile {
     /// The engine refused the last autosave; it runs again when the refusing state ends.
     private var autosaveRefused = false
     private var applying = false
+    /// `keepMarks` waits for the main thread's current work.
+    private var keepsMarks = false
     private var closed = false
     /// Opened over a change made while the file was closed: the change lands once a text view shows it.
     private var landsWrite: Bool
@@ -92,6 +94,8 @@ final class LiveFile {
         watchGit(gitdir)
         arm()
         reloadSnapshots()
+        // Opening took the file off the list of files changed while closed.
+        ClosedChanges.refresh()
         // Before any save, which runs on the same queue.
         queue.async { [weak self] in
             let draft = try? engine.draft(doc)
@@ -136,6 +140,19 @@ final class LiveFile {
     static func keepAllMarks() {
         for live in open.values {
             live.queue.sync(execute: live.keepingMarks())
+        }
+    }
+
+    /// Keeps the undecided changes with the engine once the current main-thread work ends, so a crash or force quit
+    /// leaves them marked the next time the file opens. Only a buffer that is the file keeps them; a save that follows
+    /// an edit keeps them again.
+    private func keepMarks() {
+        guard !keepsMarks else { return }
+        keepsMarks = true
+        Task { [weak self] in
+            guard let self, !self.closed else { return }
+            keepsMarks = false
+            queue.async(execute: keepingMarks())
         }
     }
 
@@ -215,6 +232,8 @@ final class LiveFile {
             let updates = engine.claim(
                 event: event, vendor: claim.vendor.rawValue, session: claim.session, toolUseId: use?.id,
                 tool: use?.tool.rawValue, path: path, hash: use?.hash, declared: use?.declared)
+            // The tool has written: a file it wrote while closed is listed.
+            if case .postToolUse = claim.event { Task { @MainActor in ClosedChanges.refresh() } }
             let finished = claim.event == .turnEnd
             guard !updates.isEmpty || finished else { return }
             Task { @MainActor in
@@ -286,7 +305,6 @@ final class LiveFile {
         else { return }
         do throws(ChangeEngine.Failure) {
             try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: before, declared: declared)
-            Task { @MainActor in NotificationCenter.default.post(name: changesDidChange, object: nil) }
         } catch {
             log.error("A closed file's write was not kept: \(String(describing: error), privacy: .public)")
         }
@@ -541,7 +559,7 @@ final class LiveFile {
         }
         reloadSnapshots()
 
-        if !landing.clean { scheduleAutosave() }
+        if landing.clean { keepMarks() } else { scheduleAutosave() }
     }
 
     // MARK: Edits and saves
@@ -576,7 +594,12 @@ final class LiveFile {
             return
         }
         changes[change] = nil
-        if let replacement { textView.replaceAsOneEdit(pending.range, with: replacement, named: Self.name(decision, pending)) }
+        // A decision that edits the text is kept by the save that follows.
+        if let replacement {
+            textView.replaceAsOneEdit(pending.range, with: replacement, named: Self.name(decision, pending))
+        } else {
+            keepMarks()
+        }
         if pending.conflict, !changes.values.contains(where: \.conflict), autosaveRefused {
             Task { await autosave() }
         }
@@ -792,14 +815,22 @@ final class LiveFile {
         guard !closed, let document, let textView = document.textView else { return .closed }
         let (buffer, version) = (textView.string, textView.version)
         let token = document.changeCountToken(for: .saveOperation)
-        let (engine, doc) = (engine, doc)
+        let (engine, doc, url) = (engine, doc, url)
+        // Coordinated, so a sync client finishes with the file first and takes the save as one change.
         let result = await offMain { () -> Result<Data, ChangeEngine.Refusal> in
-            Result { () throws(ChangeEngine.Refusal) in try engine.save(doc, buffer: buffer, version: version, kind: kind) }
+            do {
+                return try document.coordinatedWrite(at: url) { _ in
+                    Result { () throws(ChangeEngine.Refusal) in try engine.save(doc, buffer: buffer, version: version, kind: kind) }
+                }
+            } catch {
+                return .failure(.io(error.localizedDescription))
+            }
         }
         switch result {
         case .success:
             document.saved(token: token)
             reloadSnapshots()
+            if changes.values.contains(where: \.marked) { keepMarks() }
             return nil
         case .failure(let refusal):
             return refusal

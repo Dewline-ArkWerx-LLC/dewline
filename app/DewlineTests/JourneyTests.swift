@@ -429,6 +429,7 @@ struct JourneyTests {
 
         // The Changes tab lists the whole lines, each with its changed words in bold.
         Self.claim(.turnEnd, vault.engine)
+        try await Self.until { ClosedChanges.all.count == 2 }
         let review = ReviewViewController(for: tab.window)
         _ = review.view
         // Four changed lines under plan.md, then the two notes changed while closed.
@@ -488,6 +489,7 @@ struct JourneyTests {
         #expect(closed.marked.first?.change.origin == claude)
         #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New")
         #expect(!closed.document.isDocumentEdited)
+        try await Self.until { ClosedChanges.all.count == 1 }
         #expect(ClosedChanges.all.map { Self.realpath($0.url) } == [Self.realpath(vault.url("b.md"))])
         closed.textView.revertChange(nil)
         #expect(closed.textView.string == "# A\n\nOld a.\n")

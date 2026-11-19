@@ -413,17 +413,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             as? MainWindowController
     }
 
-    /// The front window's folder, else the notes folder.
-    private var frontFolder: URL {
-        front?.folder?.url ?? FileActions.notesFolder
+    /// The front window's folder, else the notes folder once it exists, else a folder the user picks; nil when they
+    /// cancel, so no folder is made unasked.
+    private func frontFolder() -> URL? {
+        if let url = front?.folder?.url { return url }
+        let notes = FileActions.notesFolder
+        if FileManager.default.fileExists(atPath: notes.path) { return notes }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.message = "Choose a folder for your notes."
+        panel.prompt = "Choose"
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
-    /// File > New Note: "Untitled.md" in `frontFolder`, open with the caret ready.
+    /// File > New Note: "Untitled.md" in `frontFolder()`, open with the caret ready.
     /// Its first line names it once it saves.
     @objc func newNote(_ sender: Any?) {
+        guard let folder = frontFolder() else { return }
         do {
-            let url = try FileActions.newNote(in: frontFolder)
-            let controller = front?.folder != nil ? front : openFolder(at: FileActions.notesFolder)?.windowController as? MainWindowController
+            let url = try FileActions.newNote(in: folder)
+            let controller = front?.folder != nil ? front : openFolder(at: folder)?.windowController as? MainWindowController
             guard let controller else { return }
             controller.open(url, newTab: true)
             if let document = NSDocumentController.shared.document(for: url) as? MarkdownDocument {
@@ -441,8 +452,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File > New Folder, in the front window's folder or the notes folder.
     @objc func newFolder(_ sender: Any?) {
+        guard let folder = frontFolder() else { return }
         do {
-            let url = try FileActions.newFolder(in: frontFolder, undo: front?.window?.undoManager)
+            let url = try FileActions.newFolder(in: folder, undo: front?.window?.undoManager)
             front?.sidebar.renameNew(url)
         } catch {
             NSApp.presentError(error)
@@ -451,7 +463,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File > New Window: another window on the front window's folder, or on the notes folder.
     @objc func newWindow(_ sender: Any?) {
-        let folder = Folder(frontFolder)
+        guard let url = frontFolder() else { return }
+        let folder = Folder(url)
         Library.noteOpened(folder.url, folder: true)
         MainWindowController(folder: folder).showWindow(nil)
     }

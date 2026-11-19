@@ -21,12 +21,22 @@ use crate::store::{self, Seen};
 use crate::{merge, text};
 
 /// The extensions of the files whose last seen version the engine keeps:
-/// Markdown, and Cursor's rules (.mdc), as the sidebar lists them.
-const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "mdc"];
-/// The hidden folders that hold what agents read, which a scan notes as the
-/// sidebar shows them.
-const AGENT_FOLDERS: [&str; 3] = [".claude", ".cursor", ".github"];
-/// A scan notes at most this many files, the last modified first.
+/// Markdown, MDX, Quarto, and Cursor's rules (.mdc), as the sidebar lists them.
+const MARKDOWN: [&str; 7] = ["md", "markdown", "mdown", "mkd", "mdc", "mdx", "qmd"];
+/// The hidden folders that hold what agents read, which a scan notes.
+const AGENT_FOLDERS: [&str; 9] = [
+    ".agents",
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".github",
+    ".kiro",
+    ".ruler",
+    ".specify",
+    ".windsurf",
+];
+/// A scan notes at most this many files: those git tracks before those it
+/// ignores, the last modified first.
 const MAX_SCAN: usize = 10_000;
 /// A scan that finds a file unchanged dates its seen version again once it
 /// is this old, so pruning keeps it.
@@ -205,17 +215,17 @@ impl Engine {
     }
 
     /// Notes the Markdown files in `folder`, and in its subfolders when
-    /// `deep`, hidden ones other than the agent folders, `node_modules` and
-    /// what git ignores aside. A file no document has open and no seen
+    /// `deep`, hidden ones other than the agent folders and `node_modules`
+    /// aside, what git ignores last. A file no document has open and no seen
     /// version yet is seen as it is; one that differs from its seen version
     /// is in `closed_changes`.
     pub fn scan(&self, folder: &Path, deep: bool) -> io::Result<()> {
         let root = fs::canonicalize(folder)?;
         let (mut ignores, prefix) = Ignores::of(&root);
-        let mut folders = vec![root.clone()];
+        let mut folders = vec![(root.clone(), false)];
         let mut files = Vec::new();
         let mut first = true;
-        while let Some(folder) = folders.pop() {
+        while let Some((folder, inside_ignored)) = folders.pop() {
             let entries = match fs::read_dir(&folder) {
                 Ok(entries) => entries,
                 Err(error) if first => return Err(error),
@@ -243,22 +253,24 @@ impl Engine {
                 } else {
                     [&prefix, b"/".as_slice(), relative].concat()
                 };
-                if ignores.ignored(&from_top, folder) {
-                    continue;
-                }
+                let ignored = inside_ignored || ignores.ignored(&from_top, folder);
                 if folder {
-                    folders.push(path);
+                    folders.push((path, ignored));
                 } else {
                     let modified = entry.metadata().and_then(|metadata| metadata.modified());
-                    files.push((modified.unwrap_or(SystemTime::UNIX_EPOCH), path));
+                    files.push((ignored, modified.unwrap_or(SystemTime::UNIX_EPOCH), path));
                 }
             }
         }
-        files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        files.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(b.1.cmp(&a.1))
+                .then_with(|| a.2.cmp(&b.2))
+        });
         files.truncate(MAX_SCAN);
         let open: HashSet<PathBuf> = self.state().docs.values().map(|d| d.path.clone()).collect();
         let (_, wall) = (self.clock)();
-        for (_, path) in files {
+        for (_, _, path) in files {
             if open.contains(&path) {
                 continue;
             }
@@ -1023,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_notes_agent_folders_and_skips_other_hidden_ones_ignored_ones_other_files_and_open_notes()
+    fn a_scan_notes_agent_folders_and_ignored_notes_and_skips_other_hidden_ones_other_files_and_open_notes()
      {
         let f = fixture();
         let open = f.file("open.md", "open\n");
@@ -1031,20 +1043,23 @@ mod tests {
             f.file(".claude/commands/x.md", "x\n"),
             f.file(".cursor/rules/x.mdc", "x\n"),
             f.file(".github/copilot-instructions.md", "x\n"),
+            f.file(".windsurf/rules/x.md", "x\n"),
+            f.file("page.mdx", "x\n"),
+            f.file("build/x.md", "x\n"),
+            f.file("CLAUDE.local.md", "x\n"),
         ];
         let skipped = [
             f.file(".obsidian/x.md", "x\n"),
             f.file("node_modules/pkg/README.md", "x\n"),
-            f.file("build/x.md", "x\n"),
             f.file("notes.txt", "x\n"),
         ];
-        f.file(".gitignore", "build/\n");
+        f.file(".gitignore", "build/\nCLAUDE.local.md\n");
         let engine = f.engine();
         // A hooked write to a file that is not Markdown keeps nothing.
         engine
-            .closed_write(&skipped[3], claude(), b"x\n", blake3::hash(b"y\n"))
+            .closed_write(&skipped[2], claude(), b"x\n", blake3::hash(b"y\n"))
             .unwrap();
-        fs::write(&skipped[3], "y\n").unwrap();
+        fs::write(&skipped[2], "y\n").unwrap();
         let opened = engine.open(&open).unwrap();
         engine
             .store
@@ -1069,6 +1084,19 @@ mod tests {
             engine.closed_changes().is_empty(),
             "the open note is its document's"
         );
+        // A closed write to a note git ignores is listed.
+        fs::write(&noted[5], "y\n").unwrap();
+        fs::write(&noted[6], "y\n").unwrap();
+        engine.scan(&f.notes, true).unwrap();
+        let mut listed: Vec<PathBuf> = engine
+            .closed_changes()
+            .into_iter()
+            .map(|c| c.path)
+            .collect();
+        listed.sort();
+        let mut ignored = vec![noted[5].clone(), noted[6].clone()];
+        ignored.sort();
+        assert_eq!(listed, ignored);
         engine.close(opened.doc);
         engine.scan(&f.notes, false).unwrap();
         assert_eq!(engine.closed_changes()[0].path, open, "closed, it differs");

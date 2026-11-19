@@ -566,7 +566,8 @@ final class LiveFile {
         }
         reloadSnapshots()
 
-        if landing.clean { keepMarks() } else { scheduleAutosave() }
+        keepMarks()
+        if !landing.clean { scheduleAutosave() }
     }
 
     // MARK: Edits and saves
@@ -827,15 +828,19 @@ final class LiveFile {
         let (buffer, version) = (textView.string, textView.version)
         let token = document.changeCountToken(for: .saveOperation)
         let (engine, doc, url) = (engine, doc, url)
-        // Coordinated, so a sync client finishes with the file first and takes the save as one change.
+        // Coordinated, so a sync client finishes with the file first and takes the save as one change. A client that
+        // holds the file past the timeout fails the save, which retries, so quit's wait on the queue ends.
         let result = await offMain { () -> Result<Data, ChangeEngine.Refusal> in
-            do {
-                return try document.coordinatedWrite(at: url) { _ in
-                    Result { () throws(ChangeEngine.Refusal) in try engine.save(doc, buffer: buffer, version: version, kind: kind) }
-                }
-            } catch {
-                return .failure(.io(error.localizedDescription))
+            nonisolated(unsafe) let coordinator = NSFileCoordinator(filePresenter: document)
+            let timeout = DispatchWorkItem { coordinator.cancel() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5), execute: timeout)
+            defer { timeout.cancel() }
+            var failure: NSError?
+            var saved: Result<Data, ChangeEngine.Refusal>?
+            coordinator.coordinate(writingItemAt: url, options: .forReplacing, error: &failure) { _ in
+                saved = Result { () throws(ChangeEngine.Refusal) in try engine.save(doc, buffer: buffer, version: version, kind: kind) }
             }
+            return saved ?? .failure(.io(failure?.localizedDescription ?? CocoaError(.fileWriteUnknown).localizedDescription))
         }
         switch result {
         case .success:

@@ -323,6 +323,12 @@ public final class ChangeEngine: Sendable {
         try Self.call { try engine.pin(doc: doc, snapshot: snapshot.ffi, pinned: pinned) }
     }
 
+    /// Adds `bytes`, a version of the document's file it does not hold, to the file's history. False for a private
+    /// document, which keeps none.
+    public func snapshot(_ doc: UInt64, bytes: Data) throws(Failure) -> Bool {
+        try Self.call { try engine.snapshot(doc: doc, bytes: bytes) }
+    }
+
     /// The snapshot's text, to replace the buffer as one undoable edit. The buffer is snapshotted first.
     public func restore(_ doc: UInt64, snapshot: Snapshot, buffer: String) throws(Failure) -> String {
         try Self.call { try engine.restore(doc: doc, snapshot: snapshot.ffi, buffer: buffer) }

@@ -16,6 +16,7 @@ use super::{
     Change, ChangeId, ClosedChange, DocId, Engine, Kind, Mark, Origin, State, UNKNOWN, closed,
     lock, private, read, strip,
 };
+use crate::git::status::Ignores;
 use crate::store::{self, Seen};
 use crate::{merge, text};
 
@@ -25,7 +26,7 @@ const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "mdc"];
 /// The hidden folders that hold what agents read, which a scan notes as the
 /// sidebar shows them.
 const AGENT_FOLDERS: [&str; 3] = [".claude", ".cursor", ".github"];
-/// A scan notes at most this many files.
+/// A scan notes at most this many files, the last modified first.
 const MAX_SCAN: usize = 10_000;
 /// A scan that finds a file unchanged dates its seen version again once it
 /// is this old, so pruning keeps it.
@@ -204,14 +205,17 @@ impl Engine {
     }
 
     /// Notes the Markdown files in `folder`, and in its subfolders when
-    /// `deep`, hidden ones other than the agent folders and `node_modules`
-    /// aside. A file no document has open and no seen version yet is seen as
-    /// it is; one that differs from its seen version is in `closed_changes`.
+    /// `deep`, hidden ones other than the agent folders, `node_modules` and
+    /// what git ignores aside. A file no document has open and no seen
+    /// version yet is seen as it is; one that differs from its seen version
+    /// is in `closed_changes`.
     pub fn scan(&self, folder: &Path, deep: bool) -> io::Result<()> {
-        let mut folders = vec![fs::canonicalize(folder)?];
+        let root = fs::canonicalize(folder)?;
+        let (mut ignores, prefix) = Ignores::of(&root);
+        let mut folders = vec![root.clone()];
         let mut files = Vec::new();
         let mut first = true;
-        'walk: while let Some(folder) = folders.pop() {
+        while let Some(folder) = folders.pop() {
             let entries = match fs::read_dir(&folder) {
                 Ok(entries) => entries,
                 Err(error) if first => return Err(error),
@@ -228,19 +232,33 @@ impl Engine {
                     continue;
                 }
                 let path = entry.path();
-                if kind.is_dir() && deep {
+                let folder = kind.is_dir();
+                if !(folder && deep || kind.is_file() && markdown(&path) && !private(&path)) {
+                    continue;
+                }
+                let relative = path.strip_prefix(&root).unwrap_or(&path).as_os_str();
+                let relative = relative.as_encoded_bytes();
+                let from_top = if prefix.is_empty() {
+                    relative.to_vec()
+                } else {
+                    [&prefix, b"/".as_slice(), relative].concat()
+                };
+                if ignores.ignored(&from_top, folder) {
+                    continue;
+                }
+                if folder {
                     folders.push(path);
-                } else if kind.is_file() && markdown(&path) && !private(&path) {
-                    files.push(path);
-                    if files.len() == MAX_SCAN {
-                        break 'walk;
-                    }
+                } else {
+                    let modified = entry.metadata().and_then(|metadata| metadata.modified());
+                    files.push((modified.unwrap_or(SystemTime::UNIX_EPOCH), path));
                 }
             }
         }
+        files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        files.truncate(MAX_SCAN);
         let open: HashSet<PathBuf> = self.state().docs.values().map(|d| d.path.clone()).collect();
         let (_, wall) = (self.clock)();
-        for path in files {
+        for (_, path) in files {
             if open.contains(&path) {
                 continue;
             }
@@ -345,8 +363,9 @@ impl Engine {
     }
 
     /// Keeps the document's base as its file's seen version, with its
-    /// undecided changes at `ranges`, UTF-16 in `buffer`, when the buffer is
-    /// the base; opening the file again shows them. Call it before `close`.
+    /// undecided changes and conflicts at `ranges`, UTF-16 in `buffer`, as
+    /// marks where the base has them; opening the file again shows them.
+    /// Call it before `close`.
     pub fn keep_marks(
         &self,
         doc: DocId,
@@ -361,28 +380,8 @@ impl Engine {
             if d.private || !markdown(&d.path) {
                 return Ok(());
             }
-            let marks: Vec<store::Mark> = if strip(&d.base, d.bom) == Some(buffer) {
-                ranges
-                    .iter()
-                    .filter_map(|&(id, start, end)| {
-                        let change = d
-                            .changes
-                            .iter()
-                            .find(|change| change.id == id && change.marked)?;
-                        let Kind::Edit { original, .. } = &change.kind else {
-                            return None;
-                        };
-                        Some(store::Mark {
-                            origin: change.origin.label(),
-                            start,
-                            end,
-                            original: original.clone(),
-                        })
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            let marks = strip(&d.base, d.bom)
+                .map_or_else(Vec::new, |base| marks(&d.changes, buffer, base, ranges));
             (d.path.clone(), d.base.clone(), marks)
         };
         self.keep_seen(&path, &base, &marks, (self.clock)().1)
@@ -395,6 +394,66 @@ pub(super) fn markdown(path: &Path) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
         .is_some_and(|extension| MARKDOWN.contains(&extension.to_ascii_lowercase().as_str()))
+}
+
+/// The undecided changes and conflicts at `ranges`, UTF-16 in `buffer`, as
+/// marks where `base` has them. Typing the base does not hold is left out;
+/// a conflict's mark puts back yours, where the base holds theirs.
+fn marks(
+    changes: &[Change],
+    buffer: &str,
+    base: &str,
+    ranges: &[(ChangeId, u32, u32)],
+) -> Vec<store::Mark> {
+    let typed = if buffer == base {
+        Vec::new()
+    } else {
+        let merge = merge::merge3(buffer, buffer, base);
+        let mut edits = merge.edits;
+        edits.extend(merge.conflicts.into_iter().map(|conflict| merge::Edit {
+            start: conflict.start,
+            end: conflict.end,
+            text: conflict.theirs,
+        }));
+        edits.sort_by_key(|edit| edit.start);
+        edits
+    };
+    // A range edge inside typing takes in all of it.
+    let widen = |at: u32, edge: fn(&merge::Edit) -> u32| {
+        typed
+            .iter()
+            .find(|edit| edit.start < at && at < edit.end)
+            .map_or(at, edge)
+    };
+    let mut ranges: Vec<(ChangeId, u32, u32)> = ranges
+        .iter()
+        .map(|&(id, start, end)| (id, widen(start, |e| e.start), widen(end, |e| e.end)))
+        .collect();
+    ranges.sort_by_key(|&(_, start, _)| start);
+    let mut done = 0;
+    ranges
+        .into_iter()
+        .filter_map(|(id, start, end)| {
+            let change = changes
+                .iter()
+                .find(|change| change.id == id && change.marked)?;
+            let original = match &change.kind {
+                Kind::Edit { original, .. } => original.clone(),
+                Kind::Conflict { .. } => utf16_slice(buffer, start, end)?.to_owned(),
+            };
+            let start = merge::map_offset(&typed, start, merge::Bias::Before);
+            if start < done {
+                return None;
+            }
+            done = merge::map_offset(&typed, end, merge::Bias::After);
+            Some(store::Mark {
+                origin: change.origin.label(),
+                start,
+                end: done,
+                original,
+            })
+        })
+        .collect()
 }
 
 fn is_text(bytes: &[u8]) -> bool {
@@ -884,11 +943,52 @@ mod tests {
         let (landing, landed) = land(&engine, opened.doc, NEW);
         assert_eq!(landed, format!("{NEW}\nP.S.\n"));
         assert_eq!(landing.edits.len(), 1);
+    }
 
-        // A buffer that is not the base, as after Don't Save, keeps no marks.
-        engine.keep_marks(opened.doc, "unsaved", &ranges).unwrap();
+    #[test]
+    fn closing_mid_conflict_keeps_the_conflict_and_the_changes_marked() {
+        let f = fixture();
+        // The middle line keeps the two places apart.
+        let old = OLD.replace("\n\nThen", "\n\nNotes.\n\nThen");
+        let new = NEW.replace("\n\nThen", "\n\nNotes.\n\nThen");
+        let path = f.file("plan.md", &old);
+        let engine = f.engine();
+        let opened = engine.open(&path).unwrap();
+        let typed = old.replace("Friday", "Sunday");
+        fs::write(&path, &new).unwrap();
+        let (landing, buffer) = land(&engine, opened.doc, &typed);
+        let [(conflict, card)] = &landing.conflicts[..] else {
+            panic!("{landing:?}");
+        };
+        let [(edit, landed)] = &landing.edits[..] else {
+            panic!("{landing:?}");
+        };
+        // The conflict comes before the edit, so its range holds in the buffer.
+        let end = landed.start + landed.text.encode_utf16().count() as u32;
+        let ranges = [
+            (*conflict, card.start, card.end),
+            (*edit, landed.start, end),
+        ];
+        engine.keep_marks(opened.doc, &buffer, &ranges).unwrap();
         engine.close(opened.doc);
-        assert!(engine.open(&path).unwrap().marks.is_empty());
+
+        let opened = engine.open(&path).unwrap();
+        assert_eq!(text(&opened), new);
+        let [kept, edit] = &opened.marks[..] else {
+            panic!("{:?}", opened.marks);
+        };
+        let at = |start: u32, end: u32| &new[start as usize..end as usize];
+        assert_eq!(at(kept.start, kept.end), "Ship Monday.\n");
+        assert_eq!(kept.removed, "Ship Sunday.\n");
+        assert_eq!(at(edit.start, edit.end), " a week");
+        // Reverting the conflict's mark puts yours back.
+        let reverted = engine.decide(
+            opened.doc,
+            kept.change,
+            crate::engine::Decision::Other,
+            "Ship Monday.\n",
+        );
+        assert_eq!(reverted.as_deref(), Some("Ship Sunday.\n"));
     }
 
     #[test]
@@ -923,7 +1023,8 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_notes_agent_folders_and_skips_other_hidden_ones_other_files_and_open_notes() {
+    fn a_scan_notes_agent_folders_and_skips_other_hidden_ones_ignored_ones_other_files_and_open_notes()
+     {
         let f = fixture();
         let open = f.file("open.md", "open\n");
         let noted = [
@@ -934,14 +1035,16 @@ mod tests {
         let skipped = [
             f.file(".obsidian/x.md", "x\n"),
             f.file("node_modules/pkg/README.md", "x\n"),
+            f.file("build/x.md", "x\n"),
             f.file("notes.txt", "x\n"),
         ];
+        f.file(".gitignore", "build/\n");
         let engine = f.engine();
         // A hooked write to a file that is not Markdown keeps nothing.
         engine
-            .closed_write(&skipped[2], claude(), b"x\n", blake3::hash(b"y\n"))
+            .closed_write(&skipped[3], claude(), b"x\n", blake3::hash(b"y\n"))
             .unwrap();
-        fs::write(&skipped[2], "y\n").unwrap();
+        fs::write(&skipped[3], "y\n").unwrap();
         let opened = engine.open(&open).unwrap();
         engine
             .store

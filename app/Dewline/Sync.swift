@@ -21,7 +21,8 @@ extension MarkdownDocument {
     }
 
     /// Asks which version stays while iCloud holds another one from a second device, one version at a time. Using
-    /// the other lands it as an outside change, marked, so Revert brings the text back.
+    /// the other lands it as an outside change, marked, so Revert brings the text back; keeping this one puts the
+    /// other in the note's snapshots first, or leaves it with iCloud when the note keeps none.
     func askWhichVersion() {
         guard let url = fileURL, (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true,
             let window = windowControllers.first?.window, window.attachedSheet == nil,
@@ -42,6 +43,12 @@ extension MarkdownDocument {
                 if useOther {
                     try coordinatedWrite(at: url) { url in _ = try other.replaceItem(at: url) }
                     live?.signal()
+                } else {
+                    guard let live else { return }
+                    let (engine, doc, version) = (live.engine, live.doc, other.url)
+                    let kept = try await Task.detached { try engine.snapshot(doc, bytes: Data(contentsOf: version)) }.value
+                    guard kept else { return }
+                    live.reloadSnapshots()
                 }
                 other.isResolved = true
                 other.isDiscardable = true

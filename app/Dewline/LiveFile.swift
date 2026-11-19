@@ -142,8 +142,7 @@ final class LiveFile {
     }
 
     /// Keeps the undecided changes with the engine once the current main-thread work ends, so a crash or force quit
-    /// leaves them marked the next time the file opens. Only a buffer that is the file keeps them; a save that follows
-    /// an edit keeps them again.
+    /// leaves them marked the next time the file opens. A save that follows an edit keeps them again.
     private func keepMarks() {
         guard !keepsMarks else { return }
         keepsMarks = true
@@ -159,7 +158,7 @@ final class LiveFile {
     private func keepingMarks() -> @Sendable () -> Void {
         let (engine, doc) = (engine, doc)
         let buffer = (document?.textView ?? textView)?.string
-        let ranges = changes.filter { $0.value.marked && !$0.value.conflict }.mapValues(\.range)
+        let ranges = changes.filter(\.value.marked).mapValues(\.range)
         return {
             guard let buffer else { return }
             do throws(ChangeEngine.Failure) {

@@ -42,6 +42,18 @@ struct ShellTests {
         #expect(folder.relativePath(of: root.deletingLastPathComponent()) == nil)
     }
 
+    @Test @MainActor func aNoteAtHomeOrARootOpensWithoutAFolder() throws {
+        let home = URL(filePath: NSHomeDirectory())
+        #expect(MainWindowController.folder(for: home.appending(path: "AGENTS.md")) == nil)
+        #expect(MainWindowController.folder(for: home.appending(path: "Library/notes.md")) == nil)
+        #expect(MainWindowController.folder(for: URL(filePath: "/notes.md")) == nil)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appending(path: ".git"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appending(path: "docs"), withIntermediateDirectories: true)
+        #expect(MainWindowController.folder(for: root.appending(path: "docs/plan.md"))?.url == root.standardizedFileURL)
+    }
+
     @Test @MainActor func outlineKeepsH1ToH3WithLineNumbers() {
         let text = "# Plan\n\nIntro\n\n## **Before** the beta\n\n```\n# not a heading\n```\n\n#### Too deep\n### Monday\n" as NSString
         let map = BlockMap()

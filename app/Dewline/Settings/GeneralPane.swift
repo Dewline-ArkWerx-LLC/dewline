@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 struct GeneralPane: View {
     @Bindable var preferences: Preferences
     let updates: Updates
+    @State private var isDefaultApp = DefaultApp.isDewline
 
     var body: some View {
         SettingsPage {
@@ -19,6 +21,11 @@ struct GeneralPane: View {
                 }
                 SettingsRow(label: "New notes go in") {
                     FolderField(url: preferences.newFileFolder) { preferences.newFileFolder = $0 }
+                }
+                SettingsRow(label: "Default Markdown app", detail: isDefaultApp ? "Finder opens Markdown files in Dewline." : "Finder opens Markdown files in another app.") {
+                    Button("Use Dewline") { Task { isDefaultApp = await DefaultApp.make() } }
+                        .buttonStyle(.station)
+                        .disabled(isDefaultApp)
                 }
             }
             SettingsSection(title: "Files") {
@@ -84,6 +91,41 @@ struct GeneralPane: View {
                 updates.setAutomaticChecks(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool ?? false)
                 updates.setBeta(false)
             }
+        }
+    }
+}
+
+/// The app Finder opens Markdown files in.
+@MainActor
+enum DefaultApp {
+    private static let markdown = UTType(MarkdownDocument.type) ?? .plainText
+
+    static var isDewline: Bool {
+        NSWorkspace.shared.urlForApplication(toOpen: markdown)?.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+    }
+
+    /// Makes Dewline the app for Markdown files; true when it is.
+    static func make() async -> Bool {
+        do {
+            try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: markdown)
+        } catch {
+            Logger(subsystem: "dev.arkwerx.dewline", category: "app")
+                .error("Dewline did not become the Markdown app: \(String(describing: error), privacy: .public)")
+        }
+        return isDewline
+    }
+
+    /// Asks on `window`, once at the first launch, unless Dewline already is the app.
+    static func offer(on window: NSWindow) {
+        guard !isDewline else { return }
+        let alert = NSAlert()
+        alert.messageText = "Open Markdown files in Dewline?"
+        alert.informativeText = "Double-clicking a Markdown file in Finder then opens it here. Settings > General can change this later."
+        alert.addButton(withTitle: "Use Dewline")
+        alert.addButton(withTitle: "Not Now")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { @MainActor in _ = await make() }
         }
     }
 }

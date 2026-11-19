@@ -104,12 +104,14 @@ final class MarkdownDocument: NSDocument {
     }
 
     /// Saves the note now, through the engine when it keeps the file. True when its text is safe: in the file, or in
-    /// the draft the engine keeps when it refuses, which opening the note offers back.
+    /// the draft the engine keeps when it refuses, which opening the note offers back. A deleted note's draft is not
+    /// safe, since no file opens to offer it.
     func flush() async -> Bool {
         guard isDocumentEdited else { return true }
         if let live, let text = textView?.string {
             // Typing during the save leaves the document edited, or the draft behind the buffer.
-            guard await live.autosave() != nil else { return !isDocumentEdited }
+            guard let refusal = await live.autosave() else { return !isDocumentEdited }
+            if refusal == .deleted { return false }
             let kept = await live.keptDraft()?.holds(bytes(of: text)) == true
             return kept && textView?.string == text
         }
@@ -124,7 +126,8 @@ final class MarkdownDocument: NSDocument {
     }
 
     /// Closing saves the note first, so nothing asks; a refused save closes with the text in the draft. AppKit's
-    /// sheet comes up only for text that is neither in the file nor in a draft.
+    /// sheet comes up only for text that is neither in the file nor in a draft, or whose file was deleted, which its
+    /// Save makes again.
     override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
         Task {
             guard await flush() else {

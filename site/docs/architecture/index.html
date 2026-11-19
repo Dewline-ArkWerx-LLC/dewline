@@ -103,7 +103,7 @@
 
       <h2 id="the-split">The split</h2>
       <p>The app is Swift 6 and AppKit. It owns the text view, layout, drawing, documents, windows and menus. It also owns the system text services: spell check, Writing Tools, dictation and the find bar.</p>
-      <p>The engine is Rust. It owns decoding, parsing, the change engine, snapshots, the path jail, rendering, collaboration and export. One engine serves the app, the Quick Look preview and the <code>dewline</code> command.</p>
+      <p>The engine is Rust. It owns decoding, parsing, the change engine, snapshots, the path jail, rendering and export. One engine serves the app, the Quick Look preview and the <code>dewline</code> command.</p>
       <p>On the keystroke path the engine does one thing. It parses the edited window, at most 4 KB, with no locks held and no I/O.</p>
       <figure class="fig" id="figure-pieces">
         <div class="fig-frame" tabindex="0" role="region" aria-label="Figure 1: the pieces">
@@ -121,7 +121,7 @@
 <rect class="f-chip" x="452" y="80" width="196" height="42" rx="7"/><text class="f-t" x="464" y="98">Documents</text><text class="f-d" x="464" y="113">NSDocument, autosave</text>
 <rect class="f-chip" x="32" y="128" width="196" height="42" rx="7"/><text class="f-t" x="44" y="146">Text services</text><text class="f-d" x="44" y="161">Writing Tools, spell check</text>
 <rect class="f-chip" x="242" y="128" width="196" height="42" rx="7"/><text class="f-t" x="254" y="146">Updates</text><text class="f-d" x="254" y="161">Sparkle 2, EdDSA-signed</text>
-<rect class="f-chip" x="452" y="128" width="196" height="42" rx="7"/><text class="f-t" x="464" y="146">Collaboration</text><text class="f-d" x="464" y="161">share, approve, carets</text>
+<rect class="f-chip" x="452" y="128" width="196" height="42" rx="7"/><text class="f-t" x="464" y="146">Collaboration</text><text class="f-d" x="464" y="161">not in release builds</text>
 <line class="f-line" x1="320" y1="181" x2="320" y2="192" marker-start="url(#a1)"/>
 <line class="f-line" x1="360" y1="181" x2="360" y2="192" marker-start="url(#a1)"/>
 <line class="f-line" x1="320" y1="224" x2="320" y2="235" marker-end="url(#a1)"/>

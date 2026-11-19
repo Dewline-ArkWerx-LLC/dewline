@@ -24,10 +24,34 @@ enum HookSetup {
         }
     }
 
-    /// Settings > Agents > Set Up…, and the stamp's offer: a sheet on `window` naming each file, then the run.
-    static func install(from window: NSWindow?, command: URL = command(), done: @escaping @MainActor (Bool) -> Void = { _ in }) {
+    /// Names in a folder that say an agent works there.
+    private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
+    private static let offeredKey = "DewlineOfferedHookSetup"
+    private static var checking = false
+
+    /// Offers Set Up on `window` once, at the first launch or when `folder` holds an agent's files, if an agent's
+    /// hooks are missing; doctor reads `folder`'s project settings too.
+    static func offer(on window: NSWindow, in folder: URL? = nil) {
+        guard !UserDefaults.standard.bool(forKey: offeredKey), !checking,
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+            folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
+        else { return }
+        checking = true
         Task {
-            let report = await run(command, ["doctor"], answers: 0)
+            let report = await run(command(), ["doctor"], answers: 0, in: folder)
+            checking = false
+            guard report.ran, !missing(in: report.output).isEmpty, window.isVisible, !UserDefaults.standard.bool(forKey: offeredKey) else { return }
+            UserDefaults.standard.set(true, forKey: offeredKey)
+            install(from: window, in: folder)
+        }
+    }
+
+    /// Settings > Agents > Set Up…, and the offers: a sheet on `window` naming each file, then the run.
+    static func install(
+        from window: NSWindow?, in folder: URL? = nil, command: URL = command(), done: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) {
+        Task {
+            let report = await run(command, ["doctor"], answers: 0, in: folder)
             let missing = Self.missing(in: report.output)
             let alert = NSAlert()
             guard report.ran else {
@@ -39,7 +63,7 @@ enum HookSetup {
                 let none = !report.output.contains(": installed in ")
                 alert.messageText = none ? "No agent to set up." : "Agent edits are already marked."
                 alert.informativeText = none
-                    ? "Dewline found no ~/.claude or ~/.codex folder. Set up again after you install Claude Code or Codex."
+                    ? "Dewline found no ~/.claude, ~/.codex or ~/.cursor folder. Set up again after you install Claude Code, Codex or Cursor."
                     : "Every agent Dewline knows has its hooks."
                 return present(alert, on: window) { _ in done(true) }
             }
@@ -51,8 +75,8 @@ enum HookSetup {
             present(alert, on: window) { response in
                 guard response == .alertFirstButtonReturn else { return done(false) }
                 Task {
-                    let result = await run(command, ["doctor", "--install-hooks"], answers: missing.count)
-                    let after = await run(command, ["doctor"], answers: 0)
+                    let result = await run(command, ["doctor", "--install-hooks"], answers: missing.count, in: folder)
+                    let after = await run(command, ["doctor"], answers: 0, in: folder)
                     done(result.ran && Self.missing(in: after.output).isEmpty)
                 }
             }
@@ -67,8 +91,8 @@ enum HookSetup {
         }
     }
 
-    /// Runs `command` with `arguments` on a pseudo-terminal, typing "y" and Return `answers` times.
-    static func run(_ command: URL, _ arguments: [String], answers: Int) async -> (ran: Bool, output: String) {
+    /// Runs `command` with `arguments` in `folder` on a pseudo-terminal, typing "y" and Return `answers` times.
+    static func run(_ command: URL, _ arguments: [String], answers: Int, in folder: URL? = nil) async -> (ran: Bool, output: String) {
         await Task.detached {
             var main: Int32 = -1
             var side: Int32 = -1
@@ -76,6 +100,7 @@ enum HookSetup {
             let process = Process()
             process.executableURL = command
             process.arguments = arguments
+            process.currentDirectoryURL = folder
             let terminal = FileHandle(fileDescriptor: side, closeOnDealloc: true)
             process.standardInput = terminal
             process.standardOutput = terminal

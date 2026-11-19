@@ -214,7 +214,7 @@ final class LiveFile {
         case .preToolUse(let call): (event, use, path) = ("PreToolUse", call, call.path)
         case .postToolUse(let call): (event, use, path) = ("PostToolUse", call, call.path)
         case .instructionsLoaded(let file): (event, use, path) = ("InstructionsLoaded", nil, file)
-        case .shell(let id, let ended): return shell(id, session: claim.session, ended: ended)
+        case .shell(let id, let cwd, let ended): return shell(id, session: claim.session, cwd: cwd, ended: ended)
         case .turnEnd: (event, use, path) = ("Stop", nil, nil)
         case .sessionEnd: (event, use, path) = ("SessionEnd", nil, nil)
         }
@@ -253,39 +253,44 @@ final class LiveFile {
         }
     }
 
-    /// A Claude Code Bash call, from its hooks' timing alone: when it started and, once its PostToolUse or the turn's
-    /// end came, when it ended.
+    /// A Claude Code Bash call, from its hooks: the realpath of the folder it runs in, when it started and, once its
+    /// PostToolUse or the turn's end came, when it ended.
     private struct Shell {
         let session: String
+        let cwd: String
         let start: ContinuousClock.Instant
         var end: ContinuousClock.Instant?
     }
 
-    /// Shell commands by call id. A change that lands while one runs, or within a second after, stays unnamed and says
-    /// so (X2); one that never ends counts for ten minutes, Claude Code's longest Bash timeout.
+    /// Shell commands by call id. A change under one's folder that lands while it runs, or within a second after, stays
+    /// unnamed and says so (X2); one that never ends counts for ten minutes, Claude Code's longest Bash timeout.
     private static var shells: [String: Shell] = [:]
 
-    private static func shell(_ id: String, session: String, ended: Bool) {
+    private static func shell(_ id: String, session: String, cwd: String?, ended: Bool) {
         let now = ContinuousClock.now
         shells = shells.filter { now - ($0.value.end ?? $0.value.start) < .seconds(600) }
         if ended {
             shells[id]?.end = now
-        } else if shells[id] == nil {
-            shells[id] = Shell(session: session, start: now)
+        } else if shells[id] == nil, let cwd {
+            shells[id] = Shell(session: session, cwd: cwd, start: now)
         }
     }
 
-    /// Whether a change landing now lands during a shell command.
-    private static var duringShell: Bool {
+    /// Whether a change to the file at `url` landing now lands during a shell command run in a folder that holds it.
+    private static func duringShell(_ url: URL) -> Bool {
         let now = ContinuousClock.now
-        return shells.values.contains { shell in
+        let running = shells.values.filter { shell in
             shell.end.map { now - $0 <= .seconds(1) } ?? (now - shell.start < .seconds(600))
         }
+        guard !running.isEmpty, let real = Darwin.realpath(url.path, nil) else { return false }
+        defer { free(real) }
+        let path = String(cString: real)
+        return running.contains { path.hasPrefix($0.cwd == "/" ? "/" : $0.cwd + "/") }
     }
 
     /// Before an agent's tool writes a file: keeps the bytes it read, if the file still holds them, and the hash of the
     /// bytes it declares, so a write to a file no tab has open lands marked, and named if it made those bytes, when it
-    /// opens (B5). The engine ignores open files.
+    /// opens (B5). A write already made is kept from the bytes the engine has. The engine ignores open files.
     private nonisolated static func closedWrite(
         _ path: String, hash: String, declared: String, by claim: ControlSocket.Claim, engine: ChangeEngine
     ) {
@@ -298,11 +303,16 @@ final class LiveFile {
             case .acp: .acp
             }
         let url = URL(fileURLWithPath: path)
-        guard let before = try? Data(contentsOf: url),
-            contentHash(before).map({ String(format: "%02x", $0) }).joined() == hash
-        else { return }
+        guard let disk = try? Data(contentsOf: url) else { return }
+        let diskHash = contentHash(disk).map { String(format: "%02x", $0) }.joined()
         do throws(ChangeEngine.Failure) {
-            try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: before, declared: declared)
+            if diskHash == hash {
+                try engine.closedWrite(url, origin: .agent(vendor, session: claim.session), before: disk, declared: declared)
+            } else if diskHash == declared {
+                // Cursor's afterFileEdit comes once the file holds the edit.
+                try engine.closedWrote(url, origin: .agent(vendor, session: claim.session), before: hash, declared: declared)
+                Task { @MainActor in ClosedChanges.refresh() }
+            }
         } catch {
             log.error("A closed file's write was not kept: \(String(describing: error), privacy: .public)")
         }
@@ -533,7 +543,7 @@ final class LiveFile {
             return change
         }
         var shift = 0
-        let shell = landing.origin == .external && Self.duringShell
+        let shell = landing.origin == .external && Self.duringShell(url)
         for (index, edit) in edits.enumerated() {
             let length = edit.text.utf16.count
             changes[edit.change] = Change(

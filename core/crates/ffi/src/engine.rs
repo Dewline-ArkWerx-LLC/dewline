@@ -457,6 +457,28 @@ impl Engine {
             .closed_write(Path::new(&path), origin.into(), &before, declared)?)
     }
 
+    /// `closed_write` for a write already made: the file at `path` held the
+    /// bytes whose BLAKE3 hex is `before`. Kept only when the store holds them.
+    pub fn closed_wrote(
+        &self,
+        path: String,
+        origin: Origin,
+        before: String,
+        declared: String,
+    ) -> Result<(), EngineError> {
+        let hash = |hex: &str| {
+            file::Hash::from_hex(hex).map_err(|_| EngineError::Invalid {
+                message: "a hash is 64 hex digits".into(),
+            })
+        };
+        Ok(self.0.closed_wrote(
+            Path::new(&path),
+            origin.into(),
+            hash(&before)?,
+            hash(&declared)?,
+        )?)
+    }
+
     /// Notes the Markdown files in `folder`, and its subfolders when `deep`,
     /// so a change to one while it is closed, or while the app is quit, is in
     /// `closed_changes`. Off the main thread.

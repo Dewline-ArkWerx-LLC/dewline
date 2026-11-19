@@ -42,7 +42,7 @@ extension EditorTextView {
             !(pboard.string(forType: .string).map(HTMLMarkdown.looksLikeMarkdown) ?? false),
             let markdown = HTMLMarkdown.markdown(html)
         else { return false }
-        replace(selectedRange(), with: markdown)
+        replace(selectedRange(), with: withLineBreaks(markdown))
         return true
     }
 }

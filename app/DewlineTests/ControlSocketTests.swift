@@ -203,7 +203,7 @@ struct ControlSocketTests {
             (#""event":"PreToolUse","vendor":"codex","session":"c1","tool_use_id":"call_1","tool":"apply_patch","path":"/r/two\nlines.md","hash":"\#(a)""#,
              .init(vendor: .codex, session: "c1", event: .preToolUse(use("call_1", .applyPatch, "/r/two\nlines.md", a, nil)))),
             (#""event":"PostToolUse","vendor":"claude","session":"s1","tool_use_id":"toolu_3","tool":"Bash""#,
-             .init(vendor: .claude, session: "s1", event: .shell(id: "toolu_3", ended: true))),
+             .init(vendor: .claude, session: "s1", event: .shell(id: "toolu_3", cwd: nil, ended: true))),
             (#""event":"InstructionsLoaded","vendor":"claude","session":"s1","path":"/r/CLAUDE.md""#,
              .init(vendor: .claude, session: "s1", event: .instructionsLoaded(path: "/r/CLAUDE.md"))),
             (#""event":"StopFailure","vendor":"claude","session":"s1","hash":"not read""#, .init(vendor: .claude, session: "s1", event: .turnEnd)),

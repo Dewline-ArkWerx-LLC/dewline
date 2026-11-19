@@ -1,5 +1,5 @@
 //! `dewline doctor`: whether the app matches this command, whether the agent hooks of docs/hooks.md are installed,
-//! and which companion tools are on PATH. `--install-hooks` merges the hooks in, asking first.
+//! for the user or in the current folder's project files, and which companion tools are on PATH. `--install-hooks` merges the hooks in, asking first.
 
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -20,6 +20,8 @@ struct Agent {
     title: &'static str,
     /// The settings file, relative to the home folder.
     settings: &'static str,
+    /// A project's own files, relative to its folder, which the agent reads beside `settings` when it runs there.
+    project: &'static [&'static str],
     /// Each hook event, with the tool matcher it takes.
     events: &'static [(&'static str, Option<&'static str>)],
     /// Cursor's shape: each event a list of `{"command"}` with no groups, under `"version": 1`.
@@ -34,6 +36,7 @@ const AGENTS: [Agent; 3] = [
         name: "claude",
         title: "Claude Code",
         settings: ".claude/settings.json",
+        project: &[".claude/settings.json", ".claude/settings.local.json"],
         events: &[
             ("PreToolUse", Some(TOOLS)),
             ("PostToolUse", Some(TOOLS)),
@@ -50,6 +53,7 @@ const AGENTS: [Agent; 3] = [
         name: "codex",
         title: "Codex",
         settings: ".codex/hooks.json",
+        project: &[".codex/hooks.json"],
         events: &[
             ("PreToolUse", Some("^apply_patch$")),
             ("PostToolUse", Some("^apply_patch$")),
@@ -62,6 +66,7 @@ const AGENTS: [Agent; 3] = [
         name: "cursor",
         title: "Cursor",
         settings: ".cursor/hooks.json",
+        project: &[".cursor/hooks.json"],
         events: &[
             ("preToolUse", Some("Write")),
             ("postToolUse", Some("Write")),
@@ -108,14 +113,12 @@ pub fn run(install: bool) -> Result<(), String> {
     }
 
     let command = format!("{} notify --hook", quoted(&exe));
+    // The project the agents run in, when they run here.
+    let project = env::current_dir().ok();
     println!("\nAgent hooks:");
     for agent in &AGENTS {
         let path = home.join(agent.settings);
         let folder = path.parent().expect("a settings file is in a folder");
-        if !folder.is_dir() {
-            println!("  {}: not installed; no {}", agent.title, folder.display());
-            continue;
-        }
         let settings = match read(&path) {
             Ok(settings) => settings,
             Err(error) => {
@@ -123,26 +126,55 @@ pub fn run(install: bool) -> Result<(), String> {
                 continue;
             }
         };
-        let missing = missing(settings.as_ref().map(|(value, _)| value), agent, runs);
-        if missing.is_empty() {
+        let mut files: Vec<(PathBuf, Value)> = settings
+            .iter()
+            .map(|(value, _)| (path.clone(), value.clone()))
+            .collect();
+        for file in agent
+            .project
+            .iter()
+            .filter_map(|file| Some(project.as_ref()?.join(file)))
+        {
+            match read(&file) {
+                Ok(Some((value, _))) if file != path => files.push((file, value)),
+                Ok(_) => {}
+                Err(error) => println!("  {}: {error}", agent.title),
+            }
+        }
+        if let Some((file, _)) = files
+            .iter()
+            .find(|(_, value)| value["disableAllHooks"] == true)
+        {
+            println!(
+                "  {}: hooks off; disableAllHooks is set in {}",
+                agent.title,
+                file.display()
+            );
+            continue;
+        }
+        let installed = files
+            .iter()
+            .find(|(_, value)| missing(Some(value), agent, runs).is_empty());
+        if let Some((file, settings)) = installed {
             let config = fs::read_to_string(folder.join("config.toml"))
                 .ok()
                 .and_then(|text| text.parse::<toml::Table>().ok());
             let trusted = agent.name != "codex"
-                || settings.as_ref().is_some_and(|(settings, _)| {
-                    trusted(settings, agent, &path.to_string_lossy(), config.as_ref())
-                });
+                || trusted(settings, agent, &file.to_string_lossy(), config.as_ref());
             println!(
                 "  {}: installed in {}{}",
                 agent.title,
-                path.display(),
+                file.display(),
                 if trusted {
                     ""
                 } else {
                     "; needs trust: in Codex, open /hooks and trust each Dewline hook"
                 }
             );
+        } else if !folder.is_dir() {
+            println!("  {}: not installed; no {}", agent.title, folder.display());
         } else {
+            let missing = missing(settings.as_ref().map(|(value, _)| value), agent, runs);
             println!(
                 "  {}: {} missing from {}",
                 agent.title,

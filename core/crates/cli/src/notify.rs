@@ -109,9 +109,9 @@ fn encode(fields: Fields) -> Option<Vec<u8>> {
     Some(line)
 }
 
-/// Every line `event` calls for: one per file a tool use names, one for a Claude Code Bash call's timing, two for
-/// Cursor's afterFileEdit, one for the file InstructionsLoaded loads, one for the end of a turn or session, and none
-/// for anything claims.rs doesn't take.
+/// Every line `event` calls for: one per file a tool use names, one for a Claude Code Bash call's timing and folder,
+/// two for Cursor's afterFileEdit, one for the file InstructionsLoaded loads, one for the end of a turn or session, and
+/// none for anything claims.rs doesn't take.
 fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
     let (Some(name), Some(session)) = (event.name.as_deref(), event.session.as_deref()) else {
         return Vec::new();
@@ -158,8 +158,16 @@ fn lines(vendor: Vendor, event: &Event) -> Vec<Vec<u8>> {
         ..fields
     };
     let files = match (vendor, tool) {
-        // A shell command's hooks give its timing alone.
-        (Vendor::Claude, "Bash") => return encode(fields).into_iter().collect(),
+        // A shell command's hooks give its timing and the folder it runs in, by realpath.
+        (Vendor::Claude, "Bash") => {
+            let cwd = event
+                .cwd
+                .as_deref()
+                .filter(|cwd| cwd.starts_with('/'))
+                .and_then(|cwd| fs::canonicalize(cwd).ok());
+            let path = cwd.as_deref().and_then(Path::to_str);
+            return encode(Fields { path, ..fields }).into_iter().collect();
+        }
         // cursor-agent's Write sends `{file_path, content}` as Claude Code's does (docs/hooks.md).
         (Vendor::Claude, "Read" | "Edit" | "MultiEdit" | "Write") | (Vendor::Cursor, "Write") => {
             claude(event, tool, pre)

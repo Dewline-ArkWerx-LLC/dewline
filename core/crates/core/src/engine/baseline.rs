@@ -180,6 +180,29 @@ impl Engine {
         Ok(())
     }
 
+    /// `closed_write` for a write already made, as Cursor's afterFileEdit
+    /// reports one: the file at `path` held the bytes whose hash is `before`.
+    /// Kept only when the store holds those bytes, as the file's seen version
+    /// or in its history.
+    pub fn closed_wrote(
+        &self,
+        path: &Path,
+        origin: Origin,
+        before: Hash,
+        declared: Hash,
+    ) -> io::Result<()> {
+        let real = fs::canonicalize(path)?;
+        let bytes = match self.store.seen(&real)?.filter(|seen| seen.hash == before) {
+            Some(seen) => seen.bytes()?,
+            None => match self.store.get(&before) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            },
+        };
+        self.closed_write(path, origin, &bytes, declared)
+    }
+
     /// Notes the Markdown files in `folder`, and in its subfolders when
     /// `deep`, hidden ones other than the agent folders and `node_modules`
     /// aside. A file no document has open and no seen version yet is seen as
@@ -643,6 +666,37 @@ mod tests {
             assert!(reopened.marks.iter().all(|mark| mark.origin == origin));
             engine.close(reopened.doc);
         }
+    }
+
+    #[test]
+    fn a_write_reported_after_it_is_made_names_its_writer_from_the_seen_version() {
+        let f = fixture();
+        let seen = f.file("seen.md", OLD);
+        let engine = f.engine();
+        engine.scan(&f.notes, true).unwrap();
+        let unseen = f.file("unseen.md", "# Unseen\n");
+        let cursor = Origin::Agent {
+            vendor: Vendor::Cursor,
+            session: "s1".into(),
+        };
+        let after = blake3::hash(NEW.as_bytes());
+        for (path, old) in [(&seen, OLD), (&unseen, "# Unseen\n")] {
+            fs::write(path, NEW).unwrap();
+            engine
+                .closed_wrote(path, cursor.clone(), blake3::hash(old.as_bytes()), after)
+                .unwrap();
+        }
+        engine.scan(&f.notes, false).unwrap();
+        let origins: Vec<(PathBuf, Origin)> = engine
+            .closed_changes()
+            .into_iter()
+            .map(|change| (change.path, change.origin))
+            .collect();
+        assert_eq!(
+            origins,
+            [(seen, cursor)],
+            "the unseen note's old bytes are nowhere"
+        );
     }
 
     #[test]

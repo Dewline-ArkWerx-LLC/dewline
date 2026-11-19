@@ -342,6 +342,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         enterSharedFullScreen()
         (NSApp.delegate as? AppDelegate)?.closeLaunchWindow()
         if let window { Updates.shared.windowDidShow(window) }
+        if let window, let folder { HookSetup.offer(on: window, in: folder.url) }
         shown(at: place)
     }
 

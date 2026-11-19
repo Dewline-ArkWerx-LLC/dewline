@@ -151,39 +151,31 @@ enum Typeset {
         textView.jump(toLine: diagnostic.line, column: diagnostic.column)
     }
 
-    /// Compiles `source` (a .tex file's `% !TEX root`) with the first compiler found into `cache`, keeping the last
-    /// clean PDF there: typst confined to `root`; latexmk without any rc file (a repo's .latexmkrc is Perl); tectonic
-    /// untrusted. No shell escape.
-    nonisolated static func compile(_ source: URL, root: URL, into cache: URL) -> Outcome {
-        let build = cache.appending(path: "build", directoryHint: .isDirectory)
-        try? FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
-        let file: URL
+    /// A compiler run: `program` with `arguments` in `folder`, with `environment` over the app's own.
+    struct Job: Sendable {
         let program: String
         let arguments: [String]
         let folder: URL
-        if source.pathExtension.lowercased() == "typ" {
-            guard let typst = find("typst") else { return .missing("Typesetting .typ needs typst: brew install typst") }
-            (file, program, folder) = (source, typst, root)
-            let pdf = build.appending(path: file.deletingPathExtension().lastPathComponent + ".pdf")
-            arguments = ["compile", "--root", root.path, "--diagnostic-format", "short", file.path, pdf.path]
-        } else {
-            file = magic("root", in: source).map { source.deletingLastPathComponent().appending(path: $0).standardizedFileURL } ?? source
-            folder = file.deletingLastPathComponent()
-            if let latexmk = find("latexmk") {
-                let engine = ["xelatex": "-xelatex", "lualatex": "-lualatex"][magic("program", in: file)?.lowercased() ?? ""] ?? "-pdf"
-                program = latexmk
-                arguments = ["-norc", engine, "-interaction=nonstopmode", "-file-line-error", "-outdir=\(build.path)", file.lastPathComponent]
-            } else if let tectonic = find("tectonic") {
-                program = tectonic
-                arguments = ["-X", "compile", "--untrusted", "--keep-logs", "--outdir", build.path, file.lastPathComponent]
-            } else {
-                return .missing("Typesetting .tex needs MacTeX or tectonic: brew install tectonic")
-            }
+        let environment: [String: String]
+    }
+
+    /// Compiles `source` (a .tex file's `% !TEX root`) with the first compiler found into `cache`, keeping the last
+    /// clean PDF there.
+    nonisolated static func compile(_ source: URL, root: URL, into cache: URL) -> Outcome {
+        let build = cache.appending(path: "build", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        let typst = source.pathExtension.lowercased() == "typ"
+        guard let file = typst ? source : main(of: source, in: root) else {
+            return .failed([], log: "% !TEX root is outside the folder")
         }
-        let environment = ProcessInfo.processInfo.environment.merging(["PATH": folders.joined(separator: ":")]) { $1 }
+        guard let job = job(file, root: root, build: build, find: find) else {
+            return .missing(typst ? "Typesetting .typ needs typst: brew install typst" : "Typesetting .tex needs MacTeX or tectonic: brew install tectonic")
+        }
+        let folder = job.folder
+        let environment = ProcessInfo.processInfo.environment.merging(["PATH": folders.joined(separator: ":")]) { $1 }.merging(job.environment) { $1 }
         let run: Run
         do {
-            run = try spawn(program, arguments, in: folder, environment: environment)
+            run = try spawn(job.program, job.arguments, in: folder, environment: environment)
         } catch {
             return .failed([], log: error.localizedDescription)
         }
@@ -296,6 +288,43 @@ enum Typeset {
             drained.wait()
         }
         return Run(log: String(decoding: output, as: UTF8.self), status: status, stopped: stopped)
+    }
+
+    /// How `file` typesets into `build` with the first compiler `find` locates, or nil when there is none: typst
+    /// confined to `root`; latexmk without any rc file (a repo's .latexmkrc is Perl), each engine without shell escape,
+    /// and TeX opening no absolute or parent-folder path outside `build`; tectonic untrusted.
+    nonisolated static func job(_ file: URL, root: URL, build: URL, find: (String) -> String?) -> Job? {
+        if file.pathExtension.lowercased() == "typ" {
+            guard let typst = find("typst") else { return nil }
+            let pdf = build.appending(path: file.deletingPathExtension().lastPathComponent + ".pdf")
+            return Job(program: typst, arguments: ["compile", "--root", root.path, "--diagnostic-format", "short", file.path, pdf.path], folder: root, environment: [:])
+        }
+        let folder = file.deletingLastPathComponent()
+        if let latexmk = find("latexmk") {
+            let engine = ["xelatex": "-xelatex", "lualatex": "-lualatex"][magic("program", in: file)?.lowercased() ?? ""] ?? "-pdf"
+            let engines = ["pdflatex", "xelatex", "lualatex"].map { "-\($0)=\($0) -no-shell-escape %O %S" }
+            let arguments = ["-norc", engine] + engines + ["-interaction=nonstopmode", "-file-line-error", "-outdir=\(build.path)", file.lastPathComponent]
+            return Job(program: latexmk, arguments: arguments, folder: folder, environment: ["openin_any": "p", "openout_any": "p", "TEXMFOUTPUT": build.path])
+        }
+        if let tectonic = find("tectonic") {
+            return Job(program: tectonic, arguments: ["-X", "compile", "--untrusted", "--keep-logs", "--outdir", build.path, file.lastPathComponent], folder: folder, environment: [:])
+        }
+        return nil
+    }
+
+    /// The file a .tex `source` typesets: itself, or its `% !TEX root` when that resolves, symlinks and all, inside
+    /// `root`; nil when it doesn't.
+    nonisolated static func main(of source: URL, in root: URL) -> URL? {
+        guard let name = magic("root", in: source) else { return source }
+        let file = source.deletingLastPathComponent().appending(path: name).standardizedFileURL
+        guard let folder = real(root), let path = real(file), path.hasPrefix(folder + "/") else { return nil }
+        return file
+    }
+
+    private nonisolated static func real(_ url: URL) -> String? {
+        guard let path = realpath(url.path, nil) else { return nil }
+        defer { free(path) }
+        return String(cString: path)
     }
 
     private nonisolated static func find(_ program: String) -> String? {

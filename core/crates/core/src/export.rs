@@ -11,7 +11,10 @@ use std::fmt::Write;
 use std::io::Read;
 use std::path::{Component, Path};
 
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Alignment, CodeBlockKind, Event, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
+    Tag, TagEnd,
+};
 
 use crate::jail::Jail;
 
@@ -37,23 +40,35 @@ const MAX_IMAGE: u64 = 20 << 20;
 /// Scripts never run; styles and images come only from the page itself and data URLs.
 pub const CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:";
 
-const OPTIONS: Options = crate::md::OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+pub(crate) const OPTIONS: Options =
+    crate::md::OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
 
+/// A page titled by its front matter's `title`, else `options.title`, in its `lang`, else English.
 pub fn html(text: &str, options: &ExportOptions<'_>) -> String {
+    let front = front_matter(text);
+    let field = |key: &str| {
+        front.lines().find_map(|line| {
+            let value = line.strip_prefix(key)?.strip_prefix(':')?.trim();
+            let value = value.trim_matches(['"', '\'']);
+            (!value.is_empty()).then_some(value)
+        })
+    };
     let mut out = String::with_capacity(text.len() * 2);
     let _ = write!(
         out,
-        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n\
+        "<!DOCTYPE html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n",
-        escape(options.title),
+        escape(field("lang").unwrap_or("en")),
+        escape(field("title").unwrap_or(options.title)),
         options.css.replace("</", "<\\/"),
     );
     Writer {
         out: &mut out,
         options,
         footnotes: HashMap::new(),
+        anchors: HashMap::new(),
         columns: Vec::new(),
         column: 0,
         head: false,
@@ -61,6 +76,58 @@ pub fn html(text: &str, options: &ExportOptions<'_>) -> String {
     .run(Parser::new_ext(text, OPTIONS));
     out.push_str("</body>\n</html>\n");
     out
+}
+
+/// The YAML front matter that opens `text`, or "".
+fn front_matter(text: &str) -> String {
+    let mut events = Parser::new_ext(text, OPTIONS);
+    match events.next() {
+        Some(Event::Start(Tag::MetadataBlock(MetadataBlockKind::YamlStyle))) => code(&mut events),
+        _ => String::new(),
+    }
+}
+
+/// A heading's anchor as GitHub writes it: lowercase, letters, digits, `-` and `_` kept, spaces as `-`.
+pub(crate) fn slug(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `path` with every byte but ASCII letters, digits and `-._~/` percent-encoded.
+pub(crate) fn encode(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for &byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+pub(crate) fn percent_decoded(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// The folder beside an export named `name` that holds its images and diagrams: the name with every character but
@@ -95,23 +162,50 @@ pub fn escape(text: &str) -> String {
     out
 }
 
+/// A link's target, unescaped, unless its scheme can run code: an email autolink as a `mailto:` URL and a wikilink as
+/// its note's exported page, `Note.html#section`.
+pub(crate) fn link_target(kind: LinkType, target: &str) -> Option<String> {
+    match kind {
+        LinkType::Email => Some(format!("mailto:{target}")),
+        LinkType::WikiLink { .. } => {
+            let (note, section) = target.split_once('#').unwrap_or((target, ""));
+            let note = note.strip_suffix(".md").unwrap_or(note);
+            let page = if note.is_empty() {
+                String::new()
+            } else {
+                encode(note) + ".html"
+            };
+            let fragment = if section.is_empty() {
+                String::new()
+            } else {
+                format!("#{}", slug(section))
+            };
+            Some(page + &fragment)
+        }
+        _ => safe(target).then(|| target.to_owned()),
+    }
+}
+
 /// A link target, unless its scheme can run code: relative paths, fragments and web, mail and data-image URLs.
 fn url(target: &str) -> Option<String> {
-    let scheme_end = target.find([':', '/', '?', '#']);
-    let safe = match scheme_end {
+    safe(target).then(|| escape(target))
+}
+
+fn safe(target: &str) -> bool {
+    match target.find([':', '/', '?', '#']) {
         Some(at) if target[at..].starts_with(':') => {
             let scheme = target[..at].to_ascii_lowercase();
             matches!(scheme.as_str(), "http" | "https" | "mailto")
                 || target[at + 1..].starts_with("image/") && scheme == "data"
         }
         _ => true,
-    };
-    safe.then(|| escape(target))
+    }
 }
 
-/// A data URL of the image `read_image` finds.
+/// A data URL of the image `read_image` finds, its path percent-decoded.
 fn inline_image(folder: &Path, path: &str) -> Option<String> {
-    let (mime, bytes) = read_image(folder, path)?;
+    let path = percent_decoded(path).unwrap_or_else(|| path.to_owned());
+    let (mime, bytes) = read_image(folder, &path)?;
     Some(format!("data:{mime};base64,{}", base64(&bytes)))
 }
 
@@ -179,6 +273,8 @@ struct Writer<'o, 'a> {
     options: &'o ExportOptions<'a>,
     /// Footnote labels by the number they show, in order of first mention.
     footnotes: HashMap<String, usize>,
+    /// How many headings took each anchor so far.
+    anchors: HashMap<String, usize>,
     columns: Vec<Alignment>,
     column: usize,
     head: bool,
@@ -190,10 +286,34 @@ impl Writer<'_, '_> {
         *self.footnotes.entry(label.to_owned()).or_insert(next)
     }
 
+    /// The anchor of a heading reading `text`: its slug, with `-1`, `-2` and so on after the first use.
+    fn anchor(&mut self, text: &str) -> String {
+        let slug = match slug(text) {
+            slug if slug.is_empty() => "heading".to_owned(),
+            slug => slug,
+        };
+        let used = self.anchors.entry(slug.clone()).or_default();
+        *used += 1;
+        match *used {
+            1 => slug,
+            n => format!("{slug}-{}", n - 1),
+        }
+    }
+
     fn run<'t>(&mut self, events: impl Iterator<Item = Event<'t>>) {
         let mut events = events;
         while let Some(event) = events.next() {
             match event {
+                Event::Start(Tag::Heading { level, .. }) => {
+                    let inner: Vec<Event<'t>> = events
+                        .by_ref()
+                        .take_while(|event| !matches!(event, Event::End(TagEnd::Heading(_))))
+                        .collect();
+                    let id = self.anchor(&code(&mut inner.iter().cloned()));
+                    let _ = write!(self.out, "<{} id=\"{}\">", heading(level), escape(&id));
+                    self.run(inner.into_iter());
+                    self.end(TagEnd::Heading(level));
+                }
                 Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
                     if info.split_whitespace().next() == Some("mermaid") =>
                 {
@@ -228,14 +348,31 @@ impl Writer<'_, '_> {
                     code(&mut events);
                 }
                 Event::Start(Tag::Image {
-                    dest_url, title, ..
+                    link_type,
+                    dest_url,
+                    title,
+                    ..
                 }) => {
                     let alt = code(&mut events);
-                    self.out.push_str("<img");
                     let inlined = self
                         .options
                         .folder
                         .and_then(|folder| inline_image(folder, &dest_url));
+                    if inlined.is_none()
+                        && let LinkType::WikiLink { .. } = link_type
+                    {
+                        // An embedded note, or an image outside the folder, links to it instead of breaking.
+                        if let Some(href) = link_target(link_type, &dest_url) {
+                            let _ = write!(
+                                self.out,
+                                "<a href=\"{}\">{}</a>",
+                                escape(&href),
+                                escape(&alt)
+                            );
+                        }
+                        continue;
+                    }
+                    self.out.push_str("<img");
                     if let Some(src) = inlined.or_else(|| url(&dest_url)) {
                         let _ = write!(self.out, " src=\"{src}\"");
                     }
@@ -295,9 +432,6 @@ impl Writer<'_, '_> {
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
             Tag::Paragraph => self.out.push_str("<p>"),
-            Tag::Heading { level, .. } => {
-                let _ = write!(self.out, "<{}>", heading(level));
-            }
             Tag::BlockQuote(_) => self.out.push_str("<blockquote>\n"),
             // A fenced block with a language is written whole in `run`.
             Tag::CodeBlock(_) => self.out.push_str("<pre><code>"),
@@ -348,10 +482,14 @@ impl Writer<'_, '_> {
             Tag::Superscript => self.out.push_str("<sup>"),
             Tag::Subscript => self.out.push_str("<sub>"),
             Tag::Link {
-                dest_url, title, ..
+                link_type,
+                dest_url,
+                title,
+                ..
             } => {
                 self.out.push_str("<a");
-                if let Some(href) = url(&dest_url) {
+                if let Some(href) = link_target(link_type, &dest_url) {
+                    let href = escape(&href);
                     let _ = write!(self.out, " href=\"{href}\"");
                 }
                 if !title.is_empty() {
@@ -359,7 +497,7 @@ impl Writer<'_, '_> {
                 }
                 self.out.push('>');
             }
-            Tag::Image { .. } | Tag::MetadataBlock(_) => {}
+            Tag::Heading { .. } | Tag::Image { .. } | Tag::MetadataBlock(_) => {}
         }
     }
 
@@ -575,7 +713,7 @@ mod tests {
             },
         );
         assert!(
-            !page.contains("secret") && page.contains("<h1>Hi</h1>"),
+            !page.contains("secret") && page.contains("<h1 id=\"hi\">Hi</h1>"),
             "{page}"
         );
         assert!(
@@ -620,5 +758,155 @@ mod tests {
             );
         }
         assert_eq!(base64(b"Ma"), "TWE=");
+    }
+    #[test]
+    fn front_matter_titles_the_page_and_sets_its_language() {
+        let page = export("---\ntitle: \"Plan <b>\"\nlang: fr\n---\n# Hi\n");
+        assert!(
+            page.contains("<html lang=\"fr\">") && page.contains("<title>Plan &lt;b&gt;</title>"),
+            "{page}"
+        );
+        assert!(export("# Hi\n").contains("<html lang=\"en\">"));
+    }
+
+    #[test]
+    fn headings_take_unique_anchors_and_wikilinks_reach_exported_pages() {
+        let page = export(
+            "# Next *Step*\n\n## Next Step\n\n## !!\n\n[a](#next-step) [[Other Note#Some Section]] [[#Next Step]] \
+             ![[Other Note]] <someone@example.com>\n",
+        );
+        assert!(
+            page.contains("<h1 id=\"next-step\">Next <em>Step</em></h1>")
+                && page.contains("<h2 id=\"next-step-1\">Next Step</h2>")
+                && page.contains("<h2 id=\"heading\">!!</h2>"),
+            "{page}"
+        );
+        assert!(
+            page.contains("<a href=\"Other%20Note.html#some-section\">")
+                && page.contains("<a href=\"#next-step\">")
+                && page.contains("<a href=\"Other%20Note.html\">Other Note</a>")
+                && page.contains("<a href=\"mailto:someone@example.com\">"),
+            "{page}"
+        );
+        assert!(!body(&page).contains("<img"), "{page}");
+    }
+
+    #[test]
+    fn percent_encoded_image_paths_inline() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::create_dir(folder.path().join("sub dir")).unwrap();
+        fs::write(
+            folder.path().join("sub dir/a b.png"),
+            b"\x89PNG\r\n\x1a\nrest",
+        )
+        .unwrap();
+        let page = html(
+            "![x](sub%20dir/a%20b.png)",
+            &ExportOptions {
+                title: "t",
+                css: "",
+                diagram: &|_| None,
+                math: &|_, _| None,
+                code: &|_, _| None,
+                folder: Some(folder.path()),
+            },
+        );
+        assert!(page.contains("<img src=\"data:image/png;base64,"), "{page}");
+    }
+
+    /// The parts of a DOCX export of `text` in `folder`, by name.
+    fn docx_parts(text: &str, folder: &Path) -> HashMap<String, String> {
+        let bytes = docx::docx(text, folder).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        (0..zip.len())
+            .map(|index| {
+                let mut part = zip.by_index(index).unwrap();
+                let mut bytes = Vec::new();
+                part.read_to_end(&mut bytes).unwrap();
+                (
+                    part.name().unwrap().into_owned(),
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn docx_leaves_out_front_matter_and_keeps_math_and_html_block_text() {
+        let folder = tempfile::tempdir().unwrap();
+        let parts = docx_parts(
+            "---\ntitle: Secret\n---\n$e^{-x^2}\\,dx$\n\n<div>\nInside a div\n</div>\n\n<details><summary>Click</summary>Hidden</details>\n",
+            folder.path(),
+        );
+        let document = &parts["word/document.xml"];
+        assert!(
+            !document.contains("Secret") && !document.contains("w:pBdr"),
+            "{document}"
+        );
+        assert!(document.contains(r"e^{-x^2}\,dx"), "{document}");
+        assert!(
+            document.contains("Inside a div")
+                && document.contains("Click Hidden")
+                && !document.contains("div&gt;"),
+            "{document}"
+        );
+    }
+
+    #[test]
+    fn docx_links_pass_the_allowlist_and_email_gets_mailto() {
+        let folder = tempfile::tempdir().unwrap();
+        let parts = docx_parts(
+            "[a](javascript:alert(1)) [b](vbscript:x) [c](file:///etc/passwd) [d](data:text/html,x) [e](https://x.dev) \
+             <someone@example.com> [[Note]]\n",
+            folder.path(),
+        );
+        let rels = &parts["word/_rels/document.xml.rels"];
+        for gone in ["javascript:", "vbscript:", "file:", "data:", "Note"] {
+            assert!(!rels.contains(gone), "{gone}: {rels}");
+        }
+        assert!(
+            rels.contains("Target=\"https://x.dev\"")
+                && rels.contains("Target=\"mailto:someone@example.com\""),
+            "{rels}"
+        );
+    }
+
+    #[test]
+    fn docx_code_blocks_stay_apart_footnotes_repeat_and_images_store_once() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(
+            folder.path().join("dot.png"),
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01",
+        )
+        .unwrap();
+        let deep: String = (0..12)
+            .map(|level| format!("{}- {level}\n", "  ".repeat(level)))
+            .collect();
+        let parts = docx_parts(
+            &format!(
+                "```js\na\nb\n```\n```\nc\n```\n\nOne[^1] two[^1].\n\n[^1]: Note.\n\n![](dot.png) ![](dot.png)\n\n{deep}"
+            ),
+            folder.path(),
+        );
+        let document = &parts["word/document.xml"];
+        assert!(
+            document.contains(
+                r#"<w:pStyle w:val="CodeLanguage"/></w:pPr><w:r><w:t xml:space="preserve">js</w:t>"#
+            ) && document.contains(
+                r#"<w:t xml:space="preserve">a</w:t><w:br/><w:t xml:space="preserve">b</w:t>"#
+            ) && document.matches("w:val=\"CodeLanguage\"").count() == 2,
+            "{document}"
+        );
+        assert_eq!(
+            document.matches("<w:footnoteReference").count(),
+            1,
+            "{document}"
+        );
+        assert!(!document.contains("w:ilvl w:val=\"9\""), "{document}");
+        let media: Vec<&String> = parts
+            .keys()
+            .filter(|name| name.starts_with("word/media/"))
+            .collect();
+        assert_eq!(media.len(), 1, "{media:?}");
     }
 }

@@ -335,7 +335,7 @@ struct RichPasteTests {
         let editor = Editor("# Title\n\nSome **bold** text.\n", caret: 0)
         editor.view.writeHTML(to: board)
         let html = board.string(forType: .html) ?? ""
-        #expect(html.contains("<h1>Title</h1>"))
+        #expect(html.contains("<h1 id=\"title\">Title</h1>"))
         #expect(html.contains("<p>Some <strong>bold</strong> text.</p>"))
         #expect(!html.contains("<body>") && !html.contains("<style>"))
         #expect(board.string(forType: .string) == html)

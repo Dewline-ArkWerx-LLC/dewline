@@ -10,7 +10,7 @@ use std::io::{self, Cursor, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, LinkType, Parser, Tag, TagEnd};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -26,18 +26,20 @@ const TEXT_TWIPS: usize = 9360;
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-/// `markdown` as a DOCX file, with relative image paths read from `folder`.
+/// `markdown` as a DOCX file, with relative image paths read from `folder`. Front matter stays out.
 pub fn docx(markdown: &str, folder: &Path) -> io::Result<Vec<u8>> {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS;
     let mut writer = Writer {
         root: folder.canonicalize().ok(),
         ..Writer::default()
     };
-    for event in Parser::new_ext(markdown, options) {
-        writer.event(event);
+    let mut front = false;
+    for event in Parser::new_ext(markdown, super::OPTIONS) {
+        match event {
+            Event::Start(Tag::MetadataBlock(_)) => front = true,
+            Event::End(TagEnd::MetadataBlock(_)) => front = false,
+            event if !front => writer.event(event),
+            _ => {}
+        }
     }
     writer.package()
 }
@@ -93,11 +95,17 @@ struct Writer {
     note: Option<Option<u32>>,
     note_ids: HashMap<String, u32>,
     defined: HashSet<u32>,
+    /// The number each referenced footnote shows, in order of first reference.
+    shown: HashMap<u32, usize>,
     /// The next paragraph opens with its footnote's mark.
     note_mark: bool,
     media: Vec<(String, Vec<u8>)>,
+    /// Each image file's package name and pixel size, so a file used twice is stored once.
+    pictures: HashMap<PathBuf, (String, u64, u64)>,
     drawings: u32,
     paragraph: bool,
+    /// Inside a tag of an HTML block, which can span its lines.
+    html_tag: bool,
     bold: u32,
     italic: u32,
     strike: u32,
@@ -112,6 +120,8 @@ struct Writer {
     /// Inside a link, and whether it opened a hyperlink element.
     link: Option<bool>,
     code: Option<String>,
+    /// The length of the part's XML just after its last code block.
+    code_end: Option<usize>,
     /// Inside an image: its destination and the alt text so far.
     image: Option<(String, String)>,
     table: Option<Table>,
@@ -153,7 +163,7 @@ impl Writer {
                 let _ = write!(
                     props,
                     r#"<w:numPr><w:ilvl w:val="{}"/><w:numId w:val="{numbering}"/></w:numPr>"#,
-                    self.lists.len() - 1
+                    (self.lists.len() - 1).min(8)
                 );
             } else {
                 let _ = write!(props, r#"<w:ind w:left="{}"/>"#, 720 * self.lists.len());
@@ -252,19 +262,50 @@ impl Writer {
                 } else {
                     let id = self.note_id(&label);
                     self.open();
-                    self.push(&format!(
-                        r#"<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="{id}"/></w:r>"#
-                    ));
+                    let next = self.shown.len() + 1;
+                    match self.shown.get(&id) {
+                        // A repeated reference shows the same number and makes no second footnote.
+                        Some(number) => self.text(&number.to_string(), Some("FootnoteReference")),
+                        None => {
+                            self.shown.insert(id, next);
+                            self.push(&format!(
+                                r#"<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="{id}"/></w:r>"#
+                            ));
+                        }
+                    }
                 }
             }
             // Raw HTML is inert: its tags are dropped and the text between them stays.
-            Event::Html(_) | Event::InlineHtml(_) => {}
+            Event::Html(html) => {
+                let mut words = String::new();
+                for c in html.chars() {
+                    match c {
+                        '<' => self.html_tag = true,
+                        '>' if self.html_tag => {
+                            self.html_tag = false;
+                            words.push(' ');
+                        }
+                        c if !self.html_tag => words.push(c),
+                        _ => {}
+                    }
+                }
+                let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !words.is_empty() {
+                    let space = if self.paragraph { " " } else { "" };
+                    self.text(&format!("{space}{words}"), None);
+                }
+            }
+            Event::InlineHtml(_) => {}
         }
     }
 
     fn start(&mut self, tag: Tag) {
         match tag {
-            Tag::Paragraph | Tag::HtmlBlock => self.close(),
+            Tag::Paragraph => self.close(),
+            Tag::HtmlBlock => {
+                self.close();
+                self.html_tag = false;
+            }
             Tag::Heading { level, .. } => {
                 self.close();
                 self.heading = Some(level as u32);
@@ -273,8 +314,22 @@ impl Writer {
                 self.close();
                 self.quote += 1;
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.close();
+                let language = match &kind {
+                    CodeBlockKind::Fenced(info) => info.split_whitespace().next(),
+                    CodeBlockKind::Indented => None,
+                };
+                // A label names the language; a block without one that follows another gets a blank label, which
+                // keeps the two apart.
+                let end = self.part().xml.len();
+                let adjacent = self.code_end == Some(end);
+                if let Some(label) = language.or(adjacent.then_some("\u{a0}")) {
+                    self.push(&format!(
+                        r#"<w:p><w:pPr><w:pStyle w:val="CodeLanguage"/></w:pPr><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+                        escaped(label)
+                    ));
+                }
                 self.code = Some(String::new());
             }
             Tag::List(start) => {
@@ -346,17 +401,27 @@ impl Writer {
             Tag::Emphasis => self.italic += 1,
             Tag::Strong => self.bold += 1,
             Tag::Strikethrough => self.strike += 1,
-            Tag::Link { dest_url, .. } => {
+            Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            } => {
                 if self.image.is_some() || self.code.is_some() {
                     return;
                 }
                 self.open();
-                if dest_url.is_empty() || dest_url.starts_with('#') {
-                    self.link = Some(false);
-                } else {
-                    let id = self.part().rel("hyperlink", dest_url.to_string(), true);
-                    self.push(&format!(r#"<w:hyperlink r:id="{id}">"#));
-                    self.link = Some(true);
+                // Wikilinks stay text: the notes they name are not in the document.
+                let target = match link_type {
+                    LinkType::WikiLink { .. } => None,
+                    _ => super::link_target(link_type, &dest_url),
+                };
+                match target.filter(|target| !target.is_empty() && !target.starts_with('#')) {
+                    Some(target) => {
+                        let id = self.part().rel("hyperlink", target, true);
+                        self.push(&format!(r#"<w:hyperlink r:id="{id}">"#));
+                        self.link = Some(true);
+                    }
+                    None => self.link = Some(false),
                 }
             }
             Tag::Image { dest_url, .. } => self.image = Some((dest_url.to_string(), String::new())),
@@ -376,13 +441,19 @@ impl Writer {
                 self.quote = self.quote.saturating_sub(1);
             }
             TagEnd::CodeBlock => {
+                // One paragraph per block, its lines split by breaks, so adjacent blocks stay apart.
                 let code = self.code.take().unwrap_or_default();
-                for line in code.strip_suffix('\n').unwrap_or(&code).split('\n') {
-                    self.push(&format!(
-                        r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
-                        escaped(line)
-                    ));
-                }
+                let lines: Vec<String> = code
+                    .strip_suffix('\n')
+                    .unwrap_or(&code)
+                    .split('\n')
+                    .map(|line| format!(r#"<w:t xml:space="preserve">{}</w:t>"#, escaped(line)))
+                    .collect();
+                self.push(&format!(
+                    r#"<w:p><w:pPr><w:pStyle w:val="SourceCode"/></w:pPr><w:r>{}</w:r></w:p>"#,
+                    lines.join("<w:br/>")
+                ));
+                self.code_end = Some(self.part().xml.len());
             }
             TagEnd::List(_) => {
                 self.close();
@@ -465,10 +536,17 @@ impl Writer {
 
     /// Adds the image at `dest` to the package and returns its relationship and size in EMUs.
     fn picture(&mut self, dest: &str) -> Option<(String, u64, u64)> {
-        let bytes = read_image(self.root.as_deref()?, dest)?;
-        let (extension, width, height) = image_size(&bytes)?;
-        let name = format!("image{}.{extension}", self.media.len() + 1);
-        self.media.push((name.clone(), bytes));
+        let (real, bytes) = read_image(self.root.as_deref()?, dest)?;
+        let (name, width, height) = match self.pictures.get(&real) {
+            Some(picture) => picture.clone(),
+            None => {
+                let (extension, width, height) = image_size(&bytes)?;
+                let name = format!("image{}.{extension}", self.media.len() + 1);
+                self.media.push((name.clone(), bytes));
+                self.pictures.insert(real, (name.clone(), width, height));
+                (name, width, height)
+            }
+        };
         let id = self.part().rel("image", format!("media/{name}"), false);
         let (mut cx, mut cy) = (width * EMU_PER_PX, height * EMU_PER_PX);
         if cx > MAX_WIDTH {
@@ -536,7 +614,7 @@ impl Writer {
                 .map(|(name, bytes)| (format!("word/media/{name}"), bytes)),
         );
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         for (name, bytes) in files {
             zip.start_file(name, options).map_err(io::Error::other)?;
             zip.write_all(&bytes)?;
@@ -549,7 +627,7 @@ impl Writer {
 /// relative or absolute path, percent-encoded or not, but never a URL. The
 /// path is resolved, checked against `root`, opened without following a link
 /// and checked again by the descriptor's own path.
-fn read_image(root: &Path, dest: &str) -> Option<Vec<u8>> {
+fn read_image(root: &Path, dest: &str) -> Option<(PathBuf, Vec<u8>)> {
     let scheme = dest.split_once(':').is_some_and(|(scheme, _)| {
         scheme.len() > 1
             && scheme
@@ -559,7 +637,7 @@ fn read_image(root: &Path, dest: &str) -> Option<Vec<u8>> {
     if dest.is_empty() || scheme || dest.starts_with("//") {
         return None;
     }
-    let path = root.join(percent_decoded(dest.split(['?', '#']).next()?)?);
+    let path = root.join(super::percent_decoded(dest.split(['?', '#']).next()?)?);
     let real = path.canonicalize().ok()?;
     if !real.starts_with(root) {
         return None;
@@ -575,7 +653,7 @@ fn read_image(root: &Path, dest: &str) -> Option<Vec<u8>> {
     }
     let mut bytes = Vec::new();
     file.take(MAX_IMAGE).read_to_end(&mut bytes).ok()?;
-    Some(bytes)
+    Some((real, bytes))
 }
 
 #[cfg(target_os = "macos")]
@@ -595,23 +673,6 @@ fn opened_inside(file: &std::fs::File, root: &Path) -> bool {
 #[cfg(not(target_os = "macos"))]
 fn opened_inside(_: &std::fs::File, _: &Path) -> bool {
     true
-}
-
-fn percent_decoded(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            index += 3;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(out).ok()
 }
 
 /// The package extension and pixel size of a PNG, JPEG or GIF.
@@ -710,4 +771,4 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 
 const SETTINGS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr></w:settings>"#;
 
-const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia" w:eastAsia="Georgia" w:cs="Georgia"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="360" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="300" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:i/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="12" w:space="8" w:color="A0A0A0"/></w:pBdr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:color w:val="505050"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="SourceCode"><w:name w:val="Source Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F4F4F4"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo" w:eastAsia="Menlo" w:cs="Menlo"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="40" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style><w:style w:type="character" w:styleId="VerbatimChar"><w:name w:val="Verbatim Char"/><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo" w:eastAsia="Menlo" w:cs="Menlo"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="1F5FBF"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="table" w:styleId="Table"><w:name w:val="Table"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/></w:tblBorders><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>"#;
+const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia" w:eastAsia="Georgia" w:cs="Georgia"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="360" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="300" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="60"/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:i/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="12" w:space="8" w:color="A0A0A0"/></w:pBdr><w:ind w:left="720"/></w:pPr><w:rPr><w:i/><w:color w:val="505050"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="SourceCode"><w:name w:val="Source Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F4F4F4"/><w:spacing w:after="160" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo" w:eastAsia="Menlo" w:cs="Menlo"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CodeLanguage"><w:name w:val="Code Language"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:after="40" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo" w:eastAsia="Menlo" w:cs="Menlo"/><w:color w:val="707070"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="40" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style><w:style w:type="character" w:styleId="VerbatimChar"><w:name w:val="Verbatim Char"/><w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo" w:eastAsia="Menlo" w:cs="Menlo"/><w:sz w:val="19"/><w:szCs w:val="19"/></w:rPr></w:style><w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="1F5FBF"/><w:u w:val="single"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="table" w:styleId="Table"><w:name w:val="Table"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:left w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:right w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/></w:tblBorders><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>"#;

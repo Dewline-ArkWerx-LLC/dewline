@@ -283,7 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try Welcome.write(in: folder)
             Library.noteOpened(folder, folder: true)
-            Self.welcomeWindow(in: folder).showWindow(nil)
+            let window = Self.welcomeWindow(in: folder)
+            window.showWindow(nil)
+            if let sheet = window.window { DefaultApp.offer(on: sheet) }
         } catch {
             NSApp.presentError(error)
         }

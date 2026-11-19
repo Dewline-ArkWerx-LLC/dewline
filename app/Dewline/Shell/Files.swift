@@ -11,10 +11,10 @@ struct FolderEntry: Equatable {
     /// The extensions of net.daringfireball.markdown, as project.yml declares it.
     static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
 
-    /// Markdown, or a Cursor rule (.mdc), which is Markdown under front matter.
+    /// Markdown, or a Cursor rule (.mdc), MDX or Quarto file, which project.yml declares as Markdown dialects.
     var isMarkdown: Bool {
         let type = url.pathExtension.lowercased()
-        return !isFolder && (Self.markdownExtensions.contains(type) || type == "mdc")
+        return !isFolder && (Self.markdownExtensions.contains(type) || ["mdc", "mdx", "qmd"].contains(type))
     }
 
     var isCode: Bool {
@@ -31,6 +31,8 @@ struct FolderEntry: Equatable {
 struct Folder {
     /// The hidden folders that hold what agents read: rules, skills, commands and instructions.
     static let agentFolders: Set<String> = [".claude", ".cursor", ".github"]
+    /// Other apps' data and caches, which no folder walk enters.
+    static let library = URL(filePath: NSHomeDirectory()).appending(path: "Library").standardizedFileURL
 
     let url: URL
     let ignore: GitIgnores
@@ -41,15 +43,15 @@ struct Folder {
     }
 
     /// The children of `folder`, folders first in Finder order, and the names git ignores,
-    /// which are among the children only when `showingIgnored`. Hidden files, .git and node_modules never show; the
-    /// agent folders do.
+    /// which are among the children only when `showingIgnored`. Hidden files, .git, node_modules and ~/Library never
+    /// show; the agent folders do.
     func children(of folder: URL, showingIgnored: Bool = false) -> (entries: [FolderEntry], ignored: [String]) {
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey], options: []
         )) ?? []
         var entries: [FolderEntry] = []
         var ignored: [String] = []
-        for child in urls where child.lastPathComponent != "node_modules" {
+        for child in urls where child.lastPathComponent != "node_modules" && child.standardizedFileURL.path != Self.library.path {
             let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isHiddenKey])
             let isFolder = values?.isDirectory == true
             let hidden = child.lastPathComponent.hasPrefix(".") || values?.isHidden == true
@@ -103,6 +105,7 @@ final class FolderWatch {
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes)
         )
         guard let stream else { return }
+        _ = FSEventStreamSetExclusionPaths(stream, [Folder.library.path] as CFArray)
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
     }

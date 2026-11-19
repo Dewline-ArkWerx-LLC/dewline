@@ -386,6 +386,8 @@ struct LiveFileTests {
         file.type("?", at: 7)
         #expect(await file.live.autosave() == .deleted)
         #expect(window.statusBar.shown?.text == "Not saved: the file was deleted")
+        // Closing asks: no file opens to offer the draft back.
+        #expect(await file.document.flush() == false)
     }
 
     @Test func restoringASnapshotIsOneUndo() async throws {

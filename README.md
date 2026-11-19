@@ -27,7 +27,7 @@ macOS 26+ · Free · No account, no telemetry
 
 **Links.** Links stay quiet in the text. Turn on link previews in Settings and a link on its own line shows a preview card, and hovering a link shows one.
 
-**Your agent's edits, by name.** Hooks let Claude Code and Codex name their writes, which land as marked changes you keep or revert. Dewline ships no model and needs no account.
+**Your agent's edits, by name.** Hooks let Claude Code, Codex and Cursor name their writes, which land as marked changes you keep or revert. Dewline ships no model and needs no account.
 
 **Sharing.** Export to PDF, Word, HTML, RTF, OpenDocument, EPUB, LaTeX, portable Markdown, plain text or PNG. Quick Look previews .md files in Finder.
 

@@ -284,7 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try Welcome.write()
             let window = Self.welcomeWindow(at: Welcome.url())
             window.showWindow(nil)
-            if let sheet = window.window { DefaultApp.offer(on: sheet) }
+            if let sheet = window.window {
+                DefaultApp.offer(on: sheet)
+                HookSetup.offer(on: sheet)
+            }
         } catch {
             NSApp.presentError(error)
         }

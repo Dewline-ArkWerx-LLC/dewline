@@ -408,7 +408,7 @@ fn each_event_shape_sends_what_claims_rs_parses() {
 }
 
 #[test]
-fn bash_sends_its_timing_alone_and_other_tools_name_nothing() {
+fn bash_sends_its_timing_and_folder_and_other_tools_name_nothing() {
     let fixture = Fixture::new();
     let mut event = fixture.event("claude PreToolUse Edit");
     event["tool_name"] = "Bash".into();
@@ -416,10 +416,9 @@ fn bash_sends_its_timing_alone_and_other_tools_name_nothing() {
     let line = fixture.one("claude", &event).unwrap();
     parses(&line);
     assert_eq!(line["tool"], "Bash");
-    assert!(
-        line.get("path").is_none() && line.get("hash").is_none(),
-        "{line}"
-    );
+    let cwd = fs::canonicalize(fixture.dir.path()).unwrap();
+    assert_eq!(line["path"], cwd.to_str().unwrap());
+    assert!(line.get("hash").is_none(), "{line}");
     let mut event = fixture.event("claude PreToolUse Edit");
     for tool in ["NotebookEdit", "Glob", "edit"] {
         event["tool_name"] = tool.into();

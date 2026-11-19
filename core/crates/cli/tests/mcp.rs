@@ -301,4 +301,32 @@ fn doctor_installs_hooks_only_from_a_terminal() {
     assert!(String::from_utf8_lossy(&install.stderr).contains("needs a terminal"));
     assert_eq!(fs::read(&settings).unwrap(), b"{\"model\": \"opus\"}");
     assert!(!fixture.home().join(".codex").exists());
+
+    let project = fixture.home().join("project");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::create_dir_all(project.join(".cursor")).unwrap();
+    fs::write(
+        project.join(".claude/settings.local.json"),
+        "{\"disableAllHooks\": true}",
+    )
+    .unwrap();
+    let hook =
+        |event: &str| format!("\"{event}\": [{{\"command\": \"dewline notify --hook cursor\"}}]");
+    let events = ["preToolUse", "postToolUse", "afterFileEdit", "stop"].map(hook);
+    fs::write(
+        project.join(".cursor/hooks.json"),
+        format!("{{\"version\": 1, \"hooks\": {{{}}}}}", events.join(", ")),
+    )
+    .unwrap();
+    let report = fixture
+        .command(&["doctor"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let report = String::from_utf8(report.stdout).unwrap();
+    assert!(
+        report.contains("Claude Code: hooks off; disableAllHooks is set in "),
+        "{report}"
+    );
+    assert!(report.contains("Cursor: installed in "), "{report}");
 }

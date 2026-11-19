@@ -609,6 +609,19 @@ final class EditorTextView: CaretTextView {
         }
     }
 
+    /// `text` with each LF as CRLF in a note whose lines end that way.
+    func withLineBreaks(_ text: String) -> String {
+        guard lineBreak == "\r\n" else { return text }
+        var scalars = String.UnicodeScalarView()
+        var last: Unicode.Scalar?
+        for scalar in text.unicodeScalars {
+            if scalar == "\n", last != "\r" { scalars.append("\r") }
+            scalars.append(scalar)
+            last = scalar
+        }
+        return String(scalars)
+    }
+
     /// The break that ends the caret's line, or the line above on the last line; empty when neither has one.
     private var lineBreak: String {
         let text = textStorage!.mutableString
@@ -730,8 +743,14 @@ final class EditorTextView: CaretTextView {
         super.readablePasteboardTypes + (Self.kept.map { NSPasteboard.PasteboardType($0.identifier) } + [.tiff, .fileURL]).filter { !super.readablePasteboardTypes.contains($0) }
     }
 
+    /// Text pasted or dropped into a note whose lines end in CRLF takes CRLF.
     override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
-        insertImages(from: pboard) || super.readSelection(from: pboard, type: type)
+        if insertImages(from: pboard) { return true }
+        guard type == .string, lineBreak == "\r\n", let text = pboard.string(forType: .string) else {
+            return super.readSelection(from: pboard, type: type)
+        }
+        replace(selectedRange(), with: withLineBreaks(text))
+        return true
     }
 
     /// Replaces `range` with `text` as one undoable edit of its own, named `name` in the Edit menu.

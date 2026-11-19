@@ -177,6 +177,12 @@ public final class ChangeEngine: Sendable {
         try Self.call { try engine.closedWrite(path: url.path, origin: origin.ffi, before: before, declared: declared) }
     }
 
+    /// `closedWrite` for a write already made, as Cursor reports one: the file at `url` held the bytes whose BLAKE3
+    /// hex is `before`. Kept only when the engine's store holds them.
+    public func closedWrote(_ url: URL, origin: Origin, before: String, declared: String) throws(Failure) {
+        try Self.call { try engine.closedWrote(path: url.path, origin: origin.ffi, before: before, declared: declared) }
+    }
+
     /// Notes the Markdown files in `folder`, and its subfolders when `deep`, so one changed while closed, or while
     /// the app was quit, is in `closedChanges`. Off the main thread.
     public func scan(_ folder: URL, deep: Bool) throws(Failure) {

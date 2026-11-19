@@ -137,7 +137,7 @@ targets:
             CFBundleTypeExtensions: [
               pyi, pyw, jsx, cjs, ts, cts, cs, go, rs, kt, kts, scala, sc, dart, lua, hs, ex, exs, erl, hrl, clj, cljs, cljc,
               fsx, fsi, ml, mli, jl, groovy, gradle, ps1, psm1, fish, scss, sass, jsonc, json5, cmake, graphql, gql, tf, hcl,
-              nix, zig, asm, dockerfile,
+              nix, zig, asm, dockerfile, typ,
             ]
             NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
           # A folder dropped on the Dock icon opens in a window (application(_:open:)). Viewer at None accepts the drop

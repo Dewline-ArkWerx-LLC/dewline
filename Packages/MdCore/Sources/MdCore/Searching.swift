@@ -97,14 +97,15 @@ public func replacingMatches(of query: String, in text: String, with replacement
 }
 
 /// Replaces each match of `query` in the file at `url` as `replacingMatches` does, and returns how many there were. Only
-/// a file that resolves inside `folder` is written, and only while it still holds what was read.
+/// a file that resolves inside `folder` is written, and only while it still holds what was read. `engine` notes the
+/// write as yours.
 public func replaceMatches(
-    of query: String, inFile url: URL, under folder: URL, with replacement: String, options: SearchOptions
+    of query: String, inFile url: URL, under folder: URL, with replacement: String, options: SearchOptions, engine: ChangeEngine?
 ) throws(SearchFailure) -> Int {
     do {
         return Int(try replaceInFile(
             root: folder.path, path: url.path, query: query, with: replacement, matchCase: options.matchCase, wholeWord: options.wholeWord,
-            regex: options.regex
+            regex: options.regex, engine: engine?.engine
         ))
     } catch {
         throw SearchFailure(error)

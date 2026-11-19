@@ -600,9 +600,25 @@ final class EditorTextView: CaretTextView {
         centerCaretSoon()
     }
 
+    /// Return breaks the line with CRLF in a note whose lines end that way.
     override func insertNewline(_ sender: Any?) {
         guard hasMarkedText() || !continueList() else { return }
-        super.insertNewline(sender)
+        if !hasMarkedText(), lineBreak == "\r\n" {
+            insertText("\r\n", replacementRange: selectedRange())
+        } else {
+            super.insertNewline(sender)
+        }
+    }
+
+    /// The break that ends the caret's line, or the line above on the last line; empty when neither has one.
+    private var lineBreak: String {
+        let text = textStorage!.mutableString
+        var (start, end, contentsEnd) = (0, 0, 0)
+        text.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: selectedRange().location, length: 0))
+        if end == contentsEnd, start > 0 {
+            text.getLineStart(nil, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: start - 1, length: 0))
+        }
+        return text.substring(with: NSRange(location: contentsEnd, length: end - contentsEnd))
     }
 
     override func insertTab(_ sender: Any?) {

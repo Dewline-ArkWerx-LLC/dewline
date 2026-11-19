@@ -12,6 +12,6 @@ Date: 2026-11-19. The owner's decisions, approved with the Dewline Sync plan the
 | Trial | 30 days, no card, 1 GB and 30 days of history, one per device key | not planned |
 | Free sync tier | none; iCloud Drive and git are the free path | not planned |
 | Other plans | no Supporter plan; a Work plan waits until three companies ask for invoices or shared folders | three companies ask |
-| Merchant of record | Paddle, once its written rate for a $5 subscription is in hand; Polar if that rate is worse | Paddle's written rate |
+| Merchant of record | Stripe Managed Payments; Paddle is the fallback if Stripe's live eligibility review declines the account | Stripe's live review declines |
 | Discontinuation | 90 days' notice and a pro-rata refund of unused paid time; annual terms honored to their end, then the service closes with an export. Files stay on every Mac. | not planned |
 | Dates | beta list when the sync record (0012) is accepted, target 18 Dec 2026; private beta 1 Mar 2027; public beta, price notice and founding pre-sale 26 Apr; first charge 24 May | a gate above misses |

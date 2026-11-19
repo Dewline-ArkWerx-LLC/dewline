@@ -3,13 +3,18 @@ import MdCore
 
 /// `[[` outside code lists the folder's notes by name as you type; picking one with Return or Tab closes the link.
 extension EditorTextView {
-    /// Typing the second `[` of `[[` opens the list.
+    /// Typing the second `[` of `[[` opens the list once the folder's notes are listed, off the main thread, while the
+    /// caret is still in that link.
     func completeWikilink(after typed: Any) {
         guard (typed as? String) == "[", !hasMarkedText(), styler.code == nil, let range = wikilinkName, range.length == 0,
             !styler.isCode(NSRange(location: range.location - 2, length: 2)), let noteFolder
         else { return }
-        wikilinkNames = Self.names(NoteLinks.notes(in: noteFolder))
-        if !wikilinkNames.isEmpty { complete(nil) }
+        Task {
+            let names = await Task.detached(priority: .userInitiated) { EditorTextView.names(NoteLinks.notes(in: noteFolder)) }.value
+            guard !names.isEmpty, wikilinkName?.location == range.location else { return }
+            wikilinkNames = names
+            complete(nil)
+        }
     }
 
     /// What follows an unclosed `[[` on the caret's line, up to the caret.
@@ -28,7 +33,7 @@ extension EditorTextView {
 
     /// The notes' names as a wikilink gives them: a `.md` note's name without the extension, or its path when another
     /// note has that name.
-    private static func names(_ paths: [String]) -> [String] {
+    private nonisolated static func names(_ paths: [String]) -> [String] {
         let notes = paths.filter { ($0 as NSString).pathExtension.lowercased() == "md" }.map { ($0 as NSString).deletingPathExtension }
         let stems = notes.map { ($0 as NSString).lastPathComponent }
         var counts: [String: Int] = [:]

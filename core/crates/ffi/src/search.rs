@@ -1,6 +1,9 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use dewline_core::search;
+
+use crate::engine::Engine;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SearchError {
@@ -123,8 +126,10 @@ pub fn replace_text(
 
 /// Replaces each match of `query` in the file at `path` as `replace_text`
 /// does, and returns how many there were. Only a file that resolves inside
-/// `root` is written, and only while it still holds what was read.
+/// `root` is written, and only while it still holds what was read. `engine`
+/// notes the write as yours.
 #[uniffi::export]
+#[allow(clippy::too_many_arguments)]
 pub fn replace_in_file(
     root: String,
     path: String,
@@ -133,9 +138,11 @@ pub fn replace_in_file(
     match_case: bool,
     whole_word: bool,
     regex: bool,
+    engine: Option<Arc<Engine>>,
 ) -> Result<u32, SearchError> {
     let query = self::query(&query, match_case, whole_word, regex)?;
-    match search::replace_in_file(Path::new(&root), Path::new(&path), &query, &with) {
+    let engine = engine.as_deref().map(|engine| &engine.0);
+    match search::replace_in_file(Path::new(&root), Path::new(&path), &query, &with, engine) {
         Ok(count) => Ok(count as u32),
         Err(search::ReplaceError::Outside) => Err(SearchError::Outside),
         Err(search::ReplaceError::Conflict) => Err(SearchError::Conflict),

@@ -5,7 +5,7 @@ import Foundation
 /// compare-and-swap. Offsets are UTF-16, as NSString counts them. `commit` is safe on the main thread; every other
 /// call reads or writes files or the snapshot store, so it runs off it.
 public final class ChangeEngine: Sendable {
-    private let engine: Engine
+    let engine: Engine
 
     /// Why a call did nothing.
     public enum Failure: Error, Sendable, Equatable {

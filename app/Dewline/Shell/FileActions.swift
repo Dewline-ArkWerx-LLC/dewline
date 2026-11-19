@@ -30,8 +30,8 @@ enum FileActions {
         return url
     }
 
-    /// Renames `url` to `name`, keeping a note's extension when `name` has none. An open note follows, and a note's
-    /// links from the other notes in `folder` follow too.
+    /// Renames `url` to `name`, keeping a note's extension when `name` has none. An open note follows, and the links to
+    /// it, or to what a renamed folder holds, from the notes in `folder` follow too.
     @discardableResult
     static func rename(_ url: URL, to name: String, relinkingIn folder: URL? = nil, undo: UndoManager? = nil) throws -> URL {
         let clean = cleaned(name)
@@ -41,20 +41,20 @@ enum FileActions {
         let target = url.deletingLastPathComponent().appending(path: keepsExtension ? clean + "." + url.pathExtension : clean)
         guard target.lastPathComponent != url.lastPathComponent else { return url }
         let renamed = try relocate(url, to: target, named: "Rename", undo: undo)
-        if let folder, !isFolder { relink(from: url, to: renamed, in: folder, undo: undo) }
+        if let folder { relink(from: url, to: renamed, in: folder, undo: undo) }
         return renamed
     }
 
-    /// Points the links in `folder`'s notes to the note moved from `old` at `new`: open notes through their editors,
-    /// as a landing that undo steps over, closed notes on disk. Undo points them back.
-    private static func relink(from old: URL, to new: URL, in folder: URL, undo: UndoManager?) {
+    /// Points the links in `folder`'s notes to the file or folder moved from `old` at `new`: open notes through their
+    /// editors, as a landing that undo steps over, closed notes on disk as your change. Undo points them back.
+    static func relink(from old: URL, to new: URL, in folder: URL, undo: UndoManager?) {
         let open = NSDocumentController.shared.documents.compactMap { document -> (url: URL, textView: EditorTextView)? in
             guard let document = document as? MarkdownDocument, let url = document.fileURL, let textView = document.textView else { return nil }
             return (url.standardizedFileURL, textView)
         }
         let edits = NoteLinks.relink(
             from: old.standardizedFileURL, to: new.standardizedFileURL, in: folder.standardizedFileURL,
-            open: open.map { ($0.url, $0.textView.string) }
+            open: open.map { ($0.url, $0.textView.string) }, engine: MarkdownDocument.sharedEngine
         )
         for (note, edits) in zip(open, edits) where !edits.isEmpty {
             let storage = note.textView.textStorage!
@@ -96,9 +96,10 @@ enum FileActions {
         return trashed
     }
 
-    /// Moves `url` into `folder`, keeping its name, or numbering it when the name is taken there.
+    /// Moves `url` into `folder`, keeping its name, or numbering it when the name is taken there. The links to it from
+    /// the notes in `notes` follow.
     @discardableResult
-    static func move(_ url: URL, to folder: URL, undo: UndoManager? = nil) throws -> URL {
+    static func move(_ url: URL, to folder: URL, relinkingIn notes: URL? = nil, undo: UndoManager? = nil) throws -> URL {
         let name = url.lastPathComponent
         var target = folder.appending(path: name)
         if FileManager.default.fileExists(atPath: target.path) {
@@ -106,7 +107,9 @@ enum FileActions {
             let ext = (name as NSString).pathExtension
             target = free(stem, extension: ext.isEmpty ? nil : ext, in: folder)
         }
-        return try relocate(url, to: target, named: "Move", undo: undo)
+        let moved = try relocate(url, to: target, named: "Move", undo: undo)
+        if let notes { relink(from: url, to: moved, in: notes, undo: undo) }
+        return moved
     }
 
     // MARK: Naming a new note
@@ -287,7 +290,11 @@ extension MainWindowController {
 
     @objc func moveItems(_ sender: Any?) {
         guard let request = (sender as? NSMenuItem)?.representedObject as? MoveRequest else { return }
-        perform { for url in request.urls { _ = try FileActions.move(url, to: request.folder, undo: self.window?.undoManager) } }
+        perform {
+            for url in request.urls {
+                _ = try FileActions.move(url, to: request.folder, relinkingIn: self.folder?.url, undo: self.window?.undoManager)
+            }
+        }
     }
 
     private func openNew(_ url: URL) {
@@ -302,6 +309,20 @@ extension MainWindowController {
             try action()
         } catch {
             if let window { presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil) }
+        }
+    }
+}
+
+extension MarkdownDocument {
+    /// File > Rename moves the note through here; the links to it from the notes in its window's folder follow.
+    override func move(to url: URL, completionHandler: (((any Error)?) -> Void)? = nil) {
+        let old = fileURL
+        let folder = (windowControllers.first as? MainWindowController)?.folder?.url
+        super.move(to: url) { error in
+            if error == nil, let old, let folder {
+                MainActor.assumeIsolated { FileActions.relink(from: old, to: url, in: folder, undo: nil) }
+            }
+            completionHandler?(error)
         }
     }
 }

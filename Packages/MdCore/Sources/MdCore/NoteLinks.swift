@@ -15,7 +15,7 @@ public struct Backlink: Sendable, Equatable {
 /// Links between the notes in a folder: wikilinks by name, the shortest path winning, and relative markdown links.
 public enum NoteLinks {
     /// The notes under `folder`, relative to it, in name order: `.md`, `.markdown` and `.txt` files outside dot
-    /// folders.
+    /// folders, `node_modules` and what git ignores. Walks the folder, so call it off the main thread.
     public static func notes(in folder: URL) -> [String] {
         (try? notePaths(root: folder.path)) ?? []
     }
@@ -31,14 +31,14 @@ public enum NoteLinks {
         }
     }
 
-    /// Points the links to the note renamed from `old` to `new` in the notes under `folder` at its new name. Closed
-    /// notes change on disk; for each of `open`, the edits its text takes.
+    /// Points the links to the file or folder moved from `old` to `new` in the notes under `folder` at where it is now.
+    /// Closed notes change on disk, which `engine` notes as yours; for each of `open`, the edits its text takes.
     public static func relink(
-        from old: URL, to new: URL, in folder: URL, open: [(url: URL, text: String)]
+        from old: URL, to new: URL, in folder: URL, open: [(url: URL, text: String)], engine: ChangeEngine?
     ) -> [[ChangeEngine.Edit]] {
         let edits = try? relinkNotes(
             root: folder.path, old: old.path, new: new.path,
-            open: open.map { OpenNote(path: $0.url.path, text: $0.text) }
+            open: open.map { OpenNote(path: $0.url.path, text: $0.text) }, engine: engine?.engine
         )
         return (edits ?? []).map { edits in
             edits.map { ChangeEngine.Edit(range: NSRange(location: Int($0.start), length: Int($0.end - $0.start)), text: $0.text) }

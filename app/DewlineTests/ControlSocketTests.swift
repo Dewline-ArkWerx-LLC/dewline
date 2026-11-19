@@ -375,6 +375,7 @@ struct ControlSocketTests {
         process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/Helpers/dewline")
         process.arguments = ["open", "--wait", file.path + ":3:2"]
         process.environment = ["DEWLINE_SOCKET": listening.socket.path]
+        process.terminationHandler = { _ in CFRunLoopWakeUp(CFRunLoopGetMain()) }
         try process.run()
         defer { if process.isRunning { process.terminate() } }
         let request = await listening.nextRequest()
@@ -383,7 +384,7 @@ struct ControlSocketTests {
         #expect(request == ControlSocket.Open(path: String(cString: real), line: 3, column: 2, wait: true))
         #expect(process.isRunning)
         await listening.received.connections.first?.reply(.closed)
-        process.waitUntilExit()
+        await waitForMain { !process.isRunning }
         #expect(process.terminationStatus == 0)
     }
 }

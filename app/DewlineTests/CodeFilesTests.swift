@@ -146,6 +146,38 @@ struct CodeFilesTests {
         #expect(file.textView.string == after)
     }
 
+    @Test func typesetJobsRunWithoutShellEscapeOrOutsidePaths() throws {
+        let (tex, root, build) = (URL(filePath: "/p/doc/a.tex"), URL(filePath: "/p"), URL(filePath: "/c/build"))
+        let latexmk = try #require(Typeset.job(tex, root: root, build: build) { "/bin/\($0)" })
+        #expect(latexmk.program == "/bin/latexmk")
+        #expect(latexmk.arguments == [
+            "-norc", "-pdf", "-pdflatex=pdflatex -no-shell-escape %O %S", "-xelatex=xelatex -no-shell-escape %O %S",
+            "-lualatex=lualatex -no-shell-escape %O %S", "-interaction=nonstopmode", "-file-line-error", "-outdir=/c/build", "a.tex",
+        ])
+        #expect(latexmk.folder.path == "/p/doc")
+        #expect(latexmk.environment == ["openin_any": "p", "openout_any": "p", "TEXMFOUTPUT": "/c/build"])
+        let tectonic = try #require(Typeset.job(tex, root: root, build: build) { $0 == "tectonic" ? "/bin/tectonic" : nil })
+        #expect(tectonic.arguments == ["-X", "compile", "--untrusted", "--keep-logs", "--outdir", "/c/build", "a.tex"])
+        let typst = try #require(Typeset.job(URL(filePath: "/p/doc/a.typ"), root: root, build: build) { "/bin/\($0)" })
+        #expect(typst.arguments == ["compile", "--root", "/p", "--diagnostic-format", "short", "/p/doc/a.typ", "/c/build/a.pdf"])
+        #expect(Typeset.job(tex, root: root, build: build) { _ in nil } == nil)
+    }
+
+    @Test func aTexRootOutsideTheFolderIsRefused() throws {
+        let top = try Self.files(["outside.tex": "\\documentclass{article}\n"])
+        defer { try? FileManager.default.removeItem(at: top) }
+        let folder = top.appending(path: "doc")
+        try FileManager.default.createDirectory(at: folder.appending(path: "ch"), withIntermediateDirectories: true)
+        let files = ["main.tex": "\\documentclass{article}\n", "ch/one.tex": "% !TEX root = ../main.tex\n", "up.tex": "% !TEX root = ../outside.tex\n", "link.tex": "% !TEX root = linked.tex\n"]
+        for (name, text) in files { try Data(text.utf8).write(to: folder.appending(path: name)) }
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "linked.tex"), withDestinationURL: top.appending(path: "outside.tex"))
+        let main = folder.appending(path: "main.tex").path
+        #expect(Typeset.main(of: folder.appending(path: "main.tex"), in: folder)?.path == main)
+        #expect(Typeset.main(of: folder.appending(path: "ch/one.tex"), in: folder)?.path == main)
+        #expect(Typeset.main(of: folder.appending(path: "up.tex"), in: folder) == nil)
+        #expect(Typeset.main(of: folder.appending(path: "link.tex"), in: folder) == nil)
+    }
+
     // MARK: Helpers
 
     private static func setting<T>(_ on: Bool, _ body: () async throws -> T) async rethrows -> T {

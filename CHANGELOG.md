@@ -7,6 +7,7 @@ What changed in each Dewline release, newest first.
 - With Open code files on, `.typ` files open as highlighted Typst. After Dewline saves a `.typ` or `.tex` file, or an agent's write lands in it, Dewline typesets it with the `typst`, `latexmk` or `tectonic` you have installed; the status bar shows errors with Go to Line, and error lines number in red. File > Export writes the PDF. Dewline bundles no compiler.
 - A scan of closed files also covers `.typ` and `.tex`, so an agent's write to one while it was closed opens marked.
 - `dewline doctor` lists `latexmk` and `tectonic`.
+- latexmk runs each LaTeX engine with shell escape off and TeX refusing absolute and parent-folder paths, so a `.tex` file can't run commands or pull outside files into its PDF. A `% !TEX root` outside the folder stops the typeset with an error.
 
 ## 0.5.1 (19 Nov 2026)
 

@@ -317,8 +317,9 @@ public final class ChangeEngine: Sendable {
         try Self.call { try engine.pin(doc: doc, snapshot: snapshot.ffi, pinned: pinned) }
     }
 
-    /// Adds `bytes`, a version of the document's file it does not hold, to the file's history.
-    public func snapshot(_ doc: UInt64, bytes: Data) throws(Failure) {
+    /// Adds `bytes`, a version of the document's file it does not hold, to the file's history. False for a private
+    /// document, which keeps none.
+    public func snapshot(_ doc: UInt64, bytes: Data) throws(Failure) -> Bool {
         try Self.call { try engine.snapshot(doc: doc, bytes: bytes) }
     }
 

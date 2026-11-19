@@ -690,8 +690,8 @@ impl Engine {
     }
 
     /// Adds `bytes`, a version of the document's file it does not hold, to
-    /// the file's history.
-    pub fn snapshot(&self, doc: u64, bytes: Vec<u8>) -> Result<(), EngineError> {
+    /// the file's history. False for a private document, which keeps none.
+    pub fn snapshot(&self, doc: u64, bytes: Vec<u8>) -> Result<bool, EngineError> {
         Ok(self.0.snapshot(DocId(doc), &bytes)?)
     }
 

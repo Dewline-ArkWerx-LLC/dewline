@@ -22,7 +22,7 @@ extension MarkdownDocument {
 
     /// Asks which version stays while iCloud holds another one from a second device, one version at a time. Using
     /// the other lands it as an outside change, marked, so Revert brings the text back; keeping this one puts the
-    /// other in the note's snapshots first.
+    /// other in the note's snapshots first, or leaves it with iCloud when the note keeps none.
     func askWhichVersion() {
         guard let url = fileURL, (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true,
             let window = windowControllers.first?.window, window.attachedSheet == nil,
@@ -33,8 +33,7 @@ extension MarkdownDocument {
         let saved = other.modificationDate.map { ", \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
         alert.informativeText = """
             The window shows one. The other was saved on \(other.localizedNameOfSavingComputer ?? "another device")\(saved). \
-            If you use it, Dewline marks the switch as a change you can revert. If you keep this one, the other \
-            stays in File > Earlier Versions.
+            If you use it, Dewline marks the switch as a change you can revert.
             """
         alert.addButton(withTitle: "Keep This Version")
         alert.addButton(withTitle: "Use the Other Version")
@@ -44,9 +43,11 @@ extension MarkdownDocument {
                 if useOther {
                     try coordinatedWrite(at: url) { url in _ = try other.replaceItem(at: url) }
                     live?.signal()
-                } else if let live {
+                } else {
+                    guard let live else { return }
                     let (engine, doc, version) = (live.engine, live.doc, other.url)
-                    try await Task.detached { try engine.snapshot(doc, bytes: Data(contentsOf: version)) }.value
+                    let kept = try await Task.detached { try engine.snapshot(doc, bytes: Data(contentsOf: version)) }.value
+                    guard kept else { return }
                     live.reloadSnapshots()
                 }
                 other.isResolved = true

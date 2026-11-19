@@ -1315,8 +1315,8 @@ impl Engine {
     }
 
     /// Adds `bytes`, a version of the document's file it does not hold, to
-    /// the file's history.
-    pub fn snapshot(&self, doc: DocId, bytes: &[u8]) -> io::Result<()> {
+    /// the file's history. False for a private document, which keeps none.
+    pub fn snapshot(&self, doc: DocId, bytes: &[u8]) -> io::Result<bool> {
         let (path, private) = {
             let state = self.state();
             let d = state.docs.get(&doc).ok_or_else(closed)?;
@@ -1325,7 +1325,7 @@ impl Engine {
         if !private {
             self.store.put(&path, bytes, UNKNOWN, (self.clock)().1)?;
         }
-        Ok(())
+        Ok(!private)
     }
 
     /// Prunes the store, keeping the drafts of every open document. Only the

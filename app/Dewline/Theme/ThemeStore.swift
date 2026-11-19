@@ -22,7 +22,7 @@ final class ThemeStore {
     static var factory: ThemeStore { ThemeStore(defaults: .factory) }
     static let bodySizes = 12.0...28.0
     static let lineHeights = 1.25...1.8
-    static let columnWidths = 50.0...90.0
+    static let columnWidths = 50.0...120.0
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var colors: [Token: NSColor] = [:]

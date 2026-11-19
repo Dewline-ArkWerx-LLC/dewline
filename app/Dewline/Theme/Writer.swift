@@ -12,7 +12,7 @@ enum Writer: String, CaseIterable, Identifiable, Sendable {
     var name: String {
         switch self {
         case .you: "You"
-        case .claude: "Claude"
+        case .claude: "Claude Code"
         case .codex: "Codex"
         case .cursor: "Cursor"
         case .copilot: "Copilot"

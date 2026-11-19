@@ -70,7 +70,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         paneItem.maximumThickness = RightPane.widths.upperBound
         paneItem.holdingPriority = NSLayoutConstraint.Priority(259)
         split.splitViewItems = [sidebarItem, columnItem, paneItem]
-        toolbar = WindowToolbar(split: split.splitView, folder: folder)
+        toolbar = WindowToolbar(split: split.splitView)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

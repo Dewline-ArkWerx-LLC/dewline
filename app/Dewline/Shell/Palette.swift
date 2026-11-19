@@ -79,10 +79,6 @@ struct PaletteCommand {
             PaletteCommand(
                 id: "settings:vim", group: "Settings", title: "Vim Mode", value: { onOff(store.vimMode) }, action: .toggle { store.vimMode.toggle() }),
             PaletteCommand(
-                id: "settings:headingStyle", group: "Settings", title: "Heading Style",
-                aliases: ["Editorial"], value: { store.headingStyle == .editorial ? "Editorial" : "Standard" },
-                action: .toggle { store.headingStyle = store.headingStyle == .editorial ? .standard : .editorial }),
-            PaletteCommand(
                 id: "settings:showsIgnored", group: "Settings", title: "Show Ignored Files",
                 aliases: ["gitignore"], value: { onOff(preferences.showsIgnored) }, action: .toggle { preferences.showsIgnored.toggle() }),
         ]

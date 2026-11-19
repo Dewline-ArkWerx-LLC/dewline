@@ -22,11 +22,10 @@ enum DewlineApp {
 /// What a launch shows when no file asked to open.
 @MainActor
 enum Launch {
-    /// The launch window shows when nothing else opened and either the setting asks for it or there is no last
-    /// session to reopen. The one caller keeps the test host windowless.
-    static func shouldShowLaunchWindow(session: Session?, defaults: UserDefaults, openWindows: Int) -> Bool {
-        guard openWindows == 0 else { return false }
-        return Preferences(defaults: defaults).launchBehavior == .launchWindow || (session?.windows.isEmpty ?? true)
+    /// The launch window shows when nothing else opened and there is no last session to reopen. The one caller keeps
+    /// the test host windowless.
+    static func shouldShowLaunchWindow(session: Session?, openWindows: Int) -> Bool {
+        openWindows == 0 && session?.windows.isEmpty ?? true
     }
 }
 
@@ -116,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 resume()
                 if applicationShouldOpenUntitledFile(NSApp) { showWelcome(nil) }
             }
-        } else if !isTestHost, Launch.shouldShowLaunchWindow(session: session, defaults: defaults, openWindows: mainWindows) {
+        } else if !isTestHost, Launch.shouldShowLaunchWindow(session: session, openWindows: mainWindows) {
             // AppKit asks for the launch window next, in applicationShouldOpenUntitledFile.
             session = nil
         } else {
@@ -136,8 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if !defaults.bool(forKey: Welcome.shownKey) {
             defaults.set(true, forKey: Welcome.shownKey)
-            // Opened before AppKit asks for an untitled file, so the notes folder shows in place of the launch window.
-            firstLaunch(in: FileActions.notesFolder)
+            // Opened before AppKit asks for an untitled file, so the guide shows in place of the launch window.
+            firstLaunch()
         }
         let engine = MarkdownDocument.sharedEngine
         let control = ControlSocket(path: ControlSocket.standardPath, notify: { claim in
@@ -278,12 +277,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return document
     }
 
-    /// The first launch: Welcome.md in the notes folder, open in a window on that folder with the caret at its end.
-    func firstLaunch(in folder: URL) {
+    /// The first launch: Welcome.md, kept in Dewline's own folder, open in a window without a folder and with the caret
+    /// at its end. No folder of the user's is made or opened until they ask.
+    func firstLaunch() {
         do {
-            try Welcome.write(in: folder)
-            Library.noteOpened(folder, folder: true)
-            let window = Self.welcomeWindow(in: folder)
+            try Welcome.write()
+            let window = Self.welcomeWindow(at: Welcome.url())
             window.showWindow(nil)
             if let sheet = window.window { DefaultApp.offer(on: sheet) }
         } catch {
@@ -291,10 +290,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A window on `folder` with its Welcome.md open and the caret at the end, not yet shown.
-    static func welcomeWindow(in folder: URL) -> MainWindowController {
-        let controller = MainWindowController(folder: Folder(folder))
-        controller.open(Welcome.url(in: folder), newTab: false)
+    /// A window without a folder with the guide at `url` open and the caret at the end, not yet shown.
+    static func welcomeWindow(at url: URL) -> MainWindowController {
+        let controller = MainWindowController(folder: nil)
+        controller.open(url, newTab: false)
         if let textView = controller.textView {
             textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         }
@@ -303,10 +302,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Help > Replay the Demo: Welcome.md again if it is gone, then Demo's change to it.
     @objc func replayDemo(_ sender: Any?) {
-        let folder = FileActions.notesFolder
         do {
-            try Welcome.write(in: folder)
-            playDemo(at: Welcome.url(in: folder))
+            try Welcome.write()
+            playDemo(at: Welcome.url())
         } catch {
             NSApp.presentError(error)
         }
@@ -367,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Called when the last tab closes.
     func nothingIsOpen() {
-        if !isTestHost, Launch.shouldShowLaunchWindow(session: nil, defaults: defaults, openWindows: mainWindows) { showWelcome(nil) }
+        if !isTestHost, Launch.shouldShowLaunchWindow(session: nil, openWindows: mainWindows) { showWelcome(nil) }
     }
 
     func closeLaunchWindow() {
@@ -415,9 +413,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             as? MainWindowController
     }
 
-    /// The front window's folder, else the one Settings > General names for new notes.
+    /// The front window's folder, else the notes folder.
     private var frontFolder: URL {
-        front?.folder?.url ?? Preferences.shared.newFileFolder
+        front?.folder?.url ?? FileActions.notesFolder
     }
 
     /// File > New Note: "Untitled.md" in `frontFolder`, open with the caret ready.
@@ -425,7 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func newNote(_ sender: Any?) {
         do {
             let url = try FileActions.newNote(in: frontFolder)
-            let controller = front?.folder != nil ? front : openFolder(at: Preferences.shared.newFileFolder)?.windowController as? MainWindowController
+            let controller = front?.folder != nil ? front : openFolder(at: FileActions.notesFolder)?.windowController as? MainWindowController
             guard let controller else { return }
             controller.open(url, newTab: true)
             if let document = NSDocumentController.shared.document(for: url) as? MarkdownDocument {

@@ -2,8 +2,8 @@ import AppKit
 import MdCore
 
 /// `dewline://open?path=…&line=…` and `dewline://demo`, Welcome.md's link. `open` shows only a Markdown file inside the
-/// home folder, never inside ~/Library or a `.ssh` folder. `demo` adds its one sentence to Welcome.md in the notes
-/// folder. Nothing else a link names is read or written; `dewline export` reaches the app through the control socket.
+/// home folder, never inside ~/Library or a `.ssh` folder. `demo` adds its one sentence to Welcome.md in Dewline's
+/// own folder. Nothing else a link names is read or written; `dewline export` reaches the app through the control socket.
 @MainActor
 enum SchemeLinks {
     static func handle(_ url: URL) {

@@ -11,17 +11,6 @@ struct GeneralPane: View {
     var body: some View {
         SettingsPage {
             SettingsSection {
-                SettingsRow(label: "When Dewline opens") {
-                    TextChoice(label: "When Dewline opens", selection: $preferences.launchBehavior, options: [
-                        ("Reopen your notes", .lastFiles), ("Show the launch window", .launchWindow),
-                    ])
-                }
-                SettingsRow(label: "Open notes in", detail: "Source shows the plain Markdown.") {
-                    TextChoice(label: "Open notes in", selection: $preferences.opensInSource, options: [("Live", false), ("Source", true)])
-                }
-                SettingsRow(label: "New notes go in") {
-                    FolderField(url: preferences.newFileFolder) { preferences.newFileFolder = $0 }
-                }
                 SettingsRow(label: "Default Markdown app", detail: isDefaultApp ? "Finder opens Markdown files in Dewline." : "Finder opens Markdown files in another app.") {
                     Button("Use Dewline") { Task { isDefaultApp = await DefaultApp.make() } }
                         .buttonStyle(.station)
@@ -29,7 +18,7 @@ struct GeneralPane: View {
                 }
             }
             SettingsSection(title: "Files") {
-                SettingsRow(label: "Show files .gitignore hides", detail: "They show dimmed in the sidebar.") {
+                SettingsRow(label: "Show files .gitignore hides", detail: "Dimmed in the sidebar, and found by Quick Open and Find in Files.") {
                     OnOff(label: "Show files .gitignore hides", isOn: $preferences.showsIgnored)
                 }
                 SettingsRow(label: "Pasted images go") {
@@ -82,9 +71,6 @@ struct GeneralPane: View {
             }
             RestoreDefaults {
                 let factory = Preferences.factory
-                preferences.launchBehavior = factory.launchBehavior
-                preferences.opensInSource = factory.opensInSource
-                preferences.newFileFolder = factory.newFileFolder
                 preferences.showsIgnored = factory.showsIgnored
                 preferences.attachments = factory.attachments
                 preferences.inbox = factory.inbox

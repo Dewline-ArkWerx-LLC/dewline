@@ -330,9 +330,9 @@ final class MarkdownDocument: NSDocument {
         return [device, inode]
     }
 
-    /// Where a new note goes: the folder its window shows, else Settings > General's folder.
+    /// Where a new note goes: the folder its window shows, else the notes folder.
     var newNoteFolder: URL {
-        (windowControllers.first as? MainWindowController)?.folder?.url ?? Preferences.shared.newFileFolder
+        (windowControllers.first as? MainWindowController)?.folder?.url ?? FileActions.notesFolder
     }
 
     override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {

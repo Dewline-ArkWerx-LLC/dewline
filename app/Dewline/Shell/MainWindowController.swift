@@ -460,8 +460,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     /// The folder a file outside every window's folder opens in: its git repository's, else the one that holds it. A
-    /// repository at the home folder counts as none, and so do the home folder, ~/Library and a volume's root: a note
-    /// there opens in a window without a folder.
+    /// repository at the home folder counts as none, and so do the home folder, ~/Library and what it holds, and a
+    /// volume's root: a note there opens in a window without a folder.
     static func folder(for file: URL) -> Folder? {
         let parent = file.standardizedFileURL.deletingLastPathComponent()
         let home = URL(filePath: NSHomeDirectory()).standardizedFileURL.path
@@ -471,7 +471,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             directory = directory.deletingLastPathComponent()
         }
         let isVolume = (try? parent.resourceValues(forKeys: [.isVolumeKey]))?.isVolume == true
-        return isVolume || [home, Folder.library.path].contains(parent.path) ? nil : Folder(parent)
+        let library = Folder.library.path
+        return isVolume || parent.path == home || parent.path == library || parent.path.hasPrefix(library + "/") ? nil : Folder(parent)
     }
 
     private static func load(_ url: URL) -> MarkdownDocument? {

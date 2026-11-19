@@ -52,7 +52,7 @@ struct JourneyTests {
 
         let panel = NSSavePanel()
         #expect(document.prepareSavePanel(panel))
-        #expect(panel.directoryURL?.standardizedFileURL == Preferences.shared.newFileFolder.standardizedFileURL)
+        #expect(panel.directoryURL?.standardizedFileURL == FileActions.notesFolder.standardizedFileURL)
 
         Self.type("# Groceries\nEggs, milk and bread.\n- [ ] oats", into: textView)
         let typed = "# Groceries\nEggs, milk and bread.\n- [ ] oats"
@@ -108,22 +108,22 @@ struct JourneyTests {
         #expect(controller.window?.isVisible == false)
     }
 
-    /// The first launch writes Welcome.md into the notes folder and opens a window on that folder with the guide open
-    /// and the caret at its end. A second launch leaves the guide, and anything typed in it, alone.
-    @Test func j1FirstLaunchOpensWelcomeInTheNotesFolder() async throws {
+    /// The first launch writes Welcome.md into Dewline's own folder and opens it in a window without a folder, with the
+    /// caret at its end. A second launch leaves the guide, and anything typed in it, alone.
+    @Test func j1FirstLaunchOpensWelcomeWithoutAFolder() async throws {
         let vault = try Vault([:])
         defer { vault.remove() }
         let folder = vault.notes.appending(path: "Dewline", directoryHint: .isDirectory)
         #expect(try Welcome.write(in: folder))
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
-        #expect(guide.hasPrefix("# Welcome to Dewline\n\nThis note is a file: Welcome.md, in the Dewline folder in Documents."))
+        #expect(guide.hasPrefix("# Welcome to Dewline\n\nDewline edits Markdown files where they already are."))
         #expect(guide.contains(Welcome.paragraph + " \u{2318}-click to try it: [Show me a change](dewline://demo)"))
         #expect(!guide.contains("\u{2014}") && !guide.contains("--"))
 
-        let controller = AppDelegate.welcomeWindow(in: folder)
+        let controller = AppDelegate.welcomeWindow(at: Welcome.url(in: folder))
         defer { Self.close(controller) }
-        #expect(controller.folder?.url.standardizedFileURL == folder.standardizedFileURL)
+        #expect(controller.folder == nil)
         let textView = try #require(controller.textView)
         #expect(textView.string == guide)
         #expect(textView.selectedRange() == NSRange(location: (guide as NSString).length, length: 0))
@@ -759,19 +759,13 @@ struct JourneyTests {
 
     // MARK: Launch, hooks and tracking
 
-    /// The launch window shows when nothing opened and either the setting asks for it or no session waits; the
-    /// last session reopens otherwise.
-    @Test func theLaunchDecisionFollowsTheSetting() throws {
-        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+    /// The launch window shows when nothing opened and no session waits; the last session reopens otherwise.
+    @Test func theLaunchWindowShowsOnlyWithoutASession() {
         let one = Session(windows: [Session.Window(folder: "/tmp", tabs: [], selected: 0)])
-        #expect(!Launch.shouldShowLaunchWindow(session: one, defaults: defaults, openWindows: 0))
-        #expect(Launch.shouldShowLaunchWindow(session: Session(windows: []), defaults: defaults, openWindows: 0))
-        #expect(Launch.shouldShowLaunchWindow(session: nil, defaults: defaults, openWindows: 0))
-        #expect(!Launch.shouldShowLaunchWindow(session: nil, defaults: defaults, openWindows: 1))
-        Preferences(defaults: defaults).launchBehavior = .launchWindow
-        #expect(Launch.shouldShowLaunchWindow(session: one, defaults: defaults, openWindows: 0))
+        #expect(!Launch.shouldShowLaunchWindow(session: one, openWindows: 0))
+        #expect(Launch.shouldShowLaunchWindow(session: Session(windows: []), openWindows: 0))
+        #expect(Launch.shouldShowLaunchWindow(session: nil, openWindows: 0))
+        #expect(!Launch.shouldShowLaunchWindow(session: nil, openWindows: 1))
     }
 
     /// Set Up reads which settings files lack hooks from `dewline doctor`, and runs the install on a terminal of its

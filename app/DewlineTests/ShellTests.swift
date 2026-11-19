@@ -46,6 +46,7 @@ struct ShellTests {
         let home = URL(filePath: NSHomeDirectory())
         #expect(MainWindowController.folder(for: home.appending(path: "AGENTS.md")) == nil)
         #expect(MainWindowController.folder(for: home.appending(path: "Library/notes.md")) == nil)
+        #expect(MainWindowController.folder(for: home.appending(path: "Library/Application Support/dev.arkwerx.dewline/Welcome.md")) == nil)
         #expect(MainWindowController.folder(for: URL(filePath: "/notes.md")) == nil)
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

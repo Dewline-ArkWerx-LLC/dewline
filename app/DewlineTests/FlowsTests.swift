@@ -71,7 +71,7 @@ struct FlowsTests {
             // The first launch's window.
             let welcome = root.appending(path: "Dewline-\(suffix)", directoryHint: .isDirectory)
             try Welcome.write(in: welcome)
-            let first = AppDelegate.welcomeWindow(in: welcome)
+            let first = AppDelegate.welcomeWindow(at: Welcome.url(in: welcome))
             let firstWindow = try #require(first.window)
             firstWindow.appearance = appearance
             await Self.settle()

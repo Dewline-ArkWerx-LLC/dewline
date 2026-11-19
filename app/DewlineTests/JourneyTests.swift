@@ -96,7 +96,7 @@ struct JourneyTests {
         Self.type("# Groceries\nEggs.", into: textView)
         #expect(document.fileURL == nil)
         let url = vault.url("Untitled 2.md")
-        try await Self.until { document.fileURL != nil && document.live != nil }
+        await waitForMain { document.fileURL != nil && document.live != nil }
         #expect(document.fileURL?.standardizedFileURL == url.standardizedFileURL)
         #expect(try Data(contentsOf: url) == Data("# Groceries\nEggs.".utf8))
         #expect(vault.text("Untitled.md") == "taken\n")
@@ -104,7 +104,7 @@ struct JourneyTests {
 
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         Self.type(" Milk.", into: textView)
-        try await Self.until { vault.text("Untitled 2.md") == "# Groceries\nEggs. Milk." }
+        await waitForMain { vault.text("Untitled 2.md") == "# Groceries\nEggs. Milk." }
         #expect(controller.window?.isVisible == false)
     }
 
@@ -143,7 +143,7 @@ struct JourneyTests {
         let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
         defer { tab.close() }
         WelcomeDemo.play(tab.document, at: Welcome.url(in: vault.notes))
-        try await Self.until { tab.marked.count == 1 }
+        await waitForMain { tab.marked.count == 1 }
         let change = try #require(tab.marked.first)
         guard case .agent(.demo, _) = change.change.origin else { Issue.record("Demo didn't write it: \(change.change.origin)"); return }
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
@@ -213,9 +213,7 @@ struct JourneyTests {
         defer { vault.remove() }
         let folder = Folder(vault.notes)
         let index = FolderIndex.of(folder)
-        for _ in 0..<100 where index.files == nil {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        await waitForMain { index.files != nil }
         let files = try #require(index.files)
         #expect(Set(files.map(\.text.string)) == ["Home.md", "Projects/Project Plan.md", "Archive/2025/Old.md", "Journal/Daily.md"])
         let found = try #require(QuickOpen.rank("proj pl", in: files)?.first)
@@ -227,7 +225,7 @@ struct JourneyTests {
         controller.open(vault.url("Home.md"), newTab: false)
         let home = try #require(controller.textView)
         #expect(home.string == Self.obsidianVault["Home.md"])
-        try await Self.until { home.styler.map.parsed >= home.textStorage!.length }
+        await waitForMain { home.styler.map.parsed >= home.textStorage!.length }
         home.setSelectedRange(NSRange(location: 3, length: 0))
 
         // Cmd-click the wikilink.
@@ -251,7 +249,7 @@ struct JourneyTests {
 
         // A heading link opens the note found by name, deeper in the tree, with the caret on the heading.
         let again = try #require(controller.textView)
-        try await Self.until { again.styler.map.parsed >= again.textStorage!.length }
+        await waitForMain { again.styler.map.parsed >= again.textStorage!.length }
         let old = (again.string as NSString).range(of: "Old#Notes").location
         #expect(again.follow(at: try Self.point(of: old + 1, in: again)))
         let notes = try #require(controller.textView)
@@ -282,7 +280,7 @@ struct JourneyTests {
         controller.toggleBacklinks(nil)
         #expect(controller.validateMenuItem(item) && item.state == .on)
         let backlinks = controller.pane.backlinks
-        try await Self.until { !backlinks.links.isEmpty }
+        await waitForMain { !backlinks.links.isEmpty }
         let link = try #require(backlinks.links.first)
         #expect(backlinks.links.count == 1)
         #expect(link.url.lastPathComponent == "Home.md" && link.line == 3)
@@ -292,7 +290,7 @@ struct JourneyTests {
         backlinks.open(link.url, link.range)
         #expect((controller.document as? NSDocument)?.fileURL?.lastPathComponent == "Home.md")
         #expect(controller.textView?.selectedRange() == link.range)
-        try await Self.until { backlinks.links.isEmpty }
+        await waitForMain { backlinks.links.isEmpty }
     }
 
     /// The sidebar's file commands, with ⌘Z: New Folder, Rename (the open note follows), Move, Duplicate, and Move
@@ -382,17 +380,17 @@ struct JourneyTests {
         defer { vault.remove() }
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         try vault.write("plan.md", Self.agentPlan)
-        try await Self.until { tab.marked.count == 4 }
+        await waitForMain { tab.marked.count == 4 }
         tab.live.keep(tab.marked[0].id)
         let waiting = tab.marked.map(\.change)
         #expect(waiting.count == 3)
         let doc = tab.live.doc
         tab.window.performClose(nil)
-        try await Self.until { (try? vault.engine.observe(doc)) == nil }
+        await waitForMain { (try? vault.engine.observe(doc)) == nil }
 
         let reopened = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { reopened.close() }
-        try await Self.until { reopened.marked.count == 3 }
+        await waitForMain { reopened.marked.count == 3 }
         #expect(reopened.textView.string == Self.agentPlan)
         #expect(reopened.marked.map(\.change.range) == waiting.map(\.range))
         #expect(reopened.marked.allSatisfy { $0.change.origin == .external })
@@ -419,7 +417,7 @@ struct JourneyTests {
         try await Self.agentWrite(Self.agentPlan, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
         try await Self.agentWrite("# A\n\nNew a.\n", to: vault.url("a.md"), id: "toolu_2", engine: vault.engine)
         try await Self.agentWrite("# B\n\nNew b.\n", to: vault.url("b.md"), id: "toolu_3", engine: vault.engine)
-        try await Self.until { tab.marked.count == 4 && tab.marked.allSatisfy { $0.change.origin == claude } }
+        await waitForMain { tab.marked.count == 4 && tab.marked.allSatisfy { $0.change.origin == claude } }
         #expect(tab.textView.string == Self.agentPlan)
         #expect(!tab.document.isDocumentEdited)
         let files = Review.files(in: tab.window)
@@ -429,7 +427,7 @@ struct JourneyTests {
 
         // The Changes tab lists the whole lines, each with its changed words in bold.
         Self.claim(.turnEnd, vault.engine)
-        try await Self.until { ClosedChanges.all.count == 2 }
+        await waitForMain { ClosedChanges.all.count == 2 }
         let review = ReviewViewController(for: tab.window)
         _ = review.view
         // Four changed lines under plan.md, then the two notes changed while closed.
@@ -484,12 +482,12 @@ struct JourneyTests {
         #expect(ClosedChanges.all.allSatisfy { $0.origin == claude })
         let closed = try Tab(vault.url("a.md"), engine: vault.engine)
         defer { closed.close() }
-        try await Self.until { closed.marked.count == 1 }
+        await waitForMain { closed.marked.count == 1 }
         #expect(closed.textView.string == "# A\n\nNew a.\n")
         #expect(closed.marked.first?.change.origin == claude)
         #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New")
         #expect(!closed.document.isDocumentEdited)
-        try await Self.until { ClosedChanges.all.count == 1 }
+        await waitForMain { ClosedChanges.all.count == 1 }
         #expect(ClosedChanges.all.map { Self.realpath($0.url) } == [Self.realpath(vault.url("b.md"))])
         closed.textView.revertChange(nil)
         #expect(closed.textView.string == "# A\n\nOld a.\n")
@@ -549,7 +547,8 @@ struct JourneyTests {
         let third = try Tab(vault.url("odd.md"), engine: vault.engine)
         defer { third.close() }
         #expect(third.textView.string == "# Odd\r\n\r\nTrailing spaces   \r\nA\ttab and  two spaces.\r\n")
-        try await Task.sleep(for: .milliseconds(400))
+        await second.live.refresh()
+        await third.live.refresh()
         #expect(try Self.stamp(vault.url("long.md")) == before)
         #expect(try Data(contentsOf: vault.url("odd.md")) == odd)
         #expect(vault.listing() == listing)
@@ -593,7 +592,7 @@ struct JourneyTests {
         tab.textView.insertText("Monday", replacementRange: NSRange(location: tab.location(of: "Friday"), length: 6))
         try vault.git("checkout", "-q", "rewrite")
         #expect(vault.text("plan.md") == theirs)
-        try await Self.until { tab.live.changes.values.contains(where: \.conflict) }
+        await waitForMain { tab.live.changes.values.contains(where: \.conflict) }
         let (id, conflict) = try #require(tab.live.changes.first { $0.value.conflict })
         guard case .git = conflict.origin else { Issue.record("The conflict's writer is \(conflict.origin), not git"); return }
         #expect(tab.textView.string == "# Plan\n\nShip on Monday.\n\nTell the team.\n")
@@ -626,7 +625,7 @@ struct JourneyTests {
             card.keepBoth.performClick(nil)
         }
         #expect(tab.textView.string == expected)
-        try await Self.until { vault.text("plan.md") == expected }
+        await waitForMain { vault.text("plan.md") == expected }
         #expect(tab.live.changes.isEmpty)
     }
 
@@ -642,14 +641,14 @@ struct JourneyTests {
         defer { tab.close() }
         tab.textView.insertText("Monday", replacementRange: NSRange(location: tab.location(of: "Friday"), length: 6))
         try vault.write("plan.md", theirs)
-        try await Self.until { tab.live.changes.values.contains(where: \.conflict) }
+        await waitForMain { tab.live.changes.values.contains(where: \.conflict) }
         let conflict = try #require(tab.live.changes.values.first { $0.conflict })
         tab.textView.setSelectedRange(NSRange(location: conflict.range.location + 1, length: 0))
         if keep { tab.textView.keepChange(nil) } else { tab.textView.revertChange(nil) }
         let expected = keep ? theirs : "# Plan\n\nShip on Monday.\n"
         #expect(tab.textView.string == expected)
         #expect(tab.live.changes.isEmpty)
-        try await Self.until { vault.text("plan.md") == expected }
+        await waitForMain { vault.text("plan.md") == expected }
     }
 
     // MARK: J6 Earlier versions
@@ -664,16 +663,16 @@ struct JourneyTests {
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { tab.close() }
         try Data(versions[1].utf8).write(to: vault.url("plan.md"))
-        try await Self.until { tab.textView.string == versions[1] }
+        await waitForMain { tab.textView.string == versions[1] }
         try Data(versions[2].utf8).write(to: vault.url("plan.md"), options: .atomic)
-        try await Self.until { tab.textView.string == versions[2] }
+        await waitForMain { tab.textView.string == versions[2] }
         // Typed and not saved when the next write merges in.
         tab.textView.insertText("!", replacementRange: NSRange(location: 6, length: 0))
         let typed = tab.textView.string
         let last = "# Plan\n\nOne.\n\nTwo.\n\nThree.\n"
         try Data(last.utf8).write(to: vault.url("plan.md"), options: .atomic)
-        try await Self.until { tab.textView.string == "# Plan!\n\nOne.\n\nTwo.\n\nThree.\n" }
-        try await Self.until { tab.live.snapshots.count >= 5 }
+        await waitForMain { tab.textView.string == "# Plan!\n\nOne.\n\nTwo.\n\nThree.\n" }
+        await waitForMain { tab.live.snapshots.count >= 5 }
 
         let sheet = EarlierVersions(tab.document, tab.live)
         #expect(sheet.sheet.title == "Earlier Versions")
@@ -695,7 +694,7 @@ struct JourneyTests {
         await sheet.select(tab.live.snapshots.count - 1)
         let target = try #require(sheet.text)
         sheet.restoreSelected()
-        try await Self.until { tab.textView.string == target }
+        await waitForMain { tab.textView.string == target }
         #expect(vault.text("plan.md") == last)
         #expect(tab.window.isVisible == false)
     }
@@ -823,9 +822,9 @@ struct JourneyTests {
         let chain = Self.chain(from: tab.textView)
         #expect(Self.enabled(#selector(NSSplitViewController.toggleSidebar(_:)), in: chain))
         #expect(tab.textView.tryToPerform(#selector(NSSplitViewController.toggleSidebar(_:)), with: nil))
-        try await Self.until { sidebar.isCollapsed }
+        await waitForMain { sidebar.isCollapsed }
         _ = tab.textView.tryToPerform(#selector(NSSplitViewController.toggleSidebar(_:)), with: nil)
-        try await Self.until { !sidebar.isCollapsed }
+        await waitForMain { !sidebar.isCollapsed }
     }
 
     /// The change commands are off with nothing marked and on with a change under the caret; Back, Forward and Find in
@@ -858,7 +857,7 @@ struct JourneyTests {
 
         let after = "# Plan\n\nShip on Friday.\n\nAgent note.\n"
         try await Self.agentWrite(after, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
-        try await Self.until { tab.marked.count == 1 }
+        await waitForMain { tab.marked.count == 1 }
         tab.textView.setSelectedRange(NSRange(location: tab.marked[0].change.range.location + 1, length: 0))
         for action in changeCommands {
             #expect(Self.enabled(action, in: chain) == true, "\(action) is disabled with a change under the caret")
@@ -880,7 +879,7 @@ struct JourneyTests {
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { tab.close() }
         try await Self.agentWrite(Self.agentPlan, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
-        try await Self.until { tab.marked.count == 4 }
+        await waitForMain { tab.marked.count == 4 }
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: changes[2].change.range.location, length: 0))
         tab.textView.revertChange(nil)
@@ -969,7 +968,7 @@ struct JourneyTests {
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { tab.close() }
         try FileManager.default.removeItem(at: vault.url("plan.md"))
-        try await Task.sleep(for: .milliseconds(300))
+        await tab.live.refresh()
         tab.textView.insertText("!", replacementRange: NSRange(location: 6, length: 0))
         #expect(await tab.live.autosave() == .deleted)
         #expect(!FileManager.default.fileExists(atPath: vault.url("plan.md").path))
@@ -1022,17 +1021,6 @@ struct JourneyTests {
         Darwin.realpath(url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? url.path
     }
 
-    private static func until(within limit: Duration = .seconds(5), _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + limit
-        while !condition() {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("timed out")
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-    }
-
     /// A hook's claim in Claude Code session s1, as `dewline notify` sends it.
     private static func claim(_ event: ControlSocket.Claim.Event, _ engine: ChangeEngine) {
         LiveFile.claim(ControlSocket.Claim(vendor: .claude, session: "s1", event: event), engine: engine)
@@ -1045,7 +1033,7 @@ struct JourneyTests {
         let path = realpath(url)
         claim(.preToolUse(.init(id: id, tool: .write, path: path, hash: hex(before), declared: hex(text))), engine)
         // The tool runs once its PreToolUse hook has returned.
-        try await Task.sleep(for: .milliseconds(100))
+        await withCheckedContinuation { continuation in LiveFile.claims.async { continuation.resume() } }
         let temporary = url.deletingLastPathComponent().appending(path: "\(url.lastPathComponent).tmp.\(getpid()).\(UInt64(Date().timeIntervalSince1970 * 1000))")
         try Data(text.utf8).write(to: temporary)
         #expect(Darwin.rename(temporary.path, url.path) == 0)

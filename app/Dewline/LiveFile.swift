@@ -58,7 +58,7 @@ final class LiveFile {
     private var retry: Task<Void, Never>?
     private var autosaving: Task<Void, Never>?
     /// The first edit since the last autosave ran.
-    private var unsavedSince: ContinuousClock.Instant?
+    private(set) var unsavedSince: ContinuousClock.Instant?
     /// Refused autosaves in a row, which space their retries.
     private var retries = 0
     private var refreshing: Task<Void, Never>?
@@ -204,7 +204,7 @@ final class LiveFile {
 
     /// Open files by engine and document, since claims and git name documents.
     private static var open: [Key: LiveFile] = [:]
-    private static let claims = DispatchQueue(label: "dev.arkwerx.dewline.claims", qos: .utility)
+    static let claims = DispatchQueue(label: "dev.arkwerx.dewline.claims", qos: .utility)
 
     /// Sends a hook's claim to `engine` and acts on what it changed.
     static func claim(_ claim: ControlSocket.Claim, engine: ChangeEngine) {
@@ -755,10 +755,15 @@ final class LiveFile {
         unsavedSince = since
         autosaving?.cancel()
         autosaving = Task { [weak self] in
-            try? await Task.sleep(until: min(now + .seconds(2), since + .seconds(10)))
+            try? await Task.sleep(until: Self.autosaveDue(now: now, since: since))
             guard !Task.isCancelled else { return }
             await self?.autosave()
         }
+    }
+
+    /// When an edit at `now` autosaves: 2 s after it, or 10 s after the first unsaved edit, `since`, if sooner.
+    static func autosaveDue(now: ContinuousClock.Instant, since: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        min(now + .seconds(2), since + .seconds(10))
     }
 
     /// Waits before each retry of a refused autosave; the last repeats.

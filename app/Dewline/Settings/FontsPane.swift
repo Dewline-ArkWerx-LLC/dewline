@@ -13,7 +13,8 @@ struct FontSlots: View {
         let faces = { (sections: [(String, [String])]) -> [(String?, [(String, String)])] in
             sections.filter { !$0.1.isEmpty }.map { ($0.0, $0.1.map { ($0, $0) }) }
         }
-        let text = faces([("System", Faces.system), ("Bundled", Faces.bundled), ("This Mac", Self.mac.all)])
+        let system = [Faces.body] + Faces.system
+        let text = faces([("System", system), ("Bundled", Faces.bundled), ("This Mac", Self.mac.all.filter { !system.contains($0) })])
         let code = faces([("System", ["SF Mono"]), ("Bundled", ["JetBrains Mono"]), ("This Mac", Self.mac.monospaced)])
         SettingsSection(title: "Faces") {
             SettingsRow(label: "Body") {

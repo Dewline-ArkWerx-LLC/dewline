@@ -10,11 +10,12 @@ struct FolderEntry: Equatable {
 
     /// The extensions of net.daringfireball.markdown, as project.yml declares it.
     static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
+    /// Cursor rules, MDX and Quarto, which project.yml declares as Markdown dialects.
+    static let dialectExtensions: Set<String> = ["mdc", "mdx", "qmd"]
 
-    /// Markdown, or a Cursor rule (.mdc), MDX or Quarto file, which project.yml declares as Markdown dialects.
     var isMarkdown: Bool {
         let type = url.pathExtension.lowercased()
-        return !isFolder && (Self.markdownExtensions.contains(type) || ["mdc", "mdx", "qmd"].contains(type))
+        return !isFolder && (Self.markdownExtensions.contains(type) || Self.dialectExtensions.contains(type))
     }
 
     var isCode: Bool {

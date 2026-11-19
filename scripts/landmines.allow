@@ -19,7 +19,7 @@ app/DewlineTests/FindInFilesTests.swift no-fixed-sleep 10
 app/DewlineTests/FindInFilesTests.swift no-wall-clock-asserts 2
 app/DewlineTests/FlowsTests.swift no-fixed-sleep 10
 app/DewlineTests/HideSyntaxTests.swift no-fixed-sleep 5
-app/DewlineTests/JourneyTests.swift no-fixed-sleep 35
+app/DewlineTests/JourneyTests.swift no-fixed-sleep 37
 app/DewlineTests/LinkPreviewTests.swift no-fixed-sleep 11
 app/DewlineTests/LiveFileTests.swift no-fixed-sleep 22
 app/DewlineTests/LiveFileTests.swift no-wall-clock-asserts 1

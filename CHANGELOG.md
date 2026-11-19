@@ -2,6 +2,12 @@
 
 What changed in each Dewline release, newest first.
 
+## 0.5.1 (19 Nov 2026)
+
+- Math, Mermaid diagrams and images are sharp on Retina screens. Math and diagrams are drawn as vector outlines at the screen's own scale, and redraw when a window moves between screens.
+- Math and diagram labels use the same text color as the note, and diagram lines and borders follow the theme, so they no longer look faded next to the text.
+- Images keep their own color profile.
+
 ## 0.5.0 (19 Nov 2026)
 
 First launch shows one sheet, and a note ignored by git no longer opens unmarked after an agent writes to it.

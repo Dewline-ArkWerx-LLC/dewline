@@ -137,7 +137,7 @@ final class RenderedBlocks {
         case .image, .frontMatter:
             source = textView.documentFolder.map { $0.appending(path: block.source).standardizedFileURL.path } ?? ""
         }
-        return PictureRequest(kind: block.kind, source: source, scale: textView.window?.backingScaleFactor ?? 2, colors: colors)
+        return PictureRequest(kind: block.kind, source: source, scale: textView.pictureScale, colors: colors)
     }
 
     /// Folds front matter to one dim line naming its field count; its other lines collapse.

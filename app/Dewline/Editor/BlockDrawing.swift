@@ -126,7 +126,11 @@ final class BlockFragment: NSTextLayoutFragment {
         switch line.role {
         case .picture(let picture, _):
             context.saveGState()
-            context.translateBy(x: point.x, y: point.y + picture.size.height)
+            // On whole pixels a picture drawn at the screen's scale lands pixel for pixel; a narrowed one resamples smoothly.
+            let device = context.convertToDeviceSpace(point)
+            let origin = context.convertToUserSpace(CGPoint(x: device.x.rounded(), y: device.y.rounded()))
+            context.interpolationQuality = .high
+            context.translateBy(x: origin.x, y: origin.y + picture.size.height)
             context.scaleBy(x: 1, y: -1)
             context.draw(picture.image, in: CGRect(origin: .zero, size: picture.size))
             context.restoreGState()

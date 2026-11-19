@@ -278,7 +278,7 @@ fn draw(svg: &str, scale: f32, max_width: u32) -> Result<tiny_skia::Pixmap, Rend
     let tree = usvg::Tree::from_str(svg, &options).map_err(|error| invalid(error.to_string()))?;
     let scale = scale.min(max_width as f32 / tree.size().width());
     let (width, height) = (
-        (tree.size().width() * scale).ceil() as u32,
+        ((tree.size().width() * scale).ceil() as u32).min(max_width),
         (tree.size().height() * scale).ceil() as u32,
     );
     if width.saturating_mul(height) > MAX_PIXELS {

@@ -64,7 +64,7 @@ final class InlineMath {
                 let color = styled.attribute(.foregroundColor, at: local.content.location, effectiveRange: nil) as? NSColor
                 let request = Request(
                     tex: styled.mutableString.substring(with: local.content), size: font.pointSize,
-                    scale: textView.window?.backingScaleFactor ?? 2, color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
+                    scale: textView.pictureScale, color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
                 )
                 switch formulas[request] {
                 case .success(let formula)?:
@@ -148,9 +148,10 @@ extension EditorTextView {
             var whole = NSRange()
             storage.attribute(.dewlineMath, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
             guard drawn.insert(whole.location).inserted, let baseline = baseline(at: whole.location) else { return }
-            let rect = NSRect(
+            // On whole pixels, so the formula's pixels land on the screen's and stay sharp.
+            let rect = backingAlignedRect(NSRect(
                 x: line(whole.location).minX, y: baseline + formula.depth - formula.size.height, width: formula.size.width, height: formula.size.height
-            )
+            ), options: .alignAllEdgesNearest)
             formula.image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
     }

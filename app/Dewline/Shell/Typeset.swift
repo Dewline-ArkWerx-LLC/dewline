@@ -168,9 +168,14 @@ enum Typeset {
         guard let file = typst ? source : main(of: source, in: root) else {
             return .failed([], log: "% !TEX root is outside the folder")
         }
-        guard let job = job(file, root: root, build: build, find: find) else {
+        guard var job = job(file, root: root, build: build, find: find) else {
             return .missing(typst ? "Typesetting .typ needs typst: brew install typst" : "Typesetting .tex needs MacTeX or tectonic: brew install tectonic")
         }
+        if job.program.hasSuffix("/latexmk"), !plain(source.lastPathComponent) || !plain(file.lastPathComponent) {
+            return .failed([], log: "Rename the file to typeset it: only letters, digits, space, dot, dash and underscore")
+        }
+        try? FileManager.default.createDirectory(at: build.appending(path: "tmp"), withIntermediateDirectories: true)
+        job = sandboxed(job, file: file, root: root, build: build)
         let folder = job.folder
         let environment = ProcessInfo.processInfo.environment.merging(["PATH": folders.joined(separator: ":")]) { $1 }.merging(job.environment) { $1 }
         let run: Run
@@ -291,8 +296,8 @@ enum Typeset {
     }
 
     /// How `file` typesets into `build` with the first compiler `find` locates, or nil when there is none: typst
-    /// confined to `root`; latexmk without any rc file (a repo's .latexmkrc is Perl), each engine without shell escape,
-    /// and TeX opening no absolute or parent-folder path outside `build`; tectonic untrusted.
+    /// confined to `root`; latexmk without any rc file (a repo's .latexmkrc is Perl) or bibtex, biber and makeindex, each
+    /// engine without shell escape, and TeX opening no absolute or parent-folder path outside `build`; tectonic untrusted.
     nonisolated static func job(_ file: URL, root: URL, build: URL, find: (String) -> String?) -> Job? {
         if file.pathExtension.lowercased() == "typ" {
             guard let typst = find("typst") else { return nil }
@@ -302,8 +307,11 @@ enum Typeset {
         let folder = file.deletingLastPathComponent()
         if let latexmk = find("latexmk") {
             let engine = ["xelatex": "-xelatex", "lualatex": "-lualatex"][magic("program", in: file)?.lowercased() ?? ""] ?? "-pdf"
-            let engines = ["pdflatex", "xelatex", "lualatex"].map { "-\($0)=\($0) -no-shell-escape %O %S" }
-            let arguments = ["-norc", engine] + engines + ["-interaction=nonstopmode", "-file-line-error", "-outdir=\(build.path)", file.lastPathComponent]
+            let engines = [
+                "-pdflatex=pdflatex -no-shell-escape %O %S", "-xelatex=xelatex -no-shell-escape %O %S",
+                "-lualatex=lualatex -no-shell-escape --safer --nosocket %O %S",
+            ]
+            let arguments = ["-norc", "-bibtex-", "-e", "$makeindex = 'NONE'", engine] + engines + ["-interaction=nonstopmode", "-file-line-error", "-outdir=\(build.path)", "./" + file.lastPathComponent]
             return Job(program: latexmk, arguments: arguments, folder: folder, environment: ["openin_any": "p", "openout_any": "p", "TEXMFOUTPUT": build.path])
         }
         if let tectonic = find("tectonic") {
@@ -311,6 +319,57 @@ enum Typeset {
         }
         return nil
     }
+
+    /// latexmk hands file names to a shell: a name it takes has only letters, digits, space, dot, dash and underscore, and
+    /// no leading dash.
+    nonisolated static func plain(_ name: String) -> Bool {
+        !name.hasPrefix("-") && name.wholeMatch(of: /[A-Za-z0-9._ -]+/) != nil
+    }
+
+    /// `job` under sandbox-exec. It runs programs from the toolchain folders and sh, perl and env only, sends no Apple
+    /// events and can't ask Launch Services to open anything. It reads system and TeX folders, `root` and `build`, and
+    /// in home only the TeX, Tectonic, typst and font folders; a root at or above home narrows to `file`'s folder, or
+    /// to `file` itself. The sandbox checks a symlink's target, so a link in the folder can't pull an outside file into
+    /// the PDF. It writes only `build`, its own temporary folder there, and those caches. Only typst and tectonic reach
+    /// the network, over HTTPS, for packages and bundles. Paths go in as parameters, never into the profile's text.
+    nonisolated static func sandboxed(_ job: Job, file: URL, root: URL, build: URL) -> Job {
+        let online = ["typst", "tectonic"].contains(URL(filePath: job.program).lastPathComponent)
+        let home = real(URL(filePath: NSHomeDirectory())) ?? NSHomeDirectory()
+        let reads = [root, file.deletingLastPathComponent(), file].map { real($0) ?? $0.path }
+            .first { !(home + "/").hasPrefix($0 == "/" ? "/" : $0 + "/") } ?? file.path
+        let paths = [("ROOT", reads), ("BUILD", real(build) ?? build.path), ("HOME", home), ("PROGRAM", real(URL(filePath: job.program)) ?? job.program)]
+        let profile = online ? profile + "\n" + network : profile
+        let environment = job.environment.merging(["TMPDIR": build.appending(path: "tmp").path]) { $1 }
+        return Job(program: "/usr/bin/sandbox-exec", arguments: ["-p", profile] + paths.flatMap { ["-D", "\($0)=\($1)"] } + [job.program] + job.arguments, folder: job.folder, environment: environment)
+    }
+
+    private nonisolated static let profile = """
+        (version 1)
+        (allow default)
+        (deny file-read* file-write* network* process-exec appleevent-send)
+        (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.lsd.mapdb"))
+        (allow process-exec (subpath "/Library/TeX") (subpath "/usr/local/texlive") (subpath "/opt/homebrew/bin")
+            (subpath "/opt/homebrew/Cellar") (subpath "/usr/local/bin") (subpath "/usr/local/Cellar") (literal "/bin/sh")
+            (literal "/bin/bash") (literal "/bin/zsh") (literal "/bin/dash") (literal "/usr/bin/perl") (literal "/usr/bin/env")
+            (literal (param "PROGRAM")))
+        (deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/open") (literal "/usr/bin/osascript") (literal "/usr/bin/xpcproxy"))
+        (allow file-read-metadata)
+        (allow file-read* (literal "/") (subpath "/Library/TeX") (subpath "/Library/Fonts") (subpath "/usr") (subpath "/bin")
+            (subpath "/opt/homebrew") (subpath "/System") (subpath "/private/etc") (subpath "/dev") (subpath "/private/var/db/dyld")
+            (subpath "/private/var/db/timezone") (subpath (param "ROOT")) (literal (param "PROGRAM"))
+            (subpath (string-append (param "HOME") "/Library/texmf"))
+            (subpath (string-append (param "HOME") "/Library/Fonts"))
+            (subpath (string-append (param "HOME") "/Library/Application Support/typst")))
+        (allow file-read* file-write* (subpath (param "BUILD"))
+            (prefix (string-append (param "HOME") "/.texlive"))
+            (subpath (string-append (param "HOME") "/Library/texlive"))
+            (subpath (string-append (param "HOME") "/Library/Caches/Tectonic"))
+            (subpath (string-append (param "HOME") "/Library/Caches/typst")))
+        (allow file-write* (literal "/dev/null"))
+        """
+    private nonisolated static let network = """
+        (allow network-outbound (remote tcp "*:443") (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
+        """
 
     /// The file a .tex `source` typesets: itself, or its `% !TEX root` when that resolves, symlinks and all, inside
     /// `root`; nil when it doesn't.

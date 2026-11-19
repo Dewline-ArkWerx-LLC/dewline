@@ -151,8 +151,9 @@ struct CodeFilesTests {
         let latexmk = try #require(Typeset.job(tex, root: root, build: build) { "/bin/\($0)" })
         #expect(latexmk.program == "/bin/latexmk")
         #expect(latexmk.arguments == [
-            "-norc", "-pdf", "-pdflatex=pdflatex -no-shell-escape %O %S", "-xelatex=xelatex -no-shell-escape %O %S",
-            "-lualatex=lualatex -no-shell-escape %O %S", "-interaction=nonstopmode", "-file-line-error", "-outdir=/c/build", "a.tex",
+            "-norc", "-bibtex-", "-e", "$makeindex = 'NONE'", "-pdf", "-pdflatex=pdflatex -no-shell-escape %O %S", "-xelatex=xelatex -no-shell-escape %O %S",
+            "-lualatex=lualatex -no-shell-escape --safer --nosocket %O %S", "-interaction=nonstopmode", "-file-line-error", "-outdir=/c/build",
+            "./a.tex",
         ])
         #expect(latexmk.folder.path == "/p/doc")
         #expect(latexmk.environment == ["openin_any": "p", "openout_any": "p", "TEXMFOUTPUT": "/c/build"])
@@ -161,6 +162,66 @@ struct CodeFilesTests {
         let typst = try #require(Typeset.job(URL(filePath: "/p/doc/a.typ"), root: root, build: build) { "/bin/\($0)" })
         #expect(typst.arguments == ["compile", "--root", "/p", "--diagnostic-format", "short", "/p/doc/a.typ", "/c/build/a.pdf"])
         #expect(Typeset.job(tex, root: root, build: build) { _ in nil } == nil)
+    }
+
+    @Test func latexmkTakesOnlyPlainFileNames() {
+        #expect(Typeset.plain("ok name.tex"))
+        #expect(Typeset.plain("a-b_c.1.tex"))
+        for name in ["$(id).tex", "a`b`.tex", "-shell-escape.tex", "a;b.tex", "a\"b.tex", ""] {
+            #expect(!Typeset.plain(name), "\(name)")
+        }
+    }
+
+    @Test func typesetJobsRunSandboxedWithPathsAsParameters() throws {
+        let (root, build) = (URL(filePath: "/p"), URL(filePath: "/c/build"))
+        let latexmk = Typeset.Job(program: "/bin/latexmk", arguments: ["-norc", "./a.tex"], folder: root, environment: ["openin_any": "p"])
+        let file = URL(filePath: "/p/doc/a.tex")
+        let sandboxed = Typeset.sandboxed(latexmk, file: file, root: root, build: build)
+        #expect(sandboxed.program == "/usr/bin/sandbox-exec")
+        #expect(sandboxed.folder == root && sandboxed.environment == ["openin_any": "p", "TMPDIR": "/c/build/tmp"])
+        #expect(Array(sandboxed.arguments.suffix(3)) == ["/bin/latexmk", "-norc", "./a.tex"])
+        #expect(sandboxed.arguments.contains("ROOT=/p") && sandboxed.arguments.contains("BUILD=/c/build"))
+        let profile = try #require(sandboxed.arguments.first == "-p" ? sandboxed.arguments[1] : nil)
+        #expect(!profile.contains("/p\"") && !profile.contains(NSHomeDirectory()))
+        #expect(profile.contains("(deny file-read* file-write* network* process-exec appleevent-send)") && !profile.contains("network-outbound"))
+        let typst = Typeset.sandboxed(.init(program: "/bin/typst", arguments: [], folder: root, environment: [:]), file: file, root: root, build: build)
+        #expect(typst.arguments[1].contains("(allow network-outbound"))
+        // A root at or above home narrows to the file's folder, or the file itself when that folder is home.
+        let home = URL(filePath: NSHomeDirectory())
+        #expect(Typeset.sandboxed(latexmk, file: file, root: URL(filePath: "/"), build: build).arguments.contains("ROOT=/p/doc"))
+        let away = home.appending(path: "dewline-\(UUID().uuidString)/a.tex")
+        #expect(Typeset.sandboxed(latexmk, file: away, root: home, build: build).arguments.contains("ROOT=" + away.deletingLastPathComponent().path))
+        let loose = home.appending(path: "dewline-\(UUID().uuidString).tex")
+        #expect(Typeset.sandboxed(latexmk, file: loose, root: home, build: build).arguments.contains("ROOT=" + loose.path))
+    }
+
+    @Test func aSandboxedJobCantReadThroughALinkOutOfTheFolder() throws {
+        let folder = try Self.files(["inside.txt": "inside"])
+        let outside = URL(filePath: "/private/tmp/dewline-outside-\(UUID().uuidString).txt")
+        defer {
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try Data("secret".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: folder.appending(path: "link.txt"), withDestinationURL: outside)
+        func cat(_ name: String) throws -> (Int32, String) {
+            let job = Typeset.sandboxed(.init(program: "/bin/cat", arguments: [name], folder: folder, environment: [:]), file: folder.appending(path: name), root: folder, build: folder)
+            let process = Process()
+            let pipe = Pipe()
+            process.executableURL = URL(filePath: job.program)
+            process.arguments = job.arguments
+            process.currentDirectoryURL = job.folder
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            return (process.terminationStatus, output)
+        }
+        let (read, inside) = try cat("inside.txt")
+        #expect(read == 0 && inside == "inside")
+        let (status, output) = try cat("link.txt")
+        #expect(status != 0 && output.isEmpty)
     }
 
     @Test func aTexRootOutsideTheFolderIsRefused() throws {

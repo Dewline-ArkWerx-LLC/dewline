@@ -8,6 +8,7 @@ What changed in each Dewline release, newest first.
 - A scan of closed files also covers `.typ` and `.tex`, so an agent's write to one while it was closed opens marked.
 - `dewline doctor` lists `latexmk` and `tectonic`.
 - latexmk runs each LaTeX engine with shell escape off and TeX refusing absolute and parent-folder paths, so a `.tex` file can't run commands or pull outside files into its PDF. A `% !TEX root` outside the folder stops the typeset with an error.
+- typst, tectonic and latexmk run in a sandbox that reads only the folder, system and TeX folders, so a symlink in a cloned repo can't pull a file such as `~/.ssh/id_ed25519` into the PDF; only typst and tectonic reach the network. Inside it they run only toolchain programs and can't open other apps. latexmk refuses file names other than letters, digits, space, dot, dash and underscore, skips bibtex, biber and makeindex, and runs lualatex with `--safer --nosocket`.
 
 ## 0.5.1 (19 Nov 2026)
 

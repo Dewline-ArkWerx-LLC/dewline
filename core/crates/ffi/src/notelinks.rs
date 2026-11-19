@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -107,7 +108,7 @@ pub fn relink_notes(
         };
         let folder = [&new, &old]
             .into_iter()
-            .find(|path| root.join(path).is_dir())
+            .find(|path| fs::symlink_metadata(root.join(path)).is_ok_and(|info| info.is_dir()))
             .cloned();
         let moves: Vec<(PathBuf, PathBuf)> = match folder {
             Some(folder) => notelinks::files(&root.join(folder))
@@ -215,6 +216,48 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path("closed.md")).unwrap(),
             "See [plan](archive/new.md)."
+        );
+    }
+
+    #[test]
+    fn moves_never_rewrite_through_a_symlink() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(root.join("top.md"), "# Top").unwrap();
+        std::fs::write(outside.join("a.md"), "[t](../top.md)").unwrap();
+        std::fs::write(outside.join("b.md"), "[t](../top.md)").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("sub/linked")).unwrap();
+        std::os::unix::fs::symlink(outside.join("b.md"), root.join("sub/b.md")).unwrap();
+        assert_eq!(notelinks::walk(&root), [PathBuf::from("top.md")]);
+        let path = |name: &str| root.join(name).to_str().unwrap().to_owned();
+        let relink = |old: &str, new: &str| {
+            std::fs::rename(path(old), path(new)).unwrap();
+            relink_notes(
+                root.to_str().unwrap().to_owned(),
+                path(old),
+                path(new),
+                Vec::new(),
+                None,
+            )
+            .unwrap();
+        };
+        relink("sub/linked", "linked");
+        relink("sub/b.md", "b.md");
+        assert_eq!(
+            std::fs::read_to_string(outside.join("a.md")).unwrap(),
+            "[t](../top.md)"
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("b.md")).unwrap(),
+            "[t](../top.md)"
+        );
+        assert!(
+            std::fs::symlink_metadata(root.join("b.md"))
+                .unwrap()
+                .is_symlink()
         );
     }
 }

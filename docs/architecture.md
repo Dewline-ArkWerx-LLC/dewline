@@ -53,4 +53,4 @@ Report vulnerabilities through the repository's private vulnerability reporting.
 
 Live collaboration runs on the same change engine, behind a build flag: the `collab` feature of `dewline-ffi` (`COLLAB=1 scripts/build-xcframework.sh`) and `#if COLLAB` in the app. Release builds leave it out until it has rejoin, its own relay, protocol tests and invite links without IP addresses. Share creates an invite link; the other person opens it in Dewline, the host approves the join, and edits run peer to peer over iroh with a relay fallback. Loro mirrors only the shared file, and the `.md` stays the source of truth on each Mac. No account is involved.
 
-Sync between your own Macs and quick send follow in 1.1 and 1.2 on the same transport. Google sign-in arrives in 1.3, optional, for Drive backup and email invites, and is never needed to write.
+Quick send follows in 1.2 on the same transport. Google sign-in arrives in 1.3, optional, for Drive backup and email invites, and is never needed to write.

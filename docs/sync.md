@@ -6,7 +6,7 @@ Dewline has no sync service and no iPhone app. Notes are files, so the story is 
 - On iPhone or iPad, edit notes from Files in iA Writer or another Markdown editor, or in Working Copy for a repo.
 - Back on the Mac, Dewline marks each edit that arrived while you were away, with Keep and Revert. A write to a closed note, or one made while the app was quit, is in the engine's `closed_changes` and lands marked when the note opens (#123).
 
-Welcome.md, `site/docs/sync/` and the landing page say this.
+Welcome.md, README, `site/docs/sync/` and the landing page say this as designed behavior, with the device test below still to run.
 
 ## What Dewline does in a synced folder
 

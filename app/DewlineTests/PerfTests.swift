@@ -266,8 +266,7 @@ struct PerfTests {
 
     /// A folder window on a git repository with ten notes open, each in a tab of its own, then the 10 MB corpus opened
     /// in one more tab, each opened as the app opens a file: how long the ten tabs take to open and style, how long the
-    /// 10 MB note takes from opening to styled, and what the window adds to the footprint once idle. release.yml runs
-    /// it in CI and judges it against perf/ci-budgets.jq.
+    /// 10 MB note takes from opening to styled, and what the window adds to the footprint once idle.
     @Test func folderWindow() async throws {
         func until(_ condition: () -> Bool) async throws {
             let deadline = ContinuousClock.now + .seconds(60)

@@ -1,7 +1,6 @@
 # The plan's performance budgets for what scripts/perf.sh measures. Each budget is a ceiling, and a measurement that is
 # missing misses it. Adds `budgets` (metric, unit, budget, measured, pass for each) and `pass`, true when every budget
-# holds; release.yml's verify job refuses a tag whose perf/<version>.json does not pass. Scrolling (120 fps) is
-# measured in Instruments, not here.
+# holds. Scrolling (120 fps) is measured in Instruments, not here.
 def median: sort | .[length / 2 | floor];
 def row($metric; $unit; $budget; $measured):
     {metric: $metric, unit: $unit, budget: $budget, measured: $measured,

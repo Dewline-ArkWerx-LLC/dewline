@@ -3,7 +3,7 @@
 # suite, where wall-clock time is what the test measures.
 app/DewlineTests/KeystrokeLatency.swift exempt times each keystroke against the keystroke budget for scripts/perf.sh
 app/DewlineTests/MemoryMeasurements.swift exempt holds a note open for set times and samples memory for scripts/perf.sh
-app/DewlineTests/PerfTests.swift exempt times launch, open and scroll for scripts/perf.sh and the release perf job
+app/DewlineTests/PerfTests.swift exempt times launch, open and scroll for scripts/perf.sh
 app/DewlineTests/SourceModeMeasurements.swift exempt times source-mode layout for scripts/perf.sh
 app/DewlineTests/BlockMapTests.swift no-fixed-sleep 1
 app/DewlineTests/CaretSpikeTests.swift no-fixed-sleep 6

@@ -5,7 +5,8 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, c_void};
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -70,14 +71,21 @@ const MAX_RENAME_LOOKUPS: usize = 1 << 22;
 /// the same blob at the new path, or a staged file at least half of whose
 /// bytes a file the index deletes holds. Ignore files are as `Ignores` reads
 /// them. A file over 256 MB whose stat data
-/// changed counts as modified. None when the folder is in no repository, or
-/// its index, HEAD or objects can't be read: split or sparse indexes,
-/// SHA-256 repositories, reftables, alternates and missing objects.
+/// changed counts as modified. A working tree file is compared as `Checkout`
+/// says git cleans it. None when the folder is in no repository, or its
+/// index, HEAD or objects can't be read: split or sparse indexes, SHA-256
+/// repositories, reftables, alternates and missing objects.
 pub fn status(folder: &Path) -> Option<Statuses> {
     // `find` looks for `.git` in each folder above the path, the folder first.
     let repo = Repo::find(&folder.join(".git"))?;
     let prefix = folder.strip_prefix(&repo.top).ok()?.as_os_str().as_bytes();
     let common = common(&repo.gitdir);
+    let configs = configs(&common);
+    if config_value(&configs[2], b"extensions", b"objectformat")
+        .is_some_and(|format| !format.eq_ignore_ascii_case(b"sha1"))
+    {
+        return None;
+    }
 
     // Files changed at or after the index was written may match its stat
     // data with other bytes, so their bytes are compared.
@@ -105,6 +113,14 @@ pub fn status(folder: &Path) -> Option<Statuses> {
 
     // HEAD's files, but those in folders whose tree the index holds as is.
     let objects = Objects::open(&common.join("objects"));
+    let checkout = Checkout {
+        file_mode: setting(&configs, b"core", b"filemode")
+            .is_none_or(|value| config_bool(&value) != Some(false)),
+        crlf: setting(&configs, b"core", b"autocrlf").is_some_and(|value| {
+            value.eq_ignore_ascii_case(b"input") || config_bool(&value) == Some(true)
+        }),
+        objects: &objects,
+    };
     let tree = match head_commit(&repo.gitdir, &common)? {
         Some(commit) => Some(objects.commit_tree(commit)?),
         None => None,
@@ -154,7 +170,12 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         let worktree = if entry.mode & 0o170000 == GITLINK || entry.extended & SKIP_WORKTREE != 0 {
             None
         } else {
-            worktree(&repo.top.join(OsStr::from_bytes(name)), entry, racy)
+            worktree(
+                &repo.top.join(OsStr::from_bytes(name)),
+                entry,
+                racy,
+                &checkout,
+            )
         };
         let status = match (staged, worktree) {
             (_, Some(Status::Deleted)) => Status::Deleted,
@@ -253,34 +274,59 @@ fn common(gitdir: &Path) -> PathBuf {
     }
 }
 
-/// The ignore file `core.excludesFile` names in the user's config files or
-/// the repository's, the last one read deciding as in git, else git's
-/// default, ~/.config/git/ignore. The system config and includes are not
-/// read. A relative path is from `top`.
-fn excludes_file(top: &Path, common: &Path) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+fn xdg_config() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|xdg| xdg.is_absolute())
-        .or_else(|| Some(home.as_ref()?.join(".config")));
-    let configs = [
-        xdg.as_ref().map(|xdg| xdg.join("git/config")),
-        home.as_ref().map(|home| home.join(".gitconfig")),
+        .or_else(|| Some(home()?.join(".config")))
+}
+
+/// The user's config files, then the repository's, each empty when it can't
+/// be read: the order git reads them in, so the last value found decides.
+/// The system config and includes are not read.
+fn configs(common: &Path) -> [Vec<u8>; 3] {
+    [
+        xdg_config().map(|xdg| xdg.join("git/config")),
+        home().map(|home| home.join(".gitconfig")),
         Some(common.join("config")),
-    ];
-    let named = configs.into_iter().flatten().rev().find_map(|config| {
-        config_value(
-            &read_file(&config, MAX_INDEX).ok()?,
-            b"core",
-            b"excludesfile",
-        )
-    });
-    let Some(named) = named else {
-        return Some(xdg?.join("git/ignore"));
+    ]
+    .map(|path| {
+        path.and_then(|path| read_file(&path, MAX_INDEX).ok())
+            .unwrap_or_default()
+    })
+}
+
+/// The value of `key` in `section` that git takes from `configs`.
+fn setting(configs: &[Vec<u8>], section: &[u8], key: &[u8]) -> Option<Vec<u8>> {
+    configs
+        .iter()
+        .rev()
+        .find_map(|config| config_value(config, section, key))
+}
+
+/// A boolean config value as git reads it, None when it isn't one.
+fn config_bool(value: &[u8]) -> Option<bool> {
+    match value.to_ascii_lowercase().as_slice() {
+        b"true" | b"yes" | b"on" => Some(true),
+        b"false" | b"no" | b"off" | b"" => Some(false),
+        number => Some(std::str::from_utf8(number).ok()?.parse::<i64>().ok()? != 0),
+    }
+}
+
+/// The ignore file `core.excludesFile` names in the config files `configs`
+/// reads, else git's default, ~/.config/git/ignore. A relative path is from
+/// `top`.
+fn excludes_file(top: &Path, common: &Path) -> Option<PathBuf> {
+    let Some(named) = setting(&configs(common), b"core", b"excludesfile") else {
+        return Some(xdg_config()?.join("git/ignore"));
     };
     let path = PathBuf::from(OsStr::from_bytes(&named));
     Some(match path.strip_prefix("~") {
-        Ok(rest) => home?.join(rest),
+        Ok(rest) => home()?.join(rest),
         Err(_) => top.join(path),
     })
 }
@@ -451,9 +497,101 @@ fn canonical(mode: u32) -> u32 {
     }
 }
 
+/// How git turns a working tree file into the blob it compares with the
+/// index: the exec bit counts only with core.fileMode, core.autocrlf (true or
+/// input) cleans a text file's CRLFs to LF, and a file whose staged blob is a
+/// Git LFS pointer is cleaned to its pointer. Attributes are not read.
+struct Checkout<'a> {
+    file_mode: bool,
+    crlf: bool,
+    objects: &'a Objects,
+}
+
+const LFS_VERSION: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
+/// Git LFS reads no larger pointer.
+const MAX_LFS_POINTER: u64 = 1024;
+
+impl Checkout<'_> {
+    /// Whether git cleans `bytes`, which are not the blob `id` as they are,
+    /// to that blob.
+    fn cleans_to(&self, bytes: &[u8], id: Oid) -> bool {
+        if self.crlf
+            && let Some(text) = crlf_to_lf(bytes)
+            && blob_id(&text) == id
+        {
+            return true;
+        }
+        let Some((3, pointer)) = self.objects.read(id, MAX_LFS_POINTER) else {
+            return false;
+        };
+        pointer.starts_with(LFS_VERSION)
+            && pointer.ends_with(format!("\nsize {}\n", bytes.len()).as_bytes())
+            && pointer == lfs_pointer(bytes)
+    }
+}
+
+/// `bytes` with each CRLF made LF, if git's autocrlf takes them for text and
+/// they hold a CRLF: no NUL, no CR but before LF, and fewer than one byte in
+/// 128 unprintable, as convert.c counts them.
+fn crlf_to_lf(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (mut printable, mut unprintable, mut crlf) = (0usize, 0usize, false);
+    let mut rest = bytes.iter().peekable();
+    while let Some(&byte) = rest.next() {
+        match byte {
+            b'\r' if rest.next_if_eq(&&b'\n').is_some() => crlf = true,
+            b'\r' | 0 => return None,
+            b'\n' => {}
+            8 | b'\t' | 0x0c | 0x1b => printable += 1,
+            1..=31 | 127 => unprintable += 1,
+            _ => printable += 1,
+        }
+    }
+    // A DOS end-of-file mark at the end is not counted.
+    if bytes.last() == Some(&0x1a) {
+        unprintable -= 1;
+    }
+    (crlf && printable >> 7 >= unprintable).then(|| {
+        bytes
+            .iter()
+            .copied()
+            .filter(|&byte| byte != b'\r')
+            .collect()
+    })
+}
+
+// CommonCrypto, part of libSystem.
+unsafe extern "C" {
+    fn CC_SHA256(data: *const c_void, len: u32, md: *mut u8) -> *mut u8;
+}
+
+/// The pointer Git LFS's clean filter stores for `bytes`, at most
+/// `MAX_INDEX` of them.
+fn lfs_pointer(bytes: &[u8]) -> Vec<u8> {
+    let mut digest = [0u8; 32];
+    // SAFETY: `bytes` fits CC_LONG and `digest` holds the 32-byte digest.
+    unsafe {
+        CC_SHA256(
+            bytes.as_ptr().cast(),
+            bytes.len() as u32,
+            digest.as_mut_ptr(),
+        )
+    };
+    let mut pointer = String::from_utf8_lossy(LFS_VERSION).into_owned() + "oid sha256:";
+    for byte in digest {
+        let _ = write!(pointer, "{byte:02x}");
+    }
+    let _ = writeln!(pointer, "\nsize {}", bytes.len());
+    pointer.into_bytes()
+}
+
 /// How the working tree's file differs from its index entry, if it does.
 /// Matching stat data means unchanged unless the file is racy.
-fn worktree(path: &Path, entry: &IndexEntry, racy: (i64, i64)) -> Option<Status> {
+fn worktree(
+    path: &Path,
+    entry: &IndexEntry,
+    racy: (i64, i64),
+    checkout: &Checkout,
+) -> Option<Status> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error)
@@ -473,7 +611,9 @@ fn worktree(path: &Path, entry: &IndexEntry, racy: (i64, i64)) -> Option<Status>
     let link = entry.mode & 0o170000 == LINK;
     if !(kind.is_file() || kind.is_symlink())
         || link != kind.is_symlink()
-        || (!link && (entry.mode & 0o100 != 0) != (metadata.mode() & 0o100 != 0))
+        || (!link
+            && checkout.file_mode
+            && (entry.mode & 0o100 != 0) != (metadata.mode() & 0o100 != 0))
     {
         return Some(Status::Modified);
     }
@@ -501,7 +641,8 @@ fn worktree(path: &Path, entry: &IndexEntry, racy: (i64, i64)) -> Option<Status>
             Err(_) => return None,
         }
     };
-    (blob_id(&bytes) != entry.id).then_some(Status::Modified)
+    let same = blob_id(&bytes) == entry.id || (!link && checkout.cleans_to(&bytes, entry.id));
+    (!same).then_some(Status::Modified)
 }
 
 fn read_line(path: &Path) -> Option<String> {
@@ -1441,6 +1582,55 @@ mod tests {
         // HEAD's c.md is not under a folder now at its path.
         fs::create_dir(root.join("c.md")).unwrap();
         assert_eq!(statuses(&root.join("c.md")), []);
+    }
+
+    #[test]
+    fn settings_and_filters_match_git_status() {
+        // Git LFS's clean filter, without git-lfs.
+        const LFS_CLEAN: &str = r#"f=$(mktemp) && cat >"$f" && printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize %s\n' "$(shasum -a 256 <"$f" | cut -c1-64)" "$(wc -c <"$f" | tr -d ' ')" && rm "$f""#;
+        let (_dir, root) = repo(&[]);
+        git(&root, &["config", "core.fileMode", "false"]);
+        git(&root, &["config", "core.autocrlf", "true"]);
+        git(&root, &["config", "filter.lfs.clean", LFS_CLEAN]);
+        for (name, bytes) in [
+            (".gitattributes", &b"*.bin filter=lfs\n"[..]),
+            ("exec.sh", b"echo\n"),
+            ("crlf.md", b"one\r\ntwo\r\n"),
+            ("edited.md", b"one\r\ntwo\r\n"),
+            ("big.bin", b"large\n"),
+            ("other.bin", b"other\n"),
+        ] {
+            write(&root, name, bytes);
+        }
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", "base"]);
+        assert!(git(&root, &["cat-file", "-p", ":big.bin"]).starts_with("version "));
+
+        // Rewritten with the same bytes, so only their content tells.
+        fs::set_permissions(root.join("exec.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        write(&root, "crlf.md", b"one\r\ntwo\r\n");
+        write(&root, "edited.md", b"one\r\nTWO\r\n");
+        write(&root, "big.bin", b"large\n");
+        write(&root, "other.bin", b"changed\n");
+
+        let found = statuses(&root);
+        assert_eq!(
+            found,
+            [
+                ("edited.md".to_owned(), Status::Modified),
+                ("other.bin".to_owned(), Status::Modified)
+            ]
+        );
+        let paths: Vec<_> = found.into_iter().map(|(path, _)| path).collect();
+        assert_eq!(paths, git_paths(&root, ""));
+
+        // SHA-256 ids don't fit this reader: no state rather than wrong ones.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        git(&root, &["init", "-q", "--object-format=sha256"]);
+        write(&root, "a.md", b"a\n");
+        git(&root, &["add", "-A"]);
+        assert_eq!(status(&root), None);
     }
 
     #[test]

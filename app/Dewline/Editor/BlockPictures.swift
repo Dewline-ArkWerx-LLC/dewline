@@ -4,8 +4,38 @@ import MdCore
 
 /// A rendered block's picture and its size in points.
 struct BlockPicture: Sendable {
-    let image: CGImage
+    /// An image's or link card's pixels, or a diagram's or formula's outlines.
+    enum Art: Sendable {
+        case image(CGImage), drawing(Drawing)
+    }
+
+    let art: Art
     let size: CGSize
+
+    var identity: ObjectIdentifier {
+        switch art {
+        case .image(let image): ObjectIdentifier(image)
+        case .drawing(let drawing): ObjectIdentifier(drawing)
+        }
+    }
+
+    /// Draws into `rect` of a context whose y axis points down: outlines at the context's scale, pixels on whole device
+    /// pixels so an image drawn at the screen's scale lands pixel for pixel and a narrowed one resamples smoothly.
+    func draw(in rect: CGRect, of context: CGContext) {
+        switch art {
+        case .drawing(let drawing):
+            drawing.draw(in: rect, of: context)
+        case .image(let image):
+            context.saveGState()
+            let device = context.convertToDeviceSpace(rect.origin)
+            let origin = context.convertToUserSpace(CGPoint(x: device.x.rounded(), y: device.y.rounded()))
+            context.interpolationQuality = .high
+            context.translateBy(x: origin.x, y: origin.y + rect.height)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(image, in: CGRect(origin: .zero, size: rect.size))
+            context.restoreGState()
+        }
+    }
 }
 
 /// What a picture depends on besides the column width, which only narrows it, so equal requests share a render.
@@ -17,15 +47,16 @@ struct PictureRequest: Hashable, Sendable {
     /// The theme's colors in the view's appearance: a diagram takes them all and math the ink; an image takes none.
     let colors: DiagramColors?
 
-    /// Renders off the main thread, no wider than `width` points where the renderer can narrow.
+    /// Renders off the main thread; an image is decoded no wider than `width` points.
     func render(width: CGFloat) -> Result<BlockPicture, RenderFailure> {
         Result { () throws(RenderFailure) in
-            let image: CGImage
             switch kind {
             case .mermaid:
-                image = try mermaidImage(source, colors: colors!, scale: scale, maxWidth: Int(width * scale))
+                let drawing = try mermaidDrawing(source, colors: colors!)
+                return BlockPicture(art: .drawing(drawing), size: drawing.size)
             case .math:
-                image = try ratexImage(source, size: 20, scale: scale, color: colors!.ink)
+                let drawing = try mathDrawing(source, size: 20, color: colors!.ink)
+                return BlockPicture(art: .drawing(drawing), size: drawing.size)
             case .frontMatter:
                 throw RenderFailure("front matter folds without a picture")
             case .image:
@@ -44,12 +75,11 @@ struct PictureRequest: Hashable, Sendable {
                     kCGImageSourceCreateThumbnailWithTransform: true,
                     kCGImageSourceShouldCacheImmediately: true,
                 ]
-                guard let decoded = CGImageSourceCreateThumbnailAtIndex(file, 0, options as CFDictionary) else {
+                guard let image = CGImageSourceCreateThumbnailAtIndex(file, 0, options as CFDictionary) else {
                     throw RenderFailure("the image at \(source) cannot be decoded")
                 }
-                image = decoded
+                return BlockPicture(art: .image(image), size: CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale))
             }
-            return BlockPicture(image: image, size: CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale))
         }
     }
 }

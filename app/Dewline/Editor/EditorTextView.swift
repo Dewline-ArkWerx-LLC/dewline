@@ -16,6 +16,8 @@ final class EditorTextView: CaretTextView {
     private(set) var fadeStarted: ContinuousClock.Instant?
     /// Where images in the document resolve from, and where pasted images go; nil until the document is saved.
     var documentFolder: URL?
+    /// Pixels per point of the note's images: the window's, or 2 before the view is in one.
+    private(set) var pictureScale: CGFloat = 2
     /// Vim's keys, while Vim mode is on.
     var vim: VimEngine? {
         didSet {
@@ -218,6 +220,14 @@ final class EditorTextView: CaretTextView {
     /// Rendered diagrams and math take the colors of the appearance they were drawn in.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        styler.restyleDocument()
+    }
+
+    /// A window moved to a screen of another scale draws its pictures again at that scale.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard let scale = window?.backingScaleFactor, scale != pictureScale else { return }
+        pictureScale = scale
         styler.restyleDocument()
     }
 

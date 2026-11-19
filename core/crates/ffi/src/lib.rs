@@ -8,6 +8,7 @@ use dewline_core::export;
 use mermaid_rs_renderer::{Layout, LayoutConfig, Theme, compute_layout};
 use ratex_layout::LayoutOptions;
 use ratex_types::color::Color;
+use ratex_types::display_item::DisplayList;
 use resvg::{tiny_skia, usvg};
 
 mod agentfiles;
@@ -44,7 +45,6 @@ pub struct DiagramColors {
     pub ink: u32,
     pub ink2: u32,
     pub accent: u32,
-    pub rule: u32,
     pub fill: u32,
 }
 
@@ -66,15 +66,9 @@ impl DiagramColors {
                 ..Theme::dark()
             }
         };
-        let [paper, ink, ink2, accent, rule, fill] = [
-            self.paper,
-            self.ink,
-            self.ink2,
-            self.accent,
-            self.rule,
-            self.fill,
-        ]
-        .map(|color| format!("#{color:08x}"));
+        let [paper, ink, ink2, accent, fill] =
+            [self.paper, self.ink, self.ink2, self.accent, self.fill]
+                .map(|color| format!("#{color:08x}"));
         Theme {
             background: paper.clone(),
             edge_label_background: paper.clone(),
@@ -86,15 +80,15 @@ impl DiagramColors {
             git_tag_label_color: ink.clone(),
             pie_title_text_color: ink.clone(),
             pie_legend_text_color: ink,
-            line_color: ink2,
             sequence_note_border: accent,
-            primary_border_color: rule.clone(),
-            cluster_border: rule.clone(),
-            sequence_actor_border: rule.clone(),
-            sequence_actor_line: rule.clone(),
-            sequence_activation_border: rule.clone(),
-            git_tag_label_border: rule.clone(),
-            pie_outer_stroke_color: rule,
+            primary_border_color: ink2.clone(),
+            cluster_border: ink2.clone(),
+            sequence_actor_border: ink2.clone(),
+            sequence_actor_line: ink2.clone(),
+            sequence_activation_border: ink2.clone(),
+            git_tag_label_border: ink2.clone(),
+            pie_outer_stroke_color: ink2.clone(),
+            line_color: ink2,
             primary_color: fill.clone(),
             secondary_color: fill.clone(),
             sequence_actor_fill: fill.clone(),
@@ -107,12 +101,35 @@ impl DiagramColors {
     }
 }
 
-/// Premultiplied RGBA, row by row.
+/// A diagram or formula as outlines in points from its top left, which the app fills at the screen's scale.
 #[derive(uniffi::Record)]
-pub struct Raster {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
+pub struct Drawing {
+    pub width: f32,
+    pub height: f32,
+    /// How far a formula reaches below its baseline.
+    pub depth: f32,
+    pub shapes: Vec<Shape>,
+    pub insets: Vec<Inset>,
+}
+
+/// An outline filled in `color` (sRGB 0xRRGGBBAA). Each verb (0 move, 1 line, 2 quad, 3 cubic, 4 close) takes 1, 1,
+/// 2, 3 or 0 of the x, y pairs in `points`.
+#[derive(uniffi::Record)]
+pub struct Shape {
+    pub color: u32,
+    pub even_odd: bool,
+    pub verbs: Vec<u8>,
+    pub points: Vec<f32>,
+}
+
+/// A PNG or JPEG a diagram places in a rectangle, such as a C4 person.
+#[derive(uniffi::Record)]
+pub struct Inset {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub data: Vec<u8>,
 }
 
 // The diagram types mermaid-rs-renderer parses. A source without one of these
@@ -202,9 +219,15 @@ fn within_budget<T: Send + 'static>(
     }
 }
 
-#[uniffi::export]
-pub fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, RenderError> {
+fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, RenderError> {
     mermaid_within(BUDGET, source, colors)
+}
+
+#[uniffi::export]
+pub fn draw_mermaid(source: String, colors: DiagramColors) -> Result<Drawing, RenderError> {
+    let tree = parse(&render_mermaid(source, colors)?)?;
+    let size = tree.size();
+    Ok(outlines(&tree, size.width(), size.height(), 0.0))
 }
 
 fn mermaid_within(
@@ -257,28 +280,133 @@ fn mermaid_within(
     })
 }
 
-/// Draws an SVG at `scale` pixels per SVG unit, or smaller to fit `max_width`
-/// pixels.
-#[uniffi::export]
-pub fn rasterize_svg(svg: String, scale: f32, max_width: u32) -> Result<Raster, RenderError> {
-    let pixmap = draw(&svg, scale, max_width)?;
-    Ok(Raster {
-        width: pixmap.width(),
-        height: pixmap.height(),
-        pixels: pixmap.take(),
-    })
-}
-
-fn draw(svg: &str, scale: f32, max_width: u32) -> Result<tiny_skia::Pixmap, RenderError> {
-    let invalid = |message: String| RenderError::Invalid { message };
+fn parse(svg: &str) -> Result<usvg::Tree, RenderError> {
     let options = usvg::Options {
         fontdb: FONTS.clone(),
         ..Default::default()
     };
-    let tree = usvg::Tree::from_str(svg, &options).map_err(|error| invalid(error.to_string()))?;
+    usvg::Tree::from_str(svg, &options).map_err(|error| RenderError::Invalid {
+        message: error.to_string(),
+    })
+}
+
+/// The tree's filled and stroked paths, its text as glyph outlines, and its embedded pictures, stretched to
+/// `width` by `height` points.
+fn outlines(tree: &usvg::Tree, width: f32, height: f32, depth: f32) -> Drawing {
+    let mut drawing = Drawing {
+        width,
+        height,
+        depth,
+        shapes: Vec::new(),
+        insets: Vec::new(),
+    };
+    let size = tree.size();
+    let fit = tiny_skia::Transform::from_scale(width / size.width(), height / size.height());
+    collect(tree.root(), 1.0, fit, &mut drawing);
+    drawing
+}
+
+fn collect(group: &usvg::Group, opacity: f32, fit: tiny_skia::Transform, drawing: &mut Drawing) {
+    let opacity = opacity * group.opacity().get();
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(group) => collect(group, opacity, fit, drawing),
+            usvg::Node::Text(text) => collect(text.flattened(), opacity, fit, drawing),
+            usvg::Node::Path(path) if path.is_visible() => {
+                let to = path.abs_transform().post_concat(fit);
+                let fill = path.fill().and_then(|fill| {
+                    let outline = path.data().clone().transform(to)?;
+                    Some((
+                        fill.paint(),
+                        fill.opacity(),
+                        fill.rule() == usvg::FillRule::EvenOdd,
+                        outline,
+                    ))
+                });
+                let stroke = path.stroke().and_then(|stroke| {
+                    let outline = path
+                        .data()
+                        .stroke(&stroke.to_tiny_skia(), 4.0)?
+                        .transform(to)?;
+                    Some((stroke.paint(), stroke.opacity(), false, outline))
+                });
+                let mut layers = [fill, stroke];
+                if path.paint_order() == usvg::PaintOrder::StrokeAndFill {
+                    layers.reverse();
+                }
+                for (paint, alpha, even_odd, outline) in layers.into_iter().flatten() {
+                    let Some(color) = rgba(paint, alpha.get() * opacity) else {
+                        continue;
+                    };
+                    let mut shape = Shape {
+                        color,
+                        even_odd,
+                        verbs: Vec::new(),
+                        points: Vec::new(),
+                    };
+                    for segment in outline.segments() {
+                        let (verb, points) = match segment {
+                            tiny_skia::PathSegment::MoveTo(point) => (0, vec![point]),
+                            tiny_skia::PathSegment::LineTo(point) => (1, vec![point]),
+                            tiny_skia::PathSegment::QuadTo(control, point) => {
+                                (2, vec![control, point])
+                            }
+                            tiny_skia::PathSegment::CubicTo(first, second, point) => {
+                                (3, vec![first, second, point])
+                            }
+                            tiny_skia::PathSegment::Close => (4, vec![]),
+                        };
+                        shape.verbs.push(verb);
+                        shape
+                            .points
+                            .extend(points.iter().flat_map(|point| [point.x, point.y]));
+                    }
+                    drawing.shapes.push(shape);
+                }
+            }
+            usvg::Node::Image(image) => {
+                if let usvg::ImageKind::PNG(data) | usvg::ImageKind::JPEG(data) = image.kind()
+                    && let Some(rect) = image.abs_bounding_box().transform(fit)
+                {
+                    drawing.insets.push(Inset {
+                        x: rect.x(),
+                        y: rect.y(),
+                        width: rect.width(),
+                        height: rect.height(),
+                        data: data.to_vec(),
+                    });
+                }
+            }
+            usvg::Node::Path(_) => {}
+        }
+    }
+}
+
+/// A solid paint, or a gradient's first stop, at `opacity`; nothing for a pattern.
+fn rgba(paint: &usvg::Paint, opacity: f32) -> Option<u32> {
+    let (color, opacity) = match paint {
+        usvg::Paint::Color(color) => (*color, opacity),
+        usvg::Paint::LinearGradient(gradient) => {
+            let stop = gradient.stops().first()?;
+            (stop.color(), opacity * stop.opacity().get())
+        }
+        usvg::Paint::RadialGradient(gradient) => {
+            let stop = gradient.stops().first()?;
+            (stop.color(), opacity * stop.opacity().get())
+        }
+        usvg::Paint::Pattern(_) => return None,
+    };
+    let alpha = (opacity * 255.0).round() as u32;
+    Some(u32::from_be_bytes([color.red, color.green, color.blue, 0]) | alpha)
+}
+
+/// An SVG drawn at `scale` pixels per SVG unit, or smaller to fit `max_width` pixels.
+fn draw(svg: &str, scale: f32, max_width: u32) -> Result<tiny_skia::Pixmap, RenderError> {
+    let invalid = |message: String| RenderError::Invalid { message };
+    let tree = parse(svg)?;
     let scale = scale.min(max_width as f32 / tree.size().width());
     let (width, height) = (
-        (tree.size().width() * scale).ceil() as u32,
+        ((tree.size().width() * scale).ceil() as u32).min(max_width),
         (tree.size().height() * scale).ceil() as u32,
     );
     if width.saturating_mul(height) > MAX_PIXELS {
@@ -294,41 +422,52 @@ fn draw(svg: &str, scale: f32, max_width: u32) -> Result<tiny_skia::Pixmap, Rend
     Ok(pixmap)
 }
 
-/// A PNG of display math at `size` points, `scale` pixels per point, in
-/// `color` (0xRRGGBBAA).
+/// A formula at `size` points in `color` (0xRRGGBBAA), as outlines that sit on a line of text.
 #[uniffi::export]
-pub fn render_math(tex: String, size: f32, scale: f32, color: u32) -> Result<Vec<u8>, RenderError> {
-    render_inline_math(tex, size, scale, color).map(|math| math.png)
-}
-
-/// A formula's PNG and how far it reaches below its baseline, in points.
-#[derive(uniffi::Record)]
-pub struct MathPicture {
-    pub png: Vec<u8>,
-    pub depth: f32,
-}
-
-/// `render_math` with the depth that sets a formula on a line of text.
-#[uniffi::export]
-pub fn render_inline_math(
-    tex: String,
-    size: f32,
-    scale: f32,
-    color: u32,
-) -> Result<MathPicture, RenderError> {
+pub fn draw_math(tex: String, size: f32, color: u32) -> Result<Drawing, RenderError> {
     if tex.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
     }
     within_budget(BUDGET, move || {
-        let [r, g, b, a] = color
-            .to_be_bytes()
-            .map(|channel| f32::from(channel) / 255.0);
-        let nodes = ratex_parser::parser::parse(&tex).map_err(|error| error.to_string())?;
-        let layout = ratex_layout::layout(
-            &nodes,
-            &LayoutOptions::default().with_color(Color { r, g, b, a }),
-        );
-        ratex_layout::validate_layout(&layout)?;
+        let list = typeset(&tex, color)?;
+        let options = ratex_svg::SvgOptions {
+            font_size: f64::from(size),
+            padding: 0.0,
+            embed_glyphs: true,
+            ..Default::default()
+        };
+        let svg = ratex_svg::render_to_svg(&list, &options);
+        let tree = usvg::Tree::from_str(&svg, &usvg::Options::default())
+            .map_err(|error| error.to_string())?;
+        Ok(outlines(
+            &tree,
+            list.width as f32 * size,
+            list.total_height() as f32 * size,
+            list.depth as f32 * size,
+        ))
+    })
+}
+
+fn typeset(tex: &str, color: u32) -> Result<DisplayList, String> {
+    let [r, g, b, a] = color
+        .to_be_bytes()
+        .map(|channel| f32::from(channel) / 255.0);
+    let nodes = ratex_parser::parser::parse(tex).map_err(|error| error.to_string())?;
+    let layout = ratex_layout::layout(
+        &nodes,
+        &LayoutOptions::default().with_color(Color { r, g, b, a }),
+    );
+    ratex_layout::validate_layout(&layout)?;
+    Ok(ratex_layout::to_display_list(&layout))
+}
+
+/// A PNG of math at `size` points, `scale` pixels per point, in `color` (0xRRGGBBAA).
+fn render_math(tex: String, size: f32, scale: f32, color: u32) -> Result<Vec<u8>, RenderError> {
+    if tex.len() > MAX_SOURCE {
+        return Err(RenderError::TooLarge);
+    }
+    within_budget(BUDGET, move || {
+        let list = typeset(&tex, color)?;
         let options = ratex_render::RenderOptions {
             font_size: size,
             padding: 0.0,
@@ -341,12 +480,7 @@ pub fn render_inline_math(
             font_dir: String::new(),
             device_pixel_ratio: scale,
         };
-        let list = ratex_layout::to_display_list(&layout);
-        let png = ratex_render::render_to_png(&list, &options)?;
-        Ok(MathPicture {
-            png,
-            depth: list.depth as f32 * size,
-        })
+        ratex_render::render_to_png(&list, &options)
     })
 }
 
@@ -566,7 +700,6 @@ mod tests {
             ink: 0xd1e1e9ff,
             ink2: 0xa3b8c5ff,
             accent: 0x62bbf5ff,
-            rule: 0x4f6172ff,
             fill: 0x0f1926ff,
         }
     }
@@ -605,7 +738,6 @@ mod tests {
             "#d1e1e9ff",
             "#a3b8c5ff",
             "#62bbf5ff",
-            "#4f6172ff",
             "#0f1926ff",
         ] {
             assert!(svg.contains(color), "{color} is missing");
@@ -642,15 +774,64 @@ mod tests {
     }
 
     #[test]
-    fn svg_rasterizes_at_scale() {
+    fn svg_becomes_outlines_in_points() {
         isolate();
-        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="red"/></svg>"#;
-        let raster = rasterize_svg(svg.into(), 2.0, 100).unwrap();
-        assert_eq!((raster.width, raster.height), (20, 8));
-        assert_eq!(raster.pixels.len(), 20 * 8 * 4);
-        assert_eq!(raster.pixels[..4], [255, 0, 0, 255]);
-        let fitted = rasterize_svg(svg.into(), 2.0, 5).unwrap();
-        assert_eq!((fitted.width, fitted.height), (5, 2));
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="4"><rect width="10" height="4" fill="red" fill-opacity="0.5"/><path d="M0 2H10" fill="none" stroke="blue"/></svg>"#;
+        let drawing = outlines(&parse(svg).unwrap(), 10.0, 4.0, 0.0);
+        assert_eq!(
+            (drawing.width, drawing.height, drawing.shapes.len()),
+            (10.0, 4.0, 2)
+        );
+        let [rect, line] = &drawing.shapes[..] else {
+            unreachable!()
+        };
+        assert_eq!((rect.color, line.color), (0xff000080, 0x0000ffff));
+        assert_eq!(rect.verbs, [0, 1, 1, 1, 4]);
+        assert_eq!(rect.points[..4], [0.0, 0.0, 10.0, 0.0]);
+        let ys = line.points.iter().skip(1).step_by(2);
+        assert!(ys.clone().all(|y| (1.5..=2.5).contains(y)) && ys.clone().any(|y| *y < 2.0));
+    }
+
+    #[test]
+    fn math_draws_outlines_on_its_baseline() {
+        isolate();
+        let drawing = draw_math(r"\frac{a}{b}".into(), 20.0, 0x112233ff).unwrap();
+        assert!(drawing.depth > 0.0 && drawing.height > drawing.depth && drawing.width > 0.0);
+        assert!(
+            !drawing.shapes.is_empty()
+                && drawing.shapes.iter().all(|shape| shape.color == 0x112233ff)
+        );
+        assert!(
+            drawing
+                .shapes
+                .iter()
+                .flat_map(|shape| shape.points.chunks(2))
+                .all(|point| {
+                    (-0.5..=drawing.width + 0.5).contains(&point[0])
+                        && (-0.5..=drawing.height + 0.5).contains(&point[1])
+                })
+        );
+    }
+
+    #[test]
+    fn diagrams_draw_their_labels_as_outlines() {
+        isolate();
+        let drawing = draw_mermaid("flowchart LR\n  a[Start] --> b[Stop]".into(), night()).unwrap();
+        let labels: Vec<_> = drawing
+            .shapes
+            .iter()
+            .filter(|shape| shape.color == night().ink)
+            .collect();
+        assert!(
+            labels.len() == 2 && labels.iter().all(|label| label.verbs.len() > 20),
+            "each label's letters are outlines in the ink"
+        );
+        assert!(
+            drawing
+                .shapes
+                .iter()
+                .any(|shape| shape.color == night().ink2)
+        );
     }
 
     #[test]

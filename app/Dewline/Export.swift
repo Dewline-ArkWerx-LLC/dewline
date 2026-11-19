@@ -72,7 +72,7 @@ enum Export {
                     tokens.map { "--\($0.rawValue): \(String(format: "#%08x", Export.rgba($0)));" }.joined(separator: " "),
                     DiagramColors(
                         paper: Export.rgba(.paper), ink: Export.rgba(.ink), ink2: Export.rgba(.ink2), accent: Export.rgba(.accent),
-                        rule: Export.rgba(.syntax), fill: Export.rgba(.codeBackground)
+                        fill: Export.rgba(.codeBackground)
                     ),
                     ThemeStore.shared.color(.paper).usingColorSpace(.sRGB)!
                 )

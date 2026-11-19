@@ -225,7 +225,7 @@ enum LinkCard {
             title.draw(with: CGRect(x: textX, y: top, width: textWidth, height: titleHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             host?.draw(with: CGRect(x: textX, y: top + titleHeight + 2, width: textWidth, height: hostHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             NSGraphicsContext.restoreGraphicsState()
-            picture = BlockPicture(image: context.makeImage()!, size: size)
+            picture = BlockPicture(art: .image(context.makeImage()!), size: size)
         }
         return picture
     }
@@ -343,7 +343,8 @@ final class LinkHover: NSView {
         let picture = LinkCard.picture(
             preview, width: Self.popoverWidth, scale: textView.window?.backingScaleFactor ?? 2, appearance: textView.effectiveAppearance
         )
-        view.image = NSImage(cgImage: picture.image, size: picture.size)
+        guard case .image(let image) = picture.art else { return }
+        view.image = NSImage(cgImage: image, size: picture.size)
         view.frame.size = picture.size
         popover.contentSize = picture.size
     }

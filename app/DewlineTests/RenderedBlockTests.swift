@@ -136,7 +136,7 @@ struct RenderedBlockTests {
         let editor = BlockEditor(text, caret: 0)
         let store = ThemeStore.shared
         let increased = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        var drawn: [CGImage] = []
+        var drawn: [ObjectIdentifier] = []
         for (name, tokens) in [
             (NSAppearance.Name.aqua, increased ? store.lightTheme.increasedLightColors : store.lightTheme.lightColors),
             (.darkAqua, increased ? store.darkTheme.increasedDarkColors : store.darkTheme.darkColors),
@@ -148,10 +148,10 @@ struct RenderedBlockTests {
             // The diagram's top-left pixel, and the formula's most opaque pixel unpremultiplied.
             func colors() -> (paper: [Int], ink: [Int])? {
                 guard let chart = editor.picture(at: diagram), let math = editor.picture(at: formula) else { return nil }
-                let pixels = Self.pixels(math.image)
+                let pixels = Self.pixels(Self.image(math))
                 let solid = stride(from: 0, to: pixels.count, by: 4).max { pixels[$0 + 3] < pixels[$1 + 3] }!
                 let ink = pixels[solid..<solid + 3].map { Int((Double($0) * 255 / Double(pixels[solid + 3])).rounded()) }
-                return (Self.pixels(chart.image)[0..<3].map(Int.init), ink)
+                return (Self.pixels(Self.image(chart))[0..<3].map(Int.init), ink)
             }
             func taken() -> Bool {
                 guard case let (paper, ink)? = colors() else { return false }
@@ -160,10 +160,23 @@ struct RenderedBlockTests {
             editor.window.appearance = NSAppearance(named: name)
             await editor.wait(until: taken)
             #expect(taken(), "\(name.rawValue): paper \(rgb(.paper)) and ink \(rgb(.ink)), drawn \(String(describing: colors()))")
-            drawn += [diagram, formula].compactMap { editor.picture(at: $0)?.image }
+            drawn += [diagram, formula].compactMap { editor.picture(at: $0)?.identity }
         }
-        #expect(drawn.count == 4 && drawn[0] !== drawn[2] && drawn[1] !== drawn[3], "the light pictures are replaced")
+        #expect(drawn.count == 4 && drawn[0] != drawn[2] && drawn[1] != drawn[3], "the light pictures are replaced")
         editor.expectTextKitUnchanged()
+    }
+
+    /// The picture drawn at 2x, as the screen draws it.
+    nonisolated static func image(_ picture: BlockPicture) -> CGImage {
+        let (width, height) = (Int((picture.size.width * 2).rounded(.up)), Int((picture.size.height * 2).rounded(.up)))
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 2, y: -2)
+        picture.draw(in: CGRect(origin: .zero, size: picture.size), of: context)
+        return context.makeImage()!
     }
 
     /// The image drawn in sRGB as premultiplied RGBA, row by row from the top.

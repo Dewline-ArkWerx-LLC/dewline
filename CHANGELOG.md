@@ -2,6 +2,11 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Dewline offers to install agent hooks once for each folder holding `.claude`, `.cursor`, `.codex`, `CLAUDE.md` or `AGENTS.md`. In 0.4.0 the first offer was the only one, so a later agent folder was never offered.
+- README and the site state iCloud and iPhone behavior as designed: the device test in `docs/sync.md` has not been run.
+
 ## 0.4.0 (19 Nov 2026)
 
 Fewer settings and no Documents folder made for you, new notes go where you picked, and agent edits from Cursor and shell commands are named more accurately. Keeping an iCloud version no longer throws the other one away.

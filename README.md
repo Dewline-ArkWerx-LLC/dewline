@@ -11,7 +11,7 @@ macOS 26+ · Free · No account, no telemetry
 
 ## Why switch
 
-1. **A Mac app, built as one.** AppKit and TextKit 2 over a Rust engine. No Electron, and no JavaScript runs on your notes. Measured for 0.1.0 on an M4 Pro: 8.9 ms from keystroke to screen at the median on a 1 MB file, and 0% CPU at idle ([run](perf/0.1.0.json), [budgets](docs/decisions/0010-perf-budgets.md)).
+1. **A Mac app, built as one.** AppKit and TextKit 2 over a Rust engine. No Electron, and no JavaScript runs on your notes.
 2. **Your files stay your files.** Open any .md file where it lives, any folder, any Obsidian vault. Nothing to import. A save changes only the bytes you edited and never overwrites a newer copy on disk.
 3. **The features are built in.** Everything below ships in the app. There are no plugins to find, install or update.
 
@@ -45,7 +45,7 @@ Dewline opens an Obsidian vault as it is, so you can use it instead of Obsidian 
 | Backlinks pane, graph view, Canvas, Bases | Yes | n/a | Backlinks pane only |
 | Community plugins and themes | 2,000+ | Integrations | No, by design (four built-in themes) |
 | Phone and tablet apps | Yes | Yes | No (edit the files in iA Writer or Working Copy) |
-| Sync between your devices | Paid Sync | Cloud | Through iCloud Drive or git ([how](https://dewline.arkwerx.com/docs/sync/)) |
+| Sync between your devices | Paid Sync | Cloud | Through iCloud Drive or git, device test pending ([how](https://dewline.arkwerx.com/docs/sync/)) |
 | Databases, views, relations | Bases | Yes | No |
 | Web access, public pages | Publish (paid) | Yes | No |
 | Team workspace, permissions | No | Yes | No |

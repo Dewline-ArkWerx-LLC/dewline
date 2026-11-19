@@ -248,35 +248,6 @@ struct Heading: Equatable {
     }
 }
 
-/// The first line of prose in a markdown file's opening, past front matter, headings, fences and rules,
-/// without list, quote or inline markers. Falls back to the first heading.
-func firstProseLine(of text: String) -> String? {
-    var heading: String?
-    var inFrontMatter = false
-    var inFence = false
-    for (index, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-        let line = raw.trimmingCharacters(in: .whitespaces)
-        if index == 0, line == "---" {
-            inFrontMatter = true
-        } else if inFrontMatter {
-            inFrontMatter = line != "---" && line != "..."
-        } else if line.hasPrefix("```") || line.hasPrefix("~~~") {
-            inFence.toggle()
-        } else if inFence || line.isEmpty || line.allSatisfy({ "-*_=".contains($0) }) || line.hasPrefix("<") {
-            continue
-        } else if line.hasPrefix("#") {
-            heading = heading ?? plainInline(String(line.drop { $0 == "#" }))
-        } else {
-            let body = line.replacingOccurrences(
-                of: #"^(?:>\s*)*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?"#, with: "", options: .regularExpression
-            )
-            let prose = plainInline(body)
-            if !prose.isEmpty { return prose }
-        }
-    }
-    return heading
-}
-
 /// `markdown` without link targets, wikilink brackets and emphasis or code markers.
 func plainInline(_ markdown: String) -> String {
     markdown

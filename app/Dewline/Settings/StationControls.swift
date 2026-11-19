@@ -36,17 +36,6 @@ enum Station {
     static var small: Font { Font(Chrome.small) }
 }
 
-/// A 1 px line in `hairline`, or `ink3` under Increase Contrast.
-struct Hairline: View {
-    @Environment(\.displayScale) private var scale
-
-    var body: some View {
-        Rectangle()
-            .fill(Station.color(.hairline))
-            .frame(height: 1 / scale)
-    }
-}
-
 /// A pane's sections down a scroll view.
 struct SettingsPage<Content: View>: View {
     @ViewBuilder let content: Content

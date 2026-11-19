@@ -34,8 +34,6 @@ final class LiveFile {
         }
     }
     static let changesDidChange = Notification.Name("LiveFileChangesDidChange")
-    /// When you last typed in any file, for Follow Changes.
-    private(set) static var lastEdit = ContinuousClock.now
     /// The file's snapshots, newest first, as last read off the main thread for the Snapshots menu.
     private(set) var snapshots: [ChangeEngine.Snapshot] = []
     /// Why the last autosave wrote nothing, until one writes.
@@ -566,7 +564,6 @@ final class LiveFile {
 
     private func edited(_ range: NSRange, delta: Int) {
         guard !applying else { return }
-        Self.lastEdit = .now
         let oldEnd = NSMaxRange(range) - delta
         func moved(_ offset: Int) -> Int {
             offset < range.location ? offset : offset >= oldEnd ? offset + delta : NSMaxRange(range)

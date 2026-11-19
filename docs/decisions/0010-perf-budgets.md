@@ -33,4 +33,6 @@ Reopens if: the runner image changes hardware; W6 lands or the A-to-C rise is fo
 
 **18 Nov 2026, Wave 4: nightly on main.** nightly.yml's `perf` job runs the tag measurement on main every night against `perf/ci-budgets.jq`, so a regression fails within a day of merging instead of at the next tag. The 10 MB ceiling comes down from 44,000 ms to 36,000 ms: the slowest of five runs of main's app code after #159 (16,433 to 29,891 ms; run 44429066227, each the first run after its build, as the jobs measure) plus 20%, rounded up. The ten-tab and memory ceilings stay; those runs measured 2,395 to 4,419 ms and 148.1 to 188.1 MB.
 
+The ceilings are the comparison with main's numbers: each night is judged against main's measured slowest plus headroom, not against the night before. One run on the runner varies up to 3x from the next, so a night-to-night comparison would fail on noise; perf-ci.json's numbers stay in the job log (`jq .folderWindow`). A ceiling moves only through this record, when main's measured numbers move.
+
 Reopens if: the nightly job fails on noise alone, or W6's 10 MB work lands and the slowest run falls.

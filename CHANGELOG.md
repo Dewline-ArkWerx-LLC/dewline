@@ -63,6 +63,7 @@ What changed in each Dewline release, newest first.
 - The Changes list groups changes by writer session, closed notes included, under a heading with Keep Session and Revert Session. Its bylines survive a relaunch and its rows are 24 pt.
 - Status bar problems show a red octagon, and their actions are buttons. A typeset error inside a marked change says whose change it is and offers Revert Change.
 - The rail's on-screen bracket has a light fill, and the first change ever to land is labeled on the rail, "Changes show here too".
+- README and the site say Dewline is free to start. Decision 0011 replaces 0001's pricing promise: every feature in the app is free for everyone, and paid plans cover only services that run on our servers.
 
 ## 0.5.1 (19 Nov 2026)
 

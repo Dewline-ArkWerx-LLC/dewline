@@ -105,13 +105,13 @@ final class MarkdownDocument: NSDocument {
 
     /// Saves the note now, through the engine when it keeps the file. True when its text is safe: in the file, or in
     /// the draft the engine keeps when it refuses, which opening the note offers back. A deleted note's draft is not
-    /// safe, since no file opens to offer it.
+    /// safe, whatever the refusal, since no file opens to offer it.
     func flush() async -> Bool {
         guard isDocumentEdited else { return true }
         if let live, let text = textView?.string {
             // Typing during the save leaves the document edited, or the draft behind the buffer.
             guard let refusal = await live.autosave() else { return !isDocumentEdited }
-            if refusal == .deleted { return false }
+            guard refusal != .deleted, FileManager.default.fileExists(atPath: live.url.path) else { return false }
             let kept = await live.keptDraft()?.holds(bytes(of: text)) == true
             return kept && textView?.string == text
         }
@@ -330,13 +330,14 @@ final class MarkdownDocument: NSDocument {
         return [device, inode]
     }
 
-    /// Where a new note goes: the folder its window shows, else the notes folder.
-    var newNoteFolder: URL {
+    /// Where a new note goes: the folder its window shows, else the notes folder; nil when neither is there, and the
+    /// note waits to be saved by hand.
+    var newNoteFolder: URL? {
         (windowControllers.first as? MainWindowController)?.folder?.url ?? FileActions.notesFolder
     }
 
     override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
-        if fileURL == nil { savePanel.directoryURL = newNoteFolder }
+        if fileURL == nil, let folder = newNoteFolder { savePanel.directoryURL = folder }
         return super.prepareSavePanel(savePanel)
     }
 
@@ -356,8 +357,7 @@ final class MarkdownDocument: NSDocument {
     /// Writes a new note to the first free Untitled name in its folder and opens it through the engine.
     func saveNew() async {
         firstSave?.cancel()
-        guard isNew, fileURL == nil, !windowControllers.isEmpty else { return }
-        let folder = newNoteFolder
+        guard isNew, fileURL == nil, !windowControllers.isEmpty, let folder = newNoteFolder else { return }
         let url = FileActions.free("Untitled", extension: "md", in: folder)
         let error: (any Error)? = await withCheckedContinuation { continuation in
             do {

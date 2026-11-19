@@ -18,6 +18,11 @@ struct GeneralPane: View {
                 }
             }
             SettingsSection(title: "Files") {
+                if let folder = preferences.notesFolder {
+                    SettingsRow(label: "New notes go in", detail: "When no window shows a folder.") {
+                        FolderField(url: folder) { preferences.notesFolder = $0 }
+                    }
+                }
                 SettingsRow(label: "Show files .gitignore hides", detail: "Dimmed in the sidebar, and found by Quick Open and Find in Files.") {
                     OnOff(label: "Show files .gitignore hides", isOn: $preferences.showsIgnored)
                 }
@@ -74,6 +79,7 @@ struct GeneralPane: View {
                 preferences.showsIgnored = factory.showsIgnored
                 preferences.attachments = factory.attachments
                 preferences.inbox = factory.inbox
+                preferences.notesFolder = factory.notesFolder
                 updates.setAutomaticChecks(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool ?? false)
                 updates.setBeta(false)
             }

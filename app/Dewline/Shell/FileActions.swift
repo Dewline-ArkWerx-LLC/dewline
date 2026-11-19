@@ -4,11 +4,9 @@ import MdCore
 /// Making, naming, moving and trashing notes and folders on disk, each one undoable. An open note follows its file.
 @MainActor
 enum FileActions {
-    /// Where a new note goes when no window shows a folder: the folder an earlier Settings > General named, else
-    /// ~/Documents/Dewline.
-    static var notesFolder: URL {
-        UserDefaults.standard.string(forKey: "DewlineNewFileFolder").flatMap { $0.hasPrefix("/") ? URL(filePath: $0, directoryHint: .isDirectory) : nil }
-            ?? URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory).appending(path: "Documents/Dewline", directoryHint: .isDirectory)
+    /// Where a new note goes when no window shows a folder: the folder picked for that, while it is there.
+    static var notesFolder: URL? {
+        Preferences.shared.notesFolder.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
     /// An empty "Untitled.md" in `folder` (or "Untitled 2.md"), created at once so it autosaves like any note.
@@ -47,25 +45,41 @@ enum FileActions {
         return renamed
     }
 
+    /// The last relink, which the next one waits for.
+    private static var relinking: Task<Void, Never>?
+
     /// Points the links in `folder`'s notes to the file or folder moved from `old` at `new`: open notes through their
-    /// editors, as a landing that undo steps over, closed notes on disk as your change. Undo points them back.
+    /// editors, as a landing that undo steps over, closed notes on disk as your change. Undo points them back. The
+    /// folder is walked off the main thread, one relink after another; an open note typed into meanwhile is read again.
     static func relink(from old: URL, to new: URL, in folder: URL, undo: UndoManager?) {
-        let open = NSDocumentController.shared.documents.compactMap { document -> (url: URL, textView: EditorTextView)? in
-            guard let document = document as? MarkdownDocument, let url = document.fileURL, let textView = document.textView else { return nil }
-            return (url.standardizedFileURL, textView)
-        }
-        let edits = NoteLinks.relink(
-            from: old.standardizedFileURL, to: new.standardizedFileURL, in: folder.standardizedFileURL,
-            open: open.map { ($0.url, $0.textView.string) }, engine: MarkdownDocument.sharedEngine
-        )
-        for (note, edits) in zip(open, edits) where !edits.isEmpty {
-            let storage = note.textView.textStorage!
-            note.textView.history.land(edits) {
-                storage.beginEditing()
-                for edit in edits.reversed() {
-                    storage.replaceCharacters(in: edit.range, with: edit.text)
+        let (old, new, folder) = (old.standardizedFileURL, new.standardizedFileURL, folder.standardizedFileURL)
+        let previous = relinking
+        relinking = Task {
+            await previous?.value
+            var stale = true
+            while stale {
+                let open = NSDocumentController.shared.documents.compactMap { document -> (url: URL, textView: EditorTextView)? in
+                    guard let document = document as? MarkdownDocument, let url = document.fileURL, let textView = document.textView else { return nil }
+                    return (url.standardizedFileURL, textView)
                 }
-                storage.endEditing()
+                let texts = open.map { (url: $0.url, text: $0.textView.string) }
+                let engine = MarkdownDocument.sharedEngine
+                let edits = await Task.detached { NoteLinks.relink(from: old, to: new, in: folder, open: texts, engine: engine) }.value
+                stale = false
+                for ((note, text), edits) in zip(zip(open, texts), edits) where !edits.isEmpty {
+                    guard note.textView.string == text.text else {
+                        stale = true
+                        continue
+                    }
+                    let storage = note.textView.textStorage!
+                    note.textView.history.land(edits) {
+                        storage.beginEditing()
+                        for edit in edits.reversed() {
+                            storage.replaceCharacters(in: edit.range, with: edit.text)
+                        }
+                        storage.endEditing()
+                    }
+                }
             }
         }
         undo?.registerUndo(withTarget: Undo.shared) { _ in
@@ -316,13 +330,20 @@ extension MainWindowController {
 }
 
 extension MarkdownDocument {
-    /// File > Rename moves the note through here; the links to it from the notes in its window's folder follow.
+    /// File > Rename moves the note through here; the links to it from the notes in its window's folder follow. Undo
+    /// moves it back, and the links with it.
     override func move(to url: URL, completionHandler: (((any Error)?) -> Void)? = nil) {
         let old = fileURL
         let folder = (windowControllers.first as? MainWindowController)?.folder?.url
         super.move(to: url) { error in
-            if error == nil, let old, let folder {
-                MainActor.assumeIsolated { FileActions.relink(from: old, to: url, in: folder, undo: nil) }
+            if error == nil, let old {
+                MainActor.assumeIsolated {
+                    if let folder { FileActions.relink(from: old, to: url, in: folder, undo: nil) }
+                    self.undoManager?.registerUndo(withTarget: self) { document in
+                        MainActor.assumeIsolated { document.move(to: old) }
+                    }
+                    self.undoManager?.setActionName("Rename")
+                }
             }
             completionHandler?(error)
         }

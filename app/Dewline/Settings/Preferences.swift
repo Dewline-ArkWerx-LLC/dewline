@@ -25,6 +25,8 @@ final class Preferences {
     var showsIgnored: Bool { didSet { save(showsIgnored, "DewlineShowIgnored") } }
     var attachments: Attachments { didSet { save(attachments.rawValue, "DewlineAttachments") } }
     var inbox: URL { didSet { save(inbox.path, Self.inboxKey) } }
+    /// Where New Note puts a note when no window shows a folder, picked at the first one. Unset means ask.
+    var notesFolder: URL? { didSet { save(notesFolder?.path, "DewlineNewFileFolder") } }
     #if COLLAB
     /// The name a shared document's host and guests see.
     var collaborationName: String { didSet { save(collaborationName, "DewlineCollaborationName") } }
@@ -45,6 +47,7 @@ final class Preferences {
         showsIgnored = defaults.bool(forKey: "DewlineShowIgnored")
         attachments = defaults.string(forKey: "DewlineAttachments").flatMap(Attachments.init) ?? .beside
         inbox = path(Self.inboxKey) ?? documents.appending(path: "Dewline/Inbox.md")
+        notesFolder = path("DewlineNewFileFolder")
         #if COLLAB
         collaborationName = defaults.string(forKey: "DewlineCollaborationName").flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
         sharedFolder = path("DewlineSharedFolder") ?? documents.appending(path: "Dewline Shared", directoryHint: .isDirectory)
@@ -59,7 +62,7 @@ final class Preferences {
         defaults.set(true, forKey: "NSQuitAlwaysKeepsWindows")
     }
 
-    private func save(_ value: Any, _ key: String) {
+    private func save(_ value: Any?, _ key: String) {
         defaults.set(value, forKey: key)
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }

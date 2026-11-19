@@ -413,19 +413,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             as? MainWindowController
     }
 
-    /// The front window's folder, else the notes folder once it exists, else a folder the user picks; nil when they
-    /// cancel, so no folder is made unasked.
+    /// The front window's folder, else the notes folder, else a folder the user picks, which becomes the notes folder;
+    /// nil when they cancel, so no folder is made unasked.
     private func frontFolder() -> URL? {
-        if let url = front?.folder?.url { return url }
-        let notes = FileActions.notesFolder
-        if FileManager.default.fileExists(atPath: notes.path) { return notes }
+        if let url = front?.folder?.url ?? FileActions.notesFolder { return url }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.message = "Choose a folder for your notes."
+        panel.message = "Choose a folder for your notes. Settings > General can change it."
         panel.prompt = "Choose"
-        return panel.runModal() == .OK ? panel.url : nil
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        Preferences.shared.notesFolder = url
+        return url
     }
 
     /// File > New Note: "Untitled.md" in `frontFolder()`, open with the caret ready.

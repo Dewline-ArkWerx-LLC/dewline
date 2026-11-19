@@ -52,7 +52,9 @@ struct JourneyTests {
 
         let panel = NSSavePanel()
         #expect(document.prepareSavePanel(panel))
-        #expect(panel.directoryURL?.standardizedFileURL == FileActions.notesFolder.standardizedFileURL)
+        if let notes = FileActions.notesFolder {
+            #expect(panel.directoryURL?.standardizedFileURL == notes.standardizedFileURL)
+        }
 
         Self.type("# Groceries\nEggs, milk and bread.\n- [ ] oats", into: textView)
         let typed = "# Groceries\nEggs, milk and bread.\n- [ ] oats"

@@ -326,12 +326,12 @@ enum Typeset {
         !name.hasPrefix("-") && name.wholeMatch(of: /[A-Za-z0-9._ -]+/) != nil
     }
 
-    /// `job` under sandbox-exec. It runs programs from the toolchain folders only, sends no Apple events and can't ask
-    /// Launch Services to open anything. It reads system and TeX folders, `root` and `build`, and in home only the TeX,
-    /// Tectonic, typst and font folders; a root at or above home narrows to `file`'s folder, or to `file` itself. The
-    /// sandbox checks a symlink's target, so a link in the folder can't pull an outside file into the PDF. It writes only
-    /// `build`, its own temporary folder there, and those caches. Only typst and tectonic reach the network, over HTTPS,
-    /// for packages and bundles. Paths go in as parameters, never into the profile's text.
+    /// `job` under sandbox-exec. It runs programs from the toolchain folders and sh, perl and env only, sends no Apple
+    /// events and can't ask Launch Services to open anything. It reads system and TeX folders, `root` and `build`, and
+    /// in home only the TeX, Tectonic, typst and font folders; a root at or above home narrows to `file`'s folder, or
+    /// to `file` itself. The sandbox checks a symlink's target, so a link in the folder can't pull an outside file into
+    /// the PDF. It writes only `build`, its own temporary folder there, and those caches. Only typst and tectonic reach
+    /// the network, over HTTPS, for packages and bundles. Paths go in as parameters, never into the profile's text.
     nonisolated static func sandboxed(_ job: Job, file: URL, root: URL, build: URL) -> Job {
         let online = ["typst", "tectonic"].contains(URL(filePath: job.program).lastPathComponent)
         let home = real(URL(filePath: NSHomeDirectory())) ?? NSHomeDirectory()
@@ -348,8 +348,11 @@ enum Typeset {
         (allow default)
         (deny file-read* file-write* network* process-exec appleevent-send)
         (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.lsd.mapdb"))
-        (allow process-exec (subpath "/Library/TeX") (subpath "/opt/homebrew") (subpath "/usr/local") (subpath "/usr/bin") (subpath "/bin")
+        (allow process-exec (subpath "/Library/TeX") (subpath "/usr/local/texlive") (subpath "/opt/homebrew/bin")
+            (subpath "/opt/homebrew/Cellar") (subpath "/usr/local/bin") (subpath "/usr/local/Cellar") (literal "/bin/sh")
+            (literal "/bin/bash") (literal "/bin/zsh") (literal "/bin/dash") (literal "/usr/bin/perl") (literal "/usr/bin/env")
             (literal (param "PROGRAM")))
+        (deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/open") (literal "/usr/bin/osascript") (literal "/usr/bin/xpcproxy"))
         (allow file-read-metadata)
         (allow file-read* (literal "/") (subpath "/Library/TeX") (subpath "/Library/Fonts") (subpath "/usr") (subpath "/bin")
             (subpath "/opt/homebrew") (subpath "/System") (subpath "/private/etc") (subpath "/dev") (subpath "/private/var/db/dyld")

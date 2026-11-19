@@ -72,7 +72,6 @@ jobs:
           ((build > newest)) || fail "build $build is not above the newest sparkle:version in the feed, $newest"
 
           heading=$(grep -E "^## ${version//./\\.}( |$)" CHANGELOG.md | head -1) || fail "CHANGELOG.md has no section for $version"
-          scripts/perf-gate.sh "perf/$version.json" "$TAG"
           if gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$version" > /dev/null 2>&1; then fail "v$version is already released"; fi
 
           channel=stable
@@ -80,43 +79,6 @@ jobs:
           critical=false
           if [[ $heading == *"(critical)"* ]]; then critical=true; fi
           { echo "version=$version"; echo "channel=$channel"; echo "critical=$critical"; echo "build=$build"; } >> "$GITHUB_OUTPUT"
-
-  # What CI can measure the same way on every tag: a folder window with ten tabs and a styled 10 MB note, in the Test
-  # configuration on the runner, judged against perf/ci-budgets.jq beside verify's perf.sh gate. Approval waits on it.
-  perf:
-    needs: verify
-    runs-on: xcode-27
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
-      CARGO_TARGET_DIR: ${{ github.workspace }}/core/target
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install XcodeGen 2.46.0
-        run: |
-          curl -sSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
-          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
-          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: 1.99.1
-      - run: scripts/build-xcframework.sh
-      - run: xcodegen generate --spec app/project.yml
-      - name: Measure a folder window with tabs and a 10 MB note
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          out=$RUNNER_TEMP/perf-ci.json
-          TEST_RUNNER_DEWLINE_PERF=1 TEST_RUNNER_DEWLINE_PERF_OUT=$out xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline \
-            -configuration Test -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO -quiet \
-            '-only-testing:DewlineTests/PerfTests/folderWindow()'
-          jq .folderWindow "$out"
-          scripts/perf-gate.sh "$out" "$TAG" perf/ci-budgets.jq
 
   build:
     needs: verify
@@ -418,7 +380,7 @@ jobs:
           retention-days: 14
 
   approve:
-    needs: [launch-26, feed-sign, perf]
+    needs: [launch-26, feed-sign]
     runs-on: ubuntu-24.04
     environment: release-approval
     timeout-minutes: 5

@@ -36,3 +36,5 @@ Reopens if: the runner image changes hardware; W6 lands or the A-to-C rise is fo
 The ceilings are the comparison with main's numbers: each night is judged against main's measured slowest plus headroom, not against the night before. One run on the runner varies up to 3x from the next, so a night-to-night comparison would fail on noise; perf-ci.json's numbers stay in the job log (`jq .folderWindow`). A ceiling moves only through this record, when main's measured numbers move.
 
 Reopens if: the nightly job fails on noise alone, or W6's 10 MB work lands and the slowest run falls.
+
+**19 Nov 2026: no perf gate on releases.** The owner dropped perf measurement from releases. release.yml no longer judges a `perf/<version>.json` or measures on the runner, nightly.yml's `perf` job is gone, and `scripts/perf-gate.sh` and `perf/ci-budgets.jq` are deleted. `scripts/perf.sh`, `perf/budgets.jq` and `PerfTests` stay as manual tools.

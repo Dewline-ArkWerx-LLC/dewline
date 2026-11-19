@@ -99,7 +99,7 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>Performance</h1>
-      <p class="lead">Each release is held to fixed ceilings for typing, launch, opening, idle use and download size. The release workflow refuses a tag whose measured run misses any of them.</p>
+      <p class="lead">Dewline sets fixed ceilings for typing, launch, opening, idle use and download size. <code>perf.sh</code> measures a Mac against them on demand.</p>
       <aside class="callout note">
         <p class="callout-title">Measured numbers</p>
         <p>Measured numbers will appear once a clean run on the signed release build exists. The 0.1.0 run used an unsigned build on a busy Mac, so it is not published.</p>
@@ -150,9 +150,7 @@
       <p>The keystroke tests run three times, each with a clock probe. A run whose clock reads 1.5 times the fastest, or that landed on an efficiency core too often, runs again.</p>
       <div class="code" data-lang="Terminal">
 <pre tabindex="0"><code><span class="c"># measure this Mac; writes perf/&lt;version&gt;.json with each budget's result</span>
-<span class="p">$ </span>scripts/perf.sh
-<span class="c"># judge a result against the current ceilings, as the release workflow does</span>
-<span class="p">$ </span>scripts/perf-gate.sh perf/0.1.0.json v0.1.0</code></pre>
+<span class="p">$ </span>scripts/perf.sh</code></pre>
       </div>
     </article>
 

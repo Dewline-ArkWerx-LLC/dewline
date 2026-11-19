@@ -577,6 +577,8 @@ jobs:
         run: |
           [[ -f site/wrangler.jsonc ]] || { echo "::error::site/ does not exist yet"; exit 1; }
           [[ -n $CLOUDFLARE_API_TOKEN ]] || { echo "::error::The site environment needs a CLOUDFLARE_API_TOKEN secret (docs/release.md)"; exit 1; }
+      - name: Name the released version on the site
+        run: scripts/stamp-site-version.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.21.0

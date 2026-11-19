@@ -349,7 +349,7 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 .close-lead { margin: 1.25rem auto 0; max-width: 30rem; font: 400 1.1875rem/1.6 var(--serif); font-variation-settings: "opsz" 18; }
 .close .get { margin-top: 2rem; justify-content: center; }
 .close .meta { margin: 1.25rem auto 0; max-width: 28rem; line-height: 1.6; text-wrap: balance; }
-.close .meta span { display: block; margin-top: 0.25rem; }
+.close .meta span:not([data-version]) { display: block; margin-top: 0.25rem; }
 
 .foot { border-top: 1px solid var(--rule); padding-block: 2rem 2.5rem; font-size: 0.875rem; color: var(--slate); }
 .foot-in { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem 2rem; }

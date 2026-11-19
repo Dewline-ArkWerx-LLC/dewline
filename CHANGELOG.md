@@ -17,7 +17,7 @@ Notes save themselves, undecided changes survive closing, and export gains seven
 - The `.claude`, `.cursor` and `.github` folders and `.mdc` files show in the tree, Quick Open and Find in Files. `dewline open <folder>` opens a folder in its window, and File > Open Recent lists recent folders and notes.
 - Settings has four panes: General, Editor, Appearance and Agents. There are four themes: Tidewater and Onionskin for light, Nightwatch and Carbon for dark, and a retired theme becomes the nearest of these. Body, headings and code take any font on your Mac. Link previews stay off until you turn them on in Settings > Editor.
 - File > Capture is the one place in the app that adds a line to your inbox. The Service, the App Intent, `dewline capture` and MCP work as before, and Settings > General holds the inbox path.
-- Agent setup skips agents you have not installed and says when Codex needs to trust Dewline's hooks. Edits made with curly quotes or in CRLF files are matched, so more agent edits carry the agent's name, and a failed edit no longer delays the next change. A nightly test runs Claude Code and Codex against these checks.
+- Agent setup skips agents you have not installed and says when Codex needs to trust Dewline's hooks. Edits made with curly quotes or in CRLF files are matched, so more agent edits carry the agent's name, and a failed edit no longer delays the next change.
 - Removed: live collaboration is off for now, so Share, Join Shared Note and `dewline://join` are not in this build. The agent chat panel, Follow Changes, the Preview pane, the font catalog and installable fonts, the extra theme pack, and the daily note, Dock capture and capture shortcut are gone.
 - Security fixes in the URL scheme and in LaTeX and EPUB export.
 

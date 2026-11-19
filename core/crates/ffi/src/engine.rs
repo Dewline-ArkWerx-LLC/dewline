@@ -399,7 +399,7 @@ pub enum Bias {
 }
 
 #[derive(uniffi::Object)]
-pub struct Engine(core::Engine);
+pub struct Engine(pub(crate) core::Engine);
 
 #[uniffi::export]
 impl Engine {

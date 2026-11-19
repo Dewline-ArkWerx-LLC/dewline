@@ -442,9 +442,10 @@ pub fn export_epub(
     .map_err(|error| docx::ExportError::Io {
         message: error.to_string(),
     })?;
-    export::epub::epub(&page, &title, SystemTime::now()).map_err(|error| docx::ExportError::Io {
-        message: error.to_string(),
-    })
+    contained(|| export::epub::epub(&page, &title, SystemTime::now()))
+        .map_err(|error| error.to_string())
+        .and_then(|book| book.map_err(|error| error.to_string()))
+        .map_err(|message| docx::ExportError::Io { message })
 }
 
 /// A file an export writes beside its main file, at `path` relative to that file's folder.

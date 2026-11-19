@@ -2,40 +2,76 @@
 //! link to a note, and the edits that keep links on a note through a rename.
 
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::ops::Range;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
+use crate::engine::{Engine, Origin};
 use crate::file;
+use crate::git::status::Ignores;
+use crate::jail::Jail;
 
 /// `walk` lists at most this many notes.
 pub const MAX_NOTES: usize = 20_000;
 /// The most a note read from disk holds.
 pub const MAX_NOTE: u64 = 8 << 20;
 
-/// The notes under `root`, root-relative, in name order. Links are skipped, not followed.
+/// The notes under `root`, root-relative, in name order: the one list of notes that link completion, backlinks,
+/// relinking and MCP read. Links, `node_modules` and what git ignores are skipped.
 pub fn walk(root: &Path) -> Vec<PathBuf> {
+    let (mut ignores, prefix) =
+        Ignores::of(&fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()));
+    let mut keep = |relative: &Path, folder: bool| {
+        let path = relative.as_os_str().as_bytes();
+        let path = if prefix.is_empty() {
+            path.to_vec()
+        } else {
+            [&prefix, b"/".as_slice(), path].concat()
+        };
+        (folder || is_note(relative)) && !ignores.ignored(&path, folder)
+    };
     let mut notes = Vec::new();
-    visit(root, Path::new(""), &mut notes);
+    visit(root, Path::new(""), &mut keep, &mut notes);
     notes
 }
 
-fn visit(root: &Path, folder: &Path, notes: &mut Vec<PathBuf>) {
+/// Every file under `root`, root-relative, in name order, outside dot folders and `node_modules`.
+pub fn files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    visit(root, Path::new(""), &mut |_, _| true, &mut files);
+    files
+}
+
+/// Lists the files under `folder` that `keep` keeps, entering the folders it keeps.
+fn visit(
+    root: &Path,
+    folder: &Path,
+    keep: &mut impl FnMut(&Path, bool) -> bool,
+    found: &mut Vec<PathBuf>,
+) {
     let Ok(entries) = fs::read_dir(root.join(folder)) else {
         return;
     };
     let mut entries: Vec<_> = entries.flatten().collect();
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if notes.len() == MAX_NOTES {
+        if found.len() == MAX_NOTES {
             return;
         }
         let relative = folder.join(entry.file_name());
+        if hidden(&relative) || entry.file_name() == "node_modules" {
+            continue;
+        }
         match entry.file_type() {
-            Ok(kind) if kind.is_dir() && !hidden(&relative) => visit(root, &relative, notes),
-            Ok(kind) if kind.is_file() && is_note(&relative) => notes.push(relative),
+            Ok(kind) if kind.is_dir() && keep(&relative, true) => {
+                visit(root, &relative, keep, found)
+            }
+            Ok(kind) if kind.is_file() && keep(&relative, false) => found.push(relative),
             _ => {}
         }
     }
@@ -122,8 +158,8 @@ pub struct Link {
     pub range: Range<usize>,
     /// The note, root-relative.
     pub target: PathBuf,
-    /// The bytes naming the file as written: a wikilink's name, a destination's last part. A reference link has none;
-    /// its definition does.
+    /// The bytes naming the file as written: a wikilink's name, a destination up to its `#` or `?`. A reference link
+    /// has none; its definition does.
     pub name: Option<Range<usize>>,
 }
 
@@ -245,8 +281,8 @@ fn wikilink(text: &str, range: Range<usize>, notes: &Notes) -> Option<Link> {
     })
 }
 
-/// The bytes of the destination starting at or after `from` (spaces skipped), up to its `#` or `?`, from its last
-/// `/` on; none when it is empty.
+/// The bytes of the destination starting at or after `from` (spaces skipped), up to its `#` or `?`; none when it is
+/// empty.
 fn destination(text: &str, from: usize, until: usize) -> Option<Range<usize>> {
     let bytes = &text.as_bytes()[..until];
     let mut at = from;
@@ -275,10 +311,7 @@ fn destination(text: &str, from: usize, until: usize) -> Option<Range<usize>> {
     };
     let path = &text[start..end];
     let end = start + path.find(['#', '?']).unwrap_or(path.len());
-    let last = text[start..end]
-        .rfind('/')
-        .map_or(start, |slash| start + slash + 1);
-    (last < end).then_some(last..end)
+    (start < end).then_some(start..end)
 }
 
 /// A destination's note, root-relative, or none for an address, an anchor here, a path from the top, or one that
@@ -378,64 +411,90 @@ pub fn backlinks(text: &str, source: &Path, notes: &Notes, target: &Path) -> Vec
     found
 }
 
-/// The edits that point the links in `text`, the note at `source`, to `old` at `new` instead: each a byte range and
-/// what replaces it. A wikilink keeps its form, with or without `.md`, and names the note's whole path when its name
-/// alone would give another note; a destination is percent-encoded unless it was written with spaces. `notes` has the
-/// note at `old`.
+/// The edits that keep the links in `text`, the note at `source`, on their files after `moves`, each a file's old and
+/// new path: each a byte range and what replaces it. A wikilink keeps its form, with or without `.md`, and names the
+/// note's whole path when its name alone would give another note. A destination keeps its folder while that still
+/// leads to the file from where the note is now, else takes the path from there, percent-encoded unless it was written
+/// with spaces. Paths are root-relative, and `notes` has the files at their old paths.
 pub fn relink(
     text: &str,
     source: &Path,
     notes: &Notes,
-    old: &Path,
-    new: &Path,
+    moves: &[(PathBuf, PathBuf)],
 ) -> Vec<(Range<usize>, String)> {
-    let Some(file_name) = new
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-    else {
-        return Vec::new();
+    let moved = |path: &Path| {
+        moves
+            .iter()
+            .find(|(old, _)| same(old, path))
+            .map(|(_, new)| new.as_path())
     };
-    let stem = match new.extension() {
-        Some(extension) if extension.eq_ignore_ascii_case("md") => new
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned(),
-        _ => file_name.clone(),
-    };
-    let found: Vec<Link> = links(text, source, notes)
-        .into_iter()
-        .filter(|link| same(&link.target, old))
-        .collect();
-    let after = found.iter().any(|link| link.kind == Kind::Wiki).then(|| {
-        Notes::new(
-            notes
-                .paths()
-                .iter()
-                .map(|path| if same(path, old) { new } else { path }.to_path_buf())
-                .collect(),
-        )
-    });
+    let folder = moved(source)
+        .unwrap_or(source)
+        .parent()
+        .unwrap_or(Path::new(""))
+        .to_path_buf();
+    let found = links(text, source, notes);
+    let after = found
+        .iter()
+        .any(|link| link.kind == Kind::Wiki && moved(&link.target).is_some())
+        .then(|| {
+            Notes::new(
+                notes
+                    .paths()
+                    .iter()
+                    .map(|path| moved(path).unwrap_or(path).to_path_buf())
+                    .collect(),
+            )
+        });
     let mut edits: Vec<(Range<usize>, String)> = found
         .into_iter()
         .filter_map(|link| {
             let name = link.name?;
             let written = &text[name.clone()];
-            let wanted = match (link.kind, &after) {
-                (Kind::Wiki, Some(after)) => {
-                    let last = if written.to_lowercase().ends_with(".md") {
-                        &file_name
+            let prefix = written.rfind('/').map_or("", |slash| &written[..=slash]);
+            let wanted = if link.kind == Kind::Wiki {
+                let (new, after) = (moved(&link.target)?, after.as_ref()?);
+                let file_name = new.file_name()?.to_string_lossy();
+                let last = match new.file_stem() {
+                    Some(stem)
+                        if !written.to_lowercase().ends_with(".md")
+                            && new
+                                .extension()
+                                .is_some_and(|extension| extension.eq_ignore_ascii_case("md")) =>
+                    {
+                        stem.to_string_lossy()
+                    }
+                    _ => file_name,
+                };
+                let path = new.with_file_name(&*last).to_string_lossy().into_owned();
+                [format!("{prefix}{last}"), path]
+                    .into_iter()
+                    .find(|name| after.resolve(name).is_some_and(|note| same(note, new)))?
+            } else {
+                let target = match moved(&link.target) {
+                    Some(new) => new,
+                    None if moved(source).is_some() => &link.target,
+                    None => return None,
+                };
+                let spaced = written.contains(' ');
+                let name = |part: &std::ffi::OsStr| {
+                    let part = part.to_string_lossy();
+                    if spaced {
+                        part.into_owned()
                     } else {
-                        &stem
-                    };
-                    let folder = written.rfind('/').map_or("", |slash| &written[..=slash]);
-                    let path = new.with_file_name(last).to_string_lossy().into_owned();
-                    [format!("{folder}{last}"), path]
-                        .into_iter()
-                        .find(|name| after.resolve(name).is_some_and(|note| same(note, new)))?
+                        encode(&part)
+                    }
+                };
+                let kept = format!("{prefix}{}", name(target.file_name()?));
+                if local(&kept, &folder).is_some_and(|path| same(&path, target)) {
+                    kept
+                } else {
+                    path_between(&folder, target)
+                        .iter()
+                        .map(name)
+                        .collect::<Vec<_>>()
+                        .join("/")
                 }
-                _ if written.contains(' ') => file_name.clone(),
-                _ => encode(&file_name),
             };
             (written != wanted).then_some((name, wanted))
         })
@@ -443,6 +502,20 @@ pub fn relink(
     edits.sort_by_key(|(range, _)| range.start);
     edits.dedup_by_key(|(range, _)| range.start);
     edits
+}
+
+/// The relative path from `folder` to `file`, both root-relative.
+fn path_between(folder: &Path, file: &Path) -> PathBuf {
+    let shared = folder
+        .components()
+        .zip(file.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up = folder
+        .components()
+        .skip(shared)
+        .map(|_| Component::ParentDir);
+    up.chain(file.components().skip(shared)).collect()
 }
 
 /// A file name as a link destination: blanks, `%`, brackets, `#`, `?`, quotes and backslashes percent-encoded.
@@ -460,41 +533,72 @@ fn encode(name: &str) -> String {
 
 /// A note's text, byte-order mark and all, when it is UTF-8 of at most 8 MB.
 pub fn read(path: &Path) -> Option<String> {
-    let info = fs::metadata(path).ok()?;
+    read_file(
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .ok()?,
+    )
+}
+
+fn read_file(mut file: File) -> Option<String> {
+    let info = file.metadata().ok()?;
     if !info.is_file() || info.len() > MAX_NOTE {
         return None;
     }
-    String::from_utf8(fs::read(path).ok()?).ok()
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    Some(text)
 }
 
-/// Points the links to `old` in the notes under `root` at `new`, the note's new path, and returns the notes it rewrote.
-/// Paths are root-relative, and `notes` has the note at `old`. Notes in `skipping`, and notes that change while they
-/// are rewritten, are left alone.
+/// Keeps the links in the notes under `root` on their files after `moves`, as `relink` does, and returns the notes it
+/// rewrote, where they are now. A note is read where `moves` puts it, or where it was until it moves. Notes in
+/// `skipping`, notes that resolve outside `root`, and notes that change while they are rewritten, are left alone. A note
+/// is opened from the root with no symlink on the way. `engine` notes each write as yours, so it isn't another app's
+/// change to a closed note.
 pub fn rewrite(
     root: &Path,
     notes: &Notes,
-    old: &Path,
-    new: &Path,
+    moves: &[(PathBuf, PathBuf)],
     skipping: &[PathBuf],
+    engine: Option<&Engine>,
 ) -> Vec<PathBuf> {
     let mut rewritten = Vec::new();
+    let Ok(jail) = Jail::new(root) else {
+        return rewritten;
+    };
     for source in notes.paths() {
-        let on_disk = if same(source, old) { new } else { source };
+        let on_disk = moves
+            .iter()
+            .find(|(old, new)| same(old, source) && root.join(new).exists())
+            .map_or(source, |(_, new)| new);
         if skipping.iter().any(|skip| same(skip, on_disk)) {
             continue;
         }
-        let path = root.join(on_disk);
-        let Some(text) = read(&path) else {
+        let Ok((file, relative)) = jail.open(on_disk) else {
             continue;
         };
+        let Some(text) = read_file(file) else {
+            continue;
+        };
+        let path = jail.root().join(relative);
         let bom = if text.starts_with('\u{feff}') { 3 } else { 0 };
-        let edits = relink(&text[bom..], source, notes, old, new);
+        let edits = relink(&text[bom..], source, notes, moves);
         if edits.is_empty() {
             continue;
         }
         let mut out = text.clone();
         for (range, with) in edits.iter().rev() {
             out.replace_range(range.start + bom..range.end + bom, with);
+        }
+        if let Some(engine) = engine {
+            let _ = engine.closed_write(
+                &path,
+                Origin::User,
+                text.as_bytes(),
+                file::hash(out.as_bytes()),
+            );
         }
         if file::save(&path, &file::hash(text.as_bytes()), out.as_bytes()).is_ok() {
             rewritten.push(on_disk.to_path_buf());
@@ -525,11 +629,21 @@ mod tests {
     #[test]
     fn walk_lists_notes_in_name_order() {
         let dir = tempfile::tempdir().unwrap();
-        for path in ["b.md", "a/c.md", "a/d.png", ".hidden/e.md", "f.txt"] {
+        for path in [
+            "b.md",
+            "a/c.md",
+            "a/d.png",
+            ".hidden/e.md",
+            "f.txt",
+            "node_modules/g.md",
+            "build/h.md",
+            "a/i.md",
+        ] {
             let path = dir.path().join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, "").unwrap();
         }
+        fs::write(dir.path().join(".gitignore"), "build/\ni.md\n").unwrap();
         assert_eq!(
             walk(dir.path()),
             ["a/c.md", "b.md", "f.txt"].map(PathBuf::from)
@@ -621,8 +735,10 @@ mod tests {
             text,
             Path::new("a.md"),
             &notes,
-            Path::new("projects/launch plan.md"),
-            Path::new("projects/Q4 (draft).md"),
+            &[(
+                "projects/launch plan.md".into(),
+                "projects/Q4 (draft).md".into(),
+            )],
         );
         let mut out = text.to_owned();
         for (range, with) in edits.iter().rev() {
@@ -644,8 +760,7 @@ mod tests {
             text,
             Path::new("a.md"),
             &notes,
-            Path::new("projects/plan.md"),
-            Path::new("projects/roadmap.md"),
+            &[("projects/plan.md".into(), "projects/roadmap.md".into())],
         );
         let mut out = text.to_owned();
         for (range, with) in edits.iter().rev() {
@@ -654,6 +769,27 @@ mod tests {
         assert_eq!(
             out,
             "[[projects/roadmap]] [[projects/roadmap]] [[projects/roadmap.md]]"
+        );
+    }
+
+    #[test]
+    fn relink_follows_a_move_to_another_folder() {
+        let notes = notes(&["a.md", "plan.md", "b.md"]);
+        let moves = [("plan.md".into(), "projects/plan.md".into())];
+        let apply = |source: &str, text: &str| {
+            let mut out = text.to_owned();
+            for (range, with) in relink(text, Path::new(source), &notes, &moves).iter().rev() {
+                out.replace_range(range.clone(), with);
+            }
+            out
+        };
+        assert_eq!(
+            apply("a.md", "[[plan]] [p](plan.md#goals) [q](./plan.md)"),
+            "[[plan]] [p](projects/plan.md#goals) [q](projects/plan.md)"
+        );
+        assert_eq!(
+            apply("plan.md", "[b](b.md) [s](plan.md) ![i](img/x.png)"),
+            "[b](../b.md) [s](plan.md) ![i](../img/x.png)"
         );
     }
 
@@ -675,9 +811,9 @@ mod tests {
         let rewritten = rewrite(
             dir.path(),
             &notes,
-            Path::new("old.md"),
-            Path::new("new.md"),
+            &[("old.md".into(), "new.md".into())],
             &["b.md".into()],
+            None,
         );
         assert_eq!(rewritten, [PathBuf::from("a.md")]);
         let read = |path: &str| fs::read_to_string(dir.path().join(path)).unwrap();

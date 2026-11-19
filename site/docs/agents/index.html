@@ -76,7 +76,6 @@
         <li><a href="/docs/files/">Files</a></li>
         <li><a href="/docs/sync/">Sync and mobile</a></li>
         <li><a href="/docs/agents/" aria-current="page">Agents</a></li>
-        <li><a href="/docs/collaboration/">Collaboration</a></li>
       </ul>
     </div>
     <div class="dnav-group">
@@ -103,11 +102,11 @@
       <p class="lead">Dewline marks each change another writer makes to an open note, so you can keep or revert it.</p>
 
       <h2 id="review">Keep or revert a change</h2>
-      <p>When git, a sync app, a script or an agent writes to an open note, Dewline marks the change. A bar under the text names the writer: “Claude changed 3 places · 2 other notes”.</p>
+      <p>When git, a sync app, a script or an agent writes to an open note, Dewline marks the change. A stamp beside it names the writer and the time, “CLAUDE 3:25 PM · 1 change”, with Revert and Keep.</p>
       <ol class="steps">
-        <li><b>Step through the changes</b> with the bar's arrows, or <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↓</kbd></span> and <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↑</kbd></span>.</li>
+        <li><b>Step through the changes</b> with <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↓</kbd></span> and <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↑</kbd></span>.</li>
         <li><b>Keep or revert the one in focus.</b></li>
-        <li><b>Click “2 other notes”</b> for the Changes list <span class="keys">(<kbd>⇧</kbd><kbd>⌘</kbd><kbd>R</kbd>)</span>, which includes notes changed while closed.</li>
+        <li><b>Open the Changes list</b> <span class="keys">(<kbd>⇧</kbd><kbd>⌘</kbd><kbd>R</kbd>)</span>, which includes notes changed while closed.</li>
       </ol>
       <div class="table" tabindex="0" role="region" aria-label="Keep and Revert keys">
         <table>
@@ -121,28 +120,14 @@
         </table>
       </div>
       <p>Each choice is one edit you can undo. A revert leaves the other app's history alone.</p>
-      <details id="marked">
-        <summary>Which changes are marked</summary>
-        <div class="table" tabindex="0" role="region" aria-label="Which outside changes are marked">
-          <table>
-            <thead><tr><th scope="col">The change</th><th scope="col">No unsaved edits</th><th scope="col">Unsaved edits</th></tr></thead>
-            <tbody>
-              <tr><td>An agent's, named by its hooks</td><td>Marked</td><td>Marked</td></tr>
-              <tr><td>git's, such as a checkout or a rebase</td><td>Lands unmarked</td><td>Marked</td></tr>
-              <tr><td>Another app's</td><td>Lands unmarked</td><td>Marked</td></tr>
-              <tr><td>Another app's, to an agent instruction file such as <code>CLAUDE.md</code></td><td>Marked</td><td>Marked</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>A hook that reports late can still name a change that landed unmarked; it then becomes marked.</p>
-      </details>
+      <p>Every outside write that lands in an open note is marked, whether or not the note has unsaved edits. A hook that reports late can still name a change after it lands.</p>
 
       <h2 id="install">Mark edits from other agents</h2>
       <p>An agent you run in Terminal writes files itself. Hooks let its edits carry its name.</p>
       <ol class="steps">
-        <li><b>Click Set Up</b> on the status bar line “Agent edits aren't marked yet”, or in Settings &gt; Agents.</li>
+        <li><b>Click Set Up All Hooks…</b> in Settings &gt; Agents, or “Set up agent hooks…” on the stamp of another app's change.</li>
         <li><b>Confirm the files it changes.</b> Each keeps a backup beside it.</li>
-        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex and trust each Dewline hook. Dewline can't see that trust, so Settings shows Codex's hooks as Added either way.</li>
+        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex and trust each Dewline hook. Until you do, Settings shows Codex's hooks as Needs trust.</li>
       </ol>
       <p>If you move or rename Dewline.app, the hooks show as Not set up; Set Up points them at the app's new place, and Codex asks for trust again.</p>
       <p>In Terminal, <a href="/docs/cli/#doctor"><code>dewline doctor --install-hooks</code></a> does the same.</p>
@@ -252,7 +237,7 @@ and don't redo a change the user reverted.</code></pre>
 
     <nav class="pager" aria-label="Previous and next page">
       <a class="prev" href="/docs/sync/">Previous: Sync and mobile</a>
-      <a class="next" href="/docs/collaboration/">Next: Collaboration</a>
+      <a class="next" href="/docs/cli/">Next: CLI</a>
     </nav>
   </main>
 

@@ -42,6 +42,9 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     /// Text not styled yet, whole paragraphs, which `styleSome` works through from the top of the view.
     private var unstyled = IndexSet()
     private var scheduled = false
+    /// The text the next later pass styles: what the last one would have styled in `passTime` at its rate. Each pass
+    /// also lays the view out again, so on a fast Mac few long passes style a long text sooner than many short ones.
+    private var passLength = MarkdownStyler.pass
     /// The line a restored place put at the top of the view, until the text is all styled. The place was measured on
     /// styled text, so `styleSome` holds this line while it shows.
     var restored: Int?
@@ -58,6 +61,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     }
 
     static let hiddenFont = NSFont.systemFont(ofSize: 0.01)
+    /// A hidden marker's attributes, built once: a Swift dictionary bridges again on every write.
+    private static let hiddenMarker = NSDictionary(
+        objects: [hiddenFont, NSColor.clear], forKeys: [NSAttributedString.Key.font.rawValue as NSString, NSAttributedString.Key.foregroundColor.rawValue as NSString]
+    )
     /// The attributes styling owns; restyling leaves every other attribute in the storage as it is.
     private static let keys = [
         NSAttributedString.Key.font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .underlineColor, .strikethroughStyle, .kern, .toolTip,
@@ -65,8 +72,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     ].map { $0.rawValue as NSString }
     /// The text a long restyle styles at once, which covers the view: several screens.
     private static let chunk = BlockMap.screen
-    /// The most text one later pass styles while more waits, so a pass fits in a 120 Hz frame.
+    /// The text the first later pass styles while more waits, and the least a later one aims for.
     private static let pass = chunk / 2
+    /// How long one later pass styles while more waits, so the pass and the display after it fit in a 120 Hz frame.
+    private static let passTime = Duration.milliseconds(6)
     private static var base: [NSAttributedString.Key: Any] {
         [
             .font: bodyFont,
@@ -357,10 +366,13 @@ extension MarkdownStyler {
             let anchor = min(line ?? top, storage.length - 1)
             held = textView.baseline(at: anchor).map { (anchor, $0 - visible.minY) }
         }
-        let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, Self.pass, map.parsed - first)
+        let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, passLength, map.parsed - first)
+        let start = ContinuousClock.now
         storage.beginEditing()
         restyle(NSRange(location: first, length: length), in: storage, selection: textView.selectedRanges.map(\.rangeValue))
         storage.endEditing()
+        let took = max(ContinuousClock.now - start, .microseconds(100))
+        if !past { passLength = max(Self.pass, Int(Double(length) * (Self.passTime / took))) }
         if let held { textView.hold(held.anchor, at: held.offset) }
         if unstyled.isEmpty { restored = nil } else { schedule() }
     }
@@ -389,6 +401,8 @@ extension MarkdownStyler {
         let revealing = selection.filter { caret in
             caret.length > 0 || !changed.contains { $0.location <= caret.location && caret.location <= NSMaxRange($0) }
         }
+        // Markers repeat: each one's width is measured once.
+        var widths: [NSAttributedString: CGFloat] = [:]
         for block in map.blocks(in: paragraphs) {
             let offset = block.range.location - paragraphs.location
             let lines = NSRange(location: offset, length: block.range.length)
@@ -453,7 +467,10 @@ extension MarkdownStyler {
                 guard item.content.location <= NSMaxRange(paragraph) else { continue }
                 let style = (styled.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle ?? .default).mutableCopy() as! NSMutableParagraphStyle
                 let marker = NSRange(location: paragraph.location, length: item.content.location - paragraph.location)
-                style.headIndent = style.firstLineHeadIndent + styled.attributedSubstring(from: marker).size().width
+                let text = styled.attributedSubstring(from: marker)
+                let width = widths[text] ?? text.size().width
+                widths[text] = width
+                style.headIndent = style.firstLineHeadIndent + width
                 styled.addAttribute(.paragraphStyle, value: style, range: paragraph)
             }
         }
@@ -497,6 +514,8 @@ extension MarkdownStyler {
         }
         // Only runs whose styling differs are written, once each, so layout invalidates only what changed. The CF
         // accessors return a run's dictionary without bridging it to Swift, which costs more than the comparison.
+        // Attribute dictionaries are uniqued, so a restyle meets few pairs of them: each pair is compared and merged once.
+        var merges: [Runs: NSDictionary?] = [:]
         var offset = 0
         while offset < whole.length {
             var run = CFRange()
@@ -507,21 +526,33 @@ extension MarkdownStyler {
                 var part = CFRange()
                 let current = CFAttributedStringGetAttributes(storage, location, &part) as NSDictionary
                 let length = min(part.location + part.length, end) - location
-                if Self.keys.contains(where: { wanted.object(forKey: $0) as? NSObject != current.object(forKey: $0) as? NSObject }) {
-                    let merged = current.mutableCopy() as! NSMutableDictionary
-                    for key in Self.keys {
-                        if let value = wanted.object(forKey: key) {
-                            merged.setObject(value, forKey: key)
-                        } else {
-                            merged.removeObject(forKey: key)
-                        }
-                    }
-                    CFAttributedStringSetAttributes(storage, CFRange(location: location, length: length), merged, true)
+                let runs = Runs(wanted: wanted, current: current)
+                let merged: NSDictionary?
+                if let known = merges[runs] {
+                    merged = known
+                } else {
+                    merged = Self.merge(wanted, into: current)
+                    merges[runs] = .some(merged)
                 }
+                if let merged { CFAttributedStringSetAttributes(storage, CFRange(location: location, length: length), merged, true) }
                 location += length
             }
             offset = run.location + run.length
         }
+    }
+
+    /// `current` with `wanted`'s value for each key styling owns, or nil when the two agree on all of them.
+    private static func merge(_ wanted: NSDictionary, into current: NSDictionary) -> NSDictionary? {
+        guard keys.contains(where: { wanted.object(forKey: $0) as? NSObject != current.object(forKey: $0) as? NSObject }) else { return nil }
+        let merged = current.mutableCopy() as! NSMutableDictionary
+        for key in keys {
+            if let value = wanted.object(forKey: key) {
+                merged.setObject(value, forKey: key)
+            } else {
+                merged.removeObject(forKey: key)
+            }
+        }
+        return merged
     }
 
     private func mark(_ span: SyntaxSpan, revealed: Bool, in storage: NSMutableAttributedString) {
@@ -535,7 +566,7 @@ extension MarkdownStyler {
                 let font = storage.attribute(.dewlineMarkerFont, at: marker.location, effectiveRange: nil)!
                 storage.addAttributes([.font: font, .foregroundColor: ThemeStore.shared.color(showsSource ? .ink2 : .syntax)], range: marker)
             } else {
-                storage.addAttributes([.font: Self.hiddenFont, .foregroundColor: NSColor.clear], range: marker)
+                CFAttributedStringSetAttributes(storage, CFRange(location: marker.location, length: marker.length), Self.hiddenMarker, false)
             }
         }
     }
@@ -621,6 +652,21 @@ extension MarkdownStyler {
         storage.enumerateAttribute(.font, in: range) { value, run, _ in
             storage.addAttribute(.font, value: ThemeStore.shared.font(value as! NSFont, adding: traits), range: run)
         }
+    }
+}
+
+/// A run's wanted attributes and the storage's, by identity, held so neither address is reused while a restyle runs.
+private struct Runs: Hashable {
+    let wanted: NSDictionary
+    let current: NSDictionary
+
+    static func == (a: Runs, b: Runs) -> Bool {
+        a.wanted === b.wanted && a.current === b.current
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(wanted))
+        hasher.combine(ObjectIdentifier(current))
     }
 }
 

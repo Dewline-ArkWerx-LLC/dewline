@@ -309,7 +309,11 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         Task { [weak self, closed, skipped] in
             let failed = await Task.detached(priority: .userInitiated) {
-                closed.filter { url in (try? replaceMatches(of: query, inFile: url, under: root, with: replacement, options: options)) == nil }
+                closed.filter { url in
+                    (try? replaceMatches(
+                        of: query, inFile: url, under: root, with: replacement, options: options, engine: MarkdownDocument.sharedEngine
+                    )) == nil
+                }
             }.value
             guard let self else { return }
             self.run(after: .zero)

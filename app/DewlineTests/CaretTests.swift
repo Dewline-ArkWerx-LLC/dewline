@@ -101,10 +101,10 @@ struct CaretTests {
         caret.window.key = false
         caret.window.resignKey()
         caret.window.key = true
+        let again = ContinuousClock.now
         caret.window.becomeKey()
         #expect(indicator.displayMode != .visible, "blinking again once the window is key again")
         solid.time = nil
-        let again = ContinuousClock.now
         while solid.time == nil && ContinuousClock.now - again < .seconds(10) {
             try await Task.sleep(for: .milliseconds(100))
         }

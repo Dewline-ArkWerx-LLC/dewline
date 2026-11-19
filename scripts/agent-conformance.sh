@@ -3,7 +3,7 @@
 # CRLF, a byte-order mark, replace_all, Write over CRLF, a patch of two files) and checks, from the lines
 # `dewline notify` sends, that each PreToolUse's declared hash is the hash its PostToolUse found: the change gets a name.
 # Everything runs in a temporary folder that is also the agents' HOME, so no user settings or notes are read or
-# written. An agent is skipped when its CLI or API key (ANTHROPIC_API_KEY, OPENAI_API_KEY) is missing.
+# written. An agent whose CLI or API key (ANTHROPIC_API_KEY, OPENAI_API_KEY) is missing is skipped, and the run fails.
 # Usage: scripts/agent-conformance.sh <dewline command>
 set -euo pipefail
 
@@ -20,9 +20,12 @@ cleanup() {
 trap cleanup EXIT
 
 agents=()
-command -v claude >/dev/null && [[ -n ${ANTHROPIC_API_KEY:-} ]] && agents+=(claude) || echo "claude: skipped (no claude on PATH or no ANTHROPIC_API_KEY)"
-command -v codex >/dev/null && [[ -n ${OPENAI_API_KEY:-} ]] && agents+=(codex) || echo "codex: skipped (no codex on PATH or no OPENAI_API_KEY)"
-((${#agents[@]} > 0)) || exit 0
+skipped=0
+if command -v claude >/dev/null && [[ -n ${ANTHROPIC_API_KEY:-} ]]; then agents+=(claude); else
+    echo "claude: skipped (no claude on PATH or no ANTHROPIC_API_KEY)"; skipped=1; fi
+if command -v codex >/dev/null && [[ -n ${OPENAI_API_KEY:-} ]]; then agents+=(codex); else
+    echo "codex: skipped (no codex on PATH or no OPENAI_API_KEY)"; skipped=1; fi
+((${#agents[@]} > 0)) || exit 1
 
 export HOME=$work/home DEWLINE_SOCKET=$work/control.sock
 mkdir -p "$HOME"
@@ -145,3 +148,4 @@ for case in sys.stdin.read().splitlines():
     print(f"{agent} {name}: {result}" + ("" if ok else f" (expected {expected})"))
 sys.exit(1 if failed else 0)
 ' "$work" "${agents[@]}"
+exit "$skipped"

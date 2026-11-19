@@ -15,7 +15,6 @@ Each milestone is a vertical slice with a check that decides it is done. Weeks a
 | M6 (weeks 30-34) | Mermaid diagrams and math, rendered natively; Vim mode | A diagram corpus renders or shows its source with a reason; Vim's motions and operators pass a conformance table |
 | M7 (weeks 35-44) | Live collaboration by invite link, peer to peer | Two Macs co-edit a file with remote cursors under 150 ms; a removed collaborator cannot rejoin |
 | M8 (weeks 45-47) | Accessibility pass, site, 1.0 | A notarized DMG of 20 MB or less installs with Homebrew and updates itself |
-| 1.1 | Sync between your own Macs, peer to peer, no account | Two Macs edit offline and converge to identical files |
 | 1.2 | Quick send to a paired Mac | A verified transfer the receiver accepts |
 | 1.3 | Optional Google sign-in, Drive backup, email invites | Sign-in is never needed to write |
 

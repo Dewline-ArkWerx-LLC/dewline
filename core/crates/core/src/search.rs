@@ -5,6 +5,7 @@ use std::path::Path;
 
 use regex::{Regex, RegexBuilder};
 
+use crate::engine::{Engine, Origin};
 use crate::file;
 use crate::jail::{Jail, JailError};
 use crate::text::Opened;
@@ -208,12 +209,14 @@ pub enum ReplaceError {
 /// `replace` does, and returns how many there were. Only a file that resolves
 /// inside `root` is read and written, opened from the root with no symlink on
 /// the way, and it is written only while it still holds what was read. A file
-/// `search` skips is left alone.
+/// `search` skips is left alone. `engine` notes the write as yours, so it
+/// isn't another app's change to a closed note.
 pub fn replace_in_file(
     root: &Path,
     path: &Path,
     query: &Query,
     with: &str,
+    engine: Option<&Engine>,
 ) -> Result<usize, ReplaceError> {
     let jail = Jail::new(root).map_err(ReplaceError::Io)?;
     let (opened, relative) = jail.open(path).map_err(|error| match error {
@@ -227,10 +230,19 @@ pub fn replace_in_file(
     let Opened::Utf8 { bom, text } = Opened::new(bytes) else {
         return Ok(0);
     };
-    let (text, count) = replace(&text, query, with);
+    let (replaced, count) = replace(&text, query, with);
     if count > 0 {
-        let bytes = Opened::Utf8 { bom, text }.to_bytes();
-        file::save(&jail.root().join(relative), &base, &bytes).map_err(|error| match error {
+        let path = jail.root().join(relative);
+        let bytes = Opened::Utf8 {
+            bom,
+            text: replaced,
+        }
+        .to_bytes();
+        if let Some(engine) = engine {
+            let before = Opened::Utf8 { bom, text }.to_bytes();
+            let _ = engine.closed_write(&path, Origin::User, &before, file::hash(&bytes));
+        }
+        file::save(&path, &base, &bytes).map_err(|error| match error {
             file::SaveError::Conflict => ReplaceError::Conflict,
             file::SaveError::Io(error) => ReplaceError::Io(error),
         })?;
@@ -591,16 +603,32 @@ mod tests {
         let (dir, paths) = files(&[b"\xEF\xBB\xBFplan\nplan", b"\xFFplan"]);
         let query = Query::new("plan", ANY_CASE).unwrap();
         assert_eq!(
-            replace_in_file(dir.path(), &paths[0], &query, "note").unwrap(),
+            replace_in_file(dir.path(), &paths[0], &query, "note", None).unwrap(),
             2
         );
         assert_eq!(fs::read(&paths[0]).unwrap(), b"\xEF\xBB\xBFnote\nnote");
         // Not UTF-8: left alone.
         assert_eq!(
-            replace_in_file(dir.path(), &paths[1], &query, "note").unwrap(),
+            replace_in_file(dir.path(), &paths[1], &query, "note", None).unwrap(),
             0
         );
         assert_eq!(fs::read(&paths[1]).unwrap(), b"\xFFplan");
+    }
+
+    #[test]
+    fn a_replace_in_a_closed_note_is_yours() {
+        let (dir, paths) = files(&[b"plan"]);
+        let store = tempfile::tempdir().unwrap();
+        let engine = Engine::new(store.path(), crate::engine::system_clock()).unwrap();
+        engine.scan(dir.path(), false).unwrap();
+        let query = Query::new("plan", ANY_CASE).unwrap();
+        replace_in_file(dir.path(), &paths[0], &query, "note", Some(&engine)).unwrap();
+        let origins: Vec<Origin> = engine
+            .closed_changes()
+            .into_iter()
+            .map(|change| change.origin)
+            .collect();
+        assert_eq!(origins, [Origin::User]);
     }
 
     #[test]
@@ -618,7 +646,7 @@ mod tests {
         for path in ["secret.md", "out/secret.md", "../outside/secret.md"] {
             assert!(
                 matches!(
-                    replace_in_file(&root, &root.join(path), &query, "note"),
+                    replace_in_file(&root, &root.join(path), &query, "note", None),
                     Err(ReplaceError::Outside)
                 ),
                 "{path}"
@@ -627,7 +655,7 @@ mod tests {
         assert_eq!(fs::read(outside.join("secret.md")).unwrap(), b"plan");
         // A link that stays inside writes the file it names, and leaves the link.
         assert_eq!(
-            replace_in_file(&root, &root.join("alias.md"), &query, "note").unwrap(),
+            replace_in_file(&root, &root.join("alias.md"), &query, "note", None).unwrap(),
             1
         );
         assert_eq!(fs::read(root.join("notes/plan.md")).unwrap(), b"note");

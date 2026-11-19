@@ -300,7 +300,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if let waiting { show(waiting, headings: headings) }
         changesChanged()
-        if let folder { ClosedChanges.scan(folder.url, deep: true) }
+        if let folder { Self.scanClosed(folder.url, in: folder) }
+    }
+
+    /// Scans `url` and its subfolders for notes changed while closed. The engine's walk skips only hidden names and
+    /// node_modules, so a folder that holds ~/Library scans through its listed children, which leave ~/Library out.
+    private static func scanClosed(_ url: URL, in folder: Folder) {
+        guard Folder.library.path.hasPrefix(url.path == "/" ? "/" : url.path + "/") else { return ClosedChanges.scan(url, deep: true) }
+        ClosedChanges.scan(url, deep: false)
+        for entry in folder.children(of: url).entries where entry.isFolder {
+            scanClosed(entry.url, in: folder)
+        }
     }
 
     override func viewDidLayout() {

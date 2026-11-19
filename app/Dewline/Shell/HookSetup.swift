@@ -26,23 +26,28 @@ enum HookSetup {
 
     /// Names in a folder that say an agent works there.
     private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
+    /// The folders already checked, "" for the first launch's.
     private static let offeredKey = "DewlineOfferedHookSetup"
-    private static var checking = false
+    /// The folders doctor is checking now.
+    private static var checking: Set<String> = []
 
-    /// Offers Set Up on `window` once, at the first launch or when `folder` holds an agent's files, if an agent's
-    /// hooks are missing; doctor reads `folder`'s project settings too.
+    /// Offers Set Up on `window` if an agent's hooks are missing, checking once at the first launch and once for each
+    /// folder that holds an agent's files; doctor reads `folder`'s project settings too. A folder counts as checked
+    /// once doctor has run and found nothing missing or the sheet has shown.
     static func offer(on window: NSWindow, in folder: URL? = nil) {
-        guard !UserDefaults.standard.bool(forKey: offeredKey), !checking,
+        let key = folder?.path ?? ""
+        guard !checking.contains(key), !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
             folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
         else { return }
-        checking = true
+        checking.insert(key)
         Task {
             let report = await run(command(), ["doctor"], answers: 0, in: folder)
-            checking = false
-            guard report.ran, !missing(in: report.output).isEmpty, window.isVisible, !UserDefaults.standard.bool(forKey: offeredKey) else { return }
-            UserDefaults.standard.set(true, forKey: offeredKey)
-            install(from: window, in: folder)
+            checking.remove(key)
+            let hooksMissing = !missing(in: report.output).isEmpty
+            guard report.ran, !hooksMissing || window.isVisible else { return }
+            UserDefaults.standard.set((UserDefaults.standard.stringArray(forKey: offeredKey) ?? []) + [key], forKey: offeredKey)
+            if hooksMissing { install(from: window, in: folder) }
         }
     }
 

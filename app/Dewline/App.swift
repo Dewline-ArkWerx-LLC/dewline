@@ -284,10 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try Welcome.write()
             let window = Self.welcomeWindow(at: Welcome.url())
             window.showWindow(nil)
-            if let sheet = window.window {
-                DefaultApp.offer(on: sheet)
-                HookSetup.offer(on: sheet)
-            }
+            if let sheet = window.window { HookSetup.offer(on: sheet) }
         } catch {
             NSApp.presentError(error)
         }
@@ -418,7 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The front window's folder, else the notes folder, else a folder the user picks, which becomes the notes folder;
     /// nil when they cancel, so no folder is made unasked.
-    private func frontFolder() -> URL? {
+    func frontFolder() -> URL? {
         if let url = front?.folder?.url ?? FileActions.notesFolder { return url }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -518,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Capture.show()
     }
 
-    /// Settings > Agents > Set Up…: installs the hooks after a sheet listing the files.
+    /// A change stamp's Set Up…: installs the hooks after a sheet listing the files.
     @objc func setUpHooks(_ sender: Any?) {
         HookSetup.install(from: NSApp.keyWindow ?? NSApp.mainWindow)
     }

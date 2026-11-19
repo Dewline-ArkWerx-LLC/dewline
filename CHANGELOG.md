@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Correction to 0.3.0: marks for undecided changes survive a crash only up to the note's last save. A change that lands, or a Keep you make, while the note has unsaved typing is recorded at the next save, so a crash before then can drop the marks. Conflict cards are not kept. The text itself is safe in the file, its snapshots and the draft.
+
 ## 0.3.0 (19 Nov 2026)
 
 iCloud conflicts ask which version stays, files you open from Finder get the right folder, Revert works after you type around a change, and agent edits from shell commands and Cursor are marked.

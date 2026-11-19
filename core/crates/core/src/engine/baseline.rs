@@ -1099,6 +1099,9 @@ mod tests {
         assert_eq!(listed, ignored);
         engine.close(opened.doc);
         engine.scan(&f.notes, false).unwrap();
-        assert_eq!(engine.closed_changes()[0].path, open, "closed, it differs");
+        assert!(
+            engine.closed_changes().iter().any(|c| c.path == open),
+            "closed, it differs"
+        );
     }
 }

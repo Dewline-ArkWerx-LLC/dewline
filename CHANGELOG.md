@@ -2,9 +2,24 @@
 
 What changed in each Dewline release, newest first.
 
-## Unreleased
+## 0.4.0 (19 Nov 2026)
 
-- Correction to 0.3.0: marks for undecided changes survive a crash only up to the note's last save. A change that lands, or a Keep you make, while the note has unsaved typing is recorded at the next save, so a crash before then can drop the marks. Conflict cards are not kept. The text itself is safe in the file, its snapshots and the draft.
+Fewer settings and no Documents folder made for you, new notes go where you picked, and agent edits from Cursor and shell commands are named more accurately. Keeping an iCloud version no longer throws the other one away.
+
+- Keep This Version on an iCloud conflict first saves the other version into the note's snapshots, so File > Earlier Versions can restore it. If that save fails, or the note keeps no snapshots, the other version stays unresolved with iCloud. (#178)
+- Closing a note in the middle of a conflict keeps the conflict as a marked change over the other version; Revert puts yours back. A Keep, or a change that lands over unsaved typing, also keeps its marks across close. This corrects the 0.3.0 note that conflict cards were not kept. (#178)
+- Settings drops Motion, Heading style, Smart Punctuation, Open notes in, When Dewline opens and New notes go in. Smart Punctuation stays in the Edit menu and the palette. (#173)
+- First launch no longer writes `~/Documents/Dewline`. Welcome opens in a window with no folder, and a note anywhere in `~/Library` opens without scanning it. (#173)
+- Command-N, New Folder and New Window with no folder window ask for a folder and remember it; Settings > General shows it as New notes go in once set, and Restore Defaults clears it. If the folder is gone, you are asked again, and Cancel makes nothing. Command-T in a window with no folder leaves the note untitled until you save it. (#173, #174, #177)
+- Export opens in the note's folder. Quick Open and Find in Files list gitignored notes while Show files .gitignore hides is on. (#173)
+- Renaming or moving a note no longer freezes the window while links to it are rewritten, and File > Rename can be undone. (#177)
+- Closing a note that another app deleted after a refused save shows the save sheet. (#177)
+- Git status: files whose only change is the executable bit are not listed when `core.fileMode` is off; CRLF files are not listed under `core.autocrlf`; Git LFS files compare against their pointer. SHA-256 repositories show no status. (#172)
+- A Cursor edit to a closed note is named Cursor instead of Another app. The shell-command mark applies only to notes under the folder the Bash command ran in. (#179)
+- Dewline offers to install agent hooks once at first launch and when you open a folder holding `.claude`, `.cursor`, `.codex`, `CLAUDE.md` or `AGENTS.md`. `dewline doctor` also reads that folder's project hook files and reports "hooks off" when `disableAllHooks` is set. (#179)
+- Pasting or dropping text into a CRLF note inserts CRLF. (#179)
+- A scan of closed notes skips what `.gitignore` ignores. Past 10,000 notes it keeps the most recently modified. (#178)
+- Release builds no longer run a performance check. (#170)
 
 ## 0.3.0 (19 Nov 2026)
 

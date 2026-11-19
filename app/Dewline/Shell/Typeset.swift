@@ -52,10 +52,12 @@ enum Typeset {
             .appending(path: "dev.arkwerx.dewline/typeset")
             .appending(path: SHA256.hash(data: Data(url.path.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined())
         running[url] = Task {
+            defer {
+                running[url] = nil
+                if again.remove(url) != nil { written(document) }
+            }
             let outcome = await Task.detached { compile(url, root: root, into: cache) }.value
             report(outcome, for: url, in: document)
-            running[url] = nil
-            if again.remove(url) != nil { written(document) }
         }
     }
 
@@ -178,31 +180,21 @@ enum Typeset {
                 return .missing("Typesetting .tex needs MacTeX or tectonic: brew install tectonic")
             }
         }
-        let process = Process()
-        process.executableURL = URL(filePath: program)
-        process.arguments = arguments
-        process.currentDirectoryURL = folder
-        process.environment = ProcessInfo.processInfo.environment.merging(["PATH": folders.joined(separator: ":")]) { $1 }
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        process.standardInput = FileHandle.nullDevice
+        let environment = ProcessInfo.processInfo.environment.merging(["PATH": folders.joined(separator: ":")]) { $1 }
+        let run: Run
         do {
-            try process.run()
+            run = try spawn(program, arguments, in: folder, environment: environment)
         } catch {
             return .failed([], log: error.localizedDescription)
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(limit)) { if process.isRunning { process.terminate() } }
-        let log = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        let diagnostics = parse(log, in: folder)
-        if process.terminationReason == .uncaughtSignal {
+        let diagnostics = parse(run.log, in: folder)
+        if run.stopped {
             return .failed(diagnostics, log: "it ran over \(limit) seconds and was stopped")
         }
         let name = file.deletingPathExtension().lastPathComponent + ".pdf"
         let built = build.appending(path: name)
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: built.path) else {
-            return .failed(diagnostics, log: log)
+        guard run.status == 0, FileManager.default.fileExists(atPath: built.path) else {
+            return .failed(diagnostics, log: run.log)
         }
         let pdf = cache.appending(path: name)
         do {
@@ -212,6 +204,98 @@ enum Typeset {
             return .failed(diagnostics, log: error.localizedDescription)
         }
         return .done(pdf: pdf, diagnostics)
+    }
+
+    private struct Run: Sendable {
+        let log: String
+        let status: Int32
+        let stopped: Bool
+    }
+
+    /// Runs `program` in a process group of its own with stdout and stderr in one pipe, keeping the first MB of output.
+    /// Past `limit` seconds the group gets SIGTERM, then SIGKILL; whatever is left in it when the compiler ends is killed
+    /// too, and the pipe is closed after two more seconds, so no child can keep the compile from finishing.
+    private nonisolated static func spawn(_ program: String, _ arguments: [String], in folder: URL, environment: [String: String]) throws -> Run {
+        var fds: [Int32] = [-1, -1]
+        guard pipe(&fds) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let (reading, writing) = (fds[0], fds[1])
+        _ = fcntl(reading, F_SETFD, FD_CLOEXEC)
+        _ = fcntl(writing, F_SETFD, FD_CLOEXEC)
+        _ = fcntl(reading, F_SETFL, O_NONBLOCK)
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, writing, 1)
+        posix_spawn_file_actions_adddup2(&actions, writing, 2)
+        posix_spawn_file_actions_addchdir(&actions, folder.path)
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+        posix_spawnattr_setpgroup(&attributes, 0)
+        var signals = sigset_t()
+        sigemptyset(&signals)
+        posix_spawnattr_setsigmask(&attributes, &signals)
+        sigaddset(&signals, SIGPIPE)
+        posix_spawnattr_setsigdefault(&attributes, &signals)
+        let argv = ([program] + arguments).map { strdup($0) } + [nil]
+        let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { (argv + envp).forEach { free($0) } }
+        var pid: pid_t = 0
+        let spawned = posix_spawn(&pid, program, &actions, &attributes, argv, envp)
+        close(writing)
+        guard spawned == 0 else {
+            close(reading)
+            throw POSIXError(POSIXErrorCode(rawValue: spawned) ?? .EIO)
+        }
+
+        nonisolated(unsafe) var output = Data()
+        let drained = DispatchSemaphore(value: 0)
+        let source = DispatchSource.makeReadSource(fileDescriptor: reading, queue: DispatchQueue(label: "dev.arkwerx.dewline.typeset"))
+        source.setEventHandler {
+            var buffer = [UInt8](repeating: 0, count: 65536)
+            let count = read(reading, &buffer, buffer.count)
+            if count > 0 {
+                output.append(contentsOf: buffer.prefix(min(count, max(0, 1_048_576 - output.count))))
+            } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
+                source.cancel()
+            }
+        }
+        source.setCancelHandler {
+            close(reading)
+            drained.signal()
+        }
+        source.resume()
+
+        // Waits without reaping, so the group's id can't be reused before the sweep below.
+        let exited = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { [pid] in
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1, errno == EINTR {}
+            exited.signal()
+        }
+        func ended(within seconds: Int) -> Bool {
+            exited.wait(timeout: .now() + .seconds(seconds)) == .success
+        }
+        var gone = ended(within: limit)
+        let stopped = !gone
+        if stopped {
+            killpg(pid, SIGTERM)
+            gone = ended(within: 2)
+            if !gone {
+                killpg(pid, SIGKILL)
+                gone = ended(within: 2)
+            }
+        }
+        killpg(pid, SIGKILL)
+        var status: Int32 = -1
+        if gone { _ = waitpid(pid, &status, 0) }
+        if drained.wait(timeout: .now() + .seconds(2)) == .timedOut {
+            source.cancel()
+            drained.wait()
+        }
+        return Run(log: String(decoding: output, as: UTF8.self), status: status, stopped: stopped)
     }
 
     private nonisolated static func find(_ program: String) -> String? {

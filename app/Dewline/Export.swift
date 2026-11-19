@@ -236,7 +236,9 @@ enum Export {
         }
         formats.selectItem(withTag: start.rawValue)
         let label = NSTextField(labelWithString: "Format:")
-        let accessory = NSStackView(views: [label, formats])
+        let accessory = NSStackView()
+        accessory.addView(label, in: .center)
+        accessory.addView(formats, in: .center)
         accessory.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
         panel.accessoryView = accessory
         panel.isExtensionHidden = false

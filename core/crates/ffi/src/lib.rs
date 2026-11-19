@@ -276,8 +276,103 @@ fn mermaid_within(
                 (layout, config) = (folded, folded_config);
             }
         }
+        if flowchart {
+            clear_labels(&mut layout);
+        }
         Ok(mermaid_rs_renderer::render_svg(&layout, &theme, &config))
     })
+}
+
+/// Moves each edge label that covers a node, an earlier label or another edge to the first clear spot beside its edge,
+/// at the middle of a segment, longest first. mermaid-rs-renderer 0.3.1 can set a label over the node its edge enters,
+/// and the node, drawn later, hides the label's first words.
+fn clear_labels(layout: &mut Layout) {
+    const PAD: f32 = 6.0;
+    let (width, height) = (layout.width, layout.height);
+    let nodes: Vec<[f32; 4]> = layout
+        .nodes
+        .values()
+        .filter(|node| !node.hidden)
+        .map(|node| [node.x, node.y, node.x + node.width, node.y + node.height])
+        .collect();
+    // Each edge's path as points about 4 pt apart.
+    let paths: Vec<Vec<(f32, f32)>> = layout
+        .edges
+        .iter()
+        .map(|edge| {
+            edge.points
+                .windows(2)
+                .flat_map(|pair| {
+                    let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
+                    let steps = ((x1 - x0).hypot(y1 - y0) / 4.0).ceil().max(1.0) as usize;
+                    (0..=steps).map(move |step| {
+                        let t = step as f32 / steps as f32;
+                        (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let mut placed: Vec<[f32; 4]> = Vec::new();
+    for (index, edge) in layout.edges.iter_mut().enumerate() {
+        let (Some(label), Some(anchor)) = (&edge.label, edge.label_anchor) else {
+            continue;
+        };
+        let (w, h) = (label.width + 2.0 * PAD, label.height + 2.0 * PAD);
+        let rect = |(x, y): (f32, f32)| [x - w / 2.0, y - h / 2.0, x + w / 2.0, y + h / 2.0];
+        // Nodes and earlier labels it covers, then points of other edges inside it; `None` outside the diagram.
+        let cost = |center| {
+            let [left, top, right, bottom] = rect(center);
+            if left < 0.0 || top < 0.0 || right > width || bottom > height {
+                return None;
+            }
+            let inside = |&(x, y): &(f32, f32)| left < x && x < right && top < y && y < bottom;
+            let covered = nodes
+                .iter()
+                .chain(&placed)
+                .filter(|other| {
+                    left < other[2] && other[0] < right && top < other[3] && other[1] < bottom
+                })
+                .count();
+            let crossed = paths
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != index)
+                .map(|(_, path)| path.iter().filter(|point| inside(point)).count())
+                .sum::<usize>();
+            Some((covered, crossed))
+        };
+        let here = cost(anchor);
+        if here != Some((0, 0)) {
+            let mut segments: Vec<((f32, f32), (f32, f32))> = edge
+                .points
+                .windows(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect();
+            let length = |((x0, y0), (x1, y1)): &((f32, f32), (f32, f32))| (x1 - x0).hypot(y1 - y0);
+            segments.sort_by(|a, b| length(b).total_cmp(&length(a)));
+            let best = segments
+                .iter()
+                .flat_map(|&((x0, y0), (x1, y1))| {
+                    let (x, y) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+                    if (x1 - x0).abs() >= (y1 - y0).abs() {
+                        [(x, y + h / 2.0), (x, y - h / 2.0)]
+                    } else {
+                        [(x + w / 2.0, y), (x - w / 2.0, y)]
+                    }
+                })
+                .filter_map(|spot| Some((cost(spot)?, spot)))
+                .min_by_key(|&(cost, _)| cost);
+            if let Some((cost, spot)) = best
+                && here.is_none_or(|here| cost < here)
+            {
+                edge.label_anchor = Some(spot);
+            }
+        }
+        if let Some(anchor) = edge.label_anchor {
+            placed.push(rect(anchor));
+        }
+    }
 }
 
 fn parse(svg: &str) -> Result<usvg::Tree, RenderError> {
@@ -702,6 +797,33 @@ mod tests {
             accent: 0x62bbf5ff,
             fill: 0x0f1926ff,
         }
+    }
+
+    #[test]
+    fn edge_labels_move_off_the_node_their_edge_enters() {
+        isolate();
+        let svg = mermaid_within(
+            Duration::from_secs(30),
+            "flowchart LR\n  E[POST /v1/events] --> Q[(deliveries)]\n  Q --> W[Worker]\n  W -->|2xx| D[delivered]\n  \
+             W -->|5xx or timeout| B[Backoff]\n  B --> Q\n  W -->|attempt 12| P[parked]"
+                .into(),
+            night(),
+        )
+        .unwrap();
+        // The x and width of the rect just before `text`, or of the edge label rect named `edge`.
+        let number = |tag: &str, name: &str| -> f32 {
+            let start = tag.find(&format!(" {name}=\"")).unwrap() + name.len() + 3;
+            tag[start..start + tag[start..].find('"').unwrap()]
+                .parse()
+                .unwrap()
+        };
+        let backoff = &svg[..svg.find(">Backoff<").unwrap()];
+        let node = &backoff[backoff.rfind("<rect ").unwrap()..];
+        let label = &svg[svg.find("<rect data-edge-id=\"edge-3\"").unwrap()..];
+        assert!(
+            number(label, "x") >= number(node, "x") + number(node, "width"),
+            "{svg}"
+        );
     }
 
     #[test]

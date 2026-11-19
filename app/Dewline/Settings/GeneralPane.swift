@@ -17,6 +17,7 @@ struct GeneralPane: View {
                         .disabled(isDefaultApp)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in isDefaultApp = DefaultApp.isDewline }
             SettingsSection(title: "Files") {
                 if let folder = preferences.notesFolder {
                     SettingsRow(label: "New notes go in", detail: "When no window shows a folder.") {
@@ -90,34 +91,36 @@ struct GeneralPane: View {
 /// The app Finder opens Markdown files in.
 @MainActor
 enum DefaultApp {
-    private static let markdown = UTType(MarkdownDocument.type) ?? .plainText
-
-    static var isDewline: Bool {
-        NSWorkspace.shared.urlForApplication(toOpen: markdown)?.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+    /// Markdown, its dialects, and every type another app gives one of their extensions (Typora's io.typora.markdown
+    /// for .mdown and .qmd, com.mdxjs.mdx): a binding on net.daringfireball.markdown does not reach them.
+    static var types: [UTType] {
+        let markdown = UTType(MarkdownDocument.type) ?? .plainText
+        var types = [markdown] + [UTType("dev.arkwerx.dewline.markdown-dialect")].compactMap { $0 }
+        for tag in FolderEntry.markdownExtensions.union(FolderEntry.dialectExtensions).sorted() {
+            for type in UTType.types(tag: tag, tagClass: .filenameExtension, conformingTo: markdown) where !types.contains(type) {
+                types.append(type)
+            }
+        }
+        return types
     }
 
-    /// Makes Dewline the app for Markdown files; true when it is.
+    /// Whether Launch Services opens every Markdown type in this app's bundle ID, wherever this copy runs from.
+    static var isDewline: Bool {
+        types.allSatisfy { type in
+            NSWorkspace.shared.urlForApplication(toOpen: type).flatMap { Bundle(url: $0)?.bundleIdentifier } == Bundle.main.bundleIdentifier
+        }
+    }
+
+    /// Makes Dewline the app for every Markdown type; true when it is.
     static func make() async -> Bool {
-        do {
-            try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: markdown)
-        } catch {
-            Logger(subsystem: "dev.arkwerx.dewline", category: "app")
-                .error("Dewline did not become the Markdown app: \(String(describing: error), privacy: .public)")
+        for type in types {
+            do {
+                try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: type)
+            } catch {
+                Logger(subsystem: "dev.arkwerx.dewline", category: "app")
+                    .error("Dewline did not become the app for \(type.identifier, privacy: .public): \(String(describing: error), privacy: .public)")
+            }
         }
         return isDewline
-    }
-
-    /// Asks on `window`, once at the first launch, unless Dewline already is the app.
-    static func offer(on window: NSWindow) {
-        guard !isDewline else { return }
-        let alert = NSAlert()
-        alert.messageText = "Open Markdown files in Dewline?"
-        alert.informativeText = "Double-clicking a Markdown file in Finder then opens it here. Settings > General can change this later."
-        alert.addButton(withTitle: "Use Dewline")
-        alert.addButton(withTitle: "Not Now")
-        alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn else { return }
-            Task { @MainActor in _ = await make() }
-        }
     }
 }

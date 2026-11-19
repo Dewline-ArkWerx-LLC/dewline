@@ -105,7 +105,9 @@ final class FolderWatch {
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes)
         )
         guard let stream else { return }
-        _ = FSEventStreamSetExclusionPaths(stream, [Folder.library.path] as CFArray)
+        if roots.contains(where: { Folder.library.path.hasPrefix($0.path + "/") }) {
+            _ = FSEventStreamSetExclusionPaths(stream, [Folder.library.path] as CFArray)
+        }
         FSEventStreamSetDispatchQueue(stream, .main)
         FSEventStreamStart(stream)
     }

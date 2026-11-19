@@ -46,12 +46,6 @@ struct HookStatus: Equatable, Sendable {
             version: lines.first { $0.hasPrefix("Version: ") }.map { String($0.dropFirst("Version: ".count)) }
         )
     }
-
-    /// The bundled command that installs the hooks, quoted for a shell.
-    static func installCommand(bundle: URL = Bundle.main.bundleURL) -> String {
-        let path = bundle.appending(path: "Contents/Helpers/dewline").path
-        return "'" + path.replacingOccurrences(of: "'", with: #"'\''"#) + "' doctor --install-hooks"
-    }
 }
 
 struct AgentsPane: View {

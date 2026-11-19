@@ -16,7 +16,7 @@ struct LiveFileTests {
         file.textView.setSelectedRange(NSRange(location: caret, length: 0))
         // Only the watch tells the document.
         try Data("Agent note.\n\n# Plan\n\nShip on Friday.\n".utf8).write(to: file.url)
-        try await until { file.textView.string == "Agent note.\n\n# Plan\n\nShip on Friday.\n" }
+        await waitForMain { file.textView.string == "Agent note.\n\n# Plan\n\nShip on Friday.\n" }
         #expect(file.textView.selectedRange() == NSRange(location: caret + 13, length: 0))
         #expect(!file.document.isDocumentEdited)
         #expect(file.document.isUnchanged(file.textView.string))
@@ -51,7 +51,7 @@ struct LiveFileTests {
         #expect(await file.live.autosave() == .conflict)
         let id = try #require(file.live.changes.first { $0.value.conflict }?.key)
         file.live.decide(id, .keep)
-        try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan\n\nShip on Monday.\n" }
+        await waitForMain { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan\n\nShip on Monday.\n" }
     }
 
     @Test func aLateClaimNamesAnUnknownLanding() async throws {
@@ -69,7 +69,7 @@ struct LiveFileTests {
         #expect(!file.textView.marks.painted.isEmpty)
         file.claim(.preToolUse(use(Self.hex("# Plan\n"), Self.hex(after))))
         file.claim(.postToolUse(use(Self.hex(after), nil)))
-        try await until { file.live.changes.values.contains { $0.marked && $0.origin == .agent(.claude, session: "s1") } }
+        await waitForMain { file.live.changes.values.contains { $0.marked && $0.origin == .agent(.claude, session: "s1") } }
         file.textView.marks.relayout()
         let id = try #require(file.live.changes.first { $0.value.marked }?.key)
         #expect(file.textView.marks.painted[id] == file.live.changes[id]?.range)
@@ -130,7 +130,7 @@ struct LiveFileTests {
         file.claim(.preToolUse(use(Self.hex(before), Self.hex(after))))
         try Data(after.utf8).write(to: file.url)
         file.claim(.postToolUse(use(Self.hex(after), nil)))
-        try await until { file.live.changes.values.contains { $0.marked } }
+        await waitForMain { file.live.changes.values.contains { $0.marked } }
         let marks = file.textView.marks
         let storage = try #require(file.textView.textStorage)
         let ghosts = file.live.changes.compactMap { id, change in
@@ -138,7 +138,7 @@ struct LiveFileTests {
         }
         #expect(ghosts.map { $0.2.removed }.sorted() == ["can", "you"])
         // The styler opens each gap, then the marks lay out again.
-        try await until {
+        await waitForMain {
             ghosts.allSatisfy { storage.attribute(.kern, at: $0.2.range.location - 1, effectiveRange: nil) as? CGFloat == $0.1 }
         }
         marks.relayout()
@@ -226,7 +226,7 @@ struct LiveFileTests {
         }
         #expect(card.frame.height > 0)
         // The styler reserves the card's height under your paragraph.
-        try await until {
+        await waitForMain {
             let style = file.textView.textStorage!.attribute(.paragraphStyle, at: conflict.range.location, effectiveRange: nil) as? NSParagraphStyle
             return (style?.paragraphSpacing ?? 0) >= card.frame.height
         }
@@ -251,7 +251,7 @@ struct LiveFileTests {
         // The marks sit under the text and its selection.
         #expect(file.textView.subviews.first === file.textView.marks)
         // The space under the paragraph goes with the card.
-        try await until {
+        await waitForMain {
             let style = file.textView.textStorage!.attribute(.paragraphStyle, at: conflict.range.location, effectiveRange: nil) as? NSParagraphStyle
             return (style?.paragraphSpacing ?? 0) < card.frame.height
         }
@@ -273,7 +273,7 @@ struct LiveFileTests {
         // The turn's end leaves the call open; its PostToolUse ends it and the refused autosave runs.
         file.claim(.turnEnd)
         file.claim(.postToolUse(.init(id: "toolu_1", tool: .edit, path: file.realpath, hash: Self.hex("# Plan!\n"), declared: nil)))
-        try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!?\n" }
+        await waitForMain { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!?\n" }
     }
 
     // MARK: Autosave without asking
@@ -281,16 +281,16 @@ struct LiveFileTests {
     @Test func typingWithoutAPauseSavesWithin10Seconds() async throws {
         let file = try OpenFile("# Plan\n")
         defer { file.close() }
-        let start = ContinuousClock.now
-        var typed = 0
-        while (try String(contentsOf: file.url, encoding: .utf8)) == "# Plan\n", ContinuousClock.now - start < .seconds(12) {
-            file.textView.insertText("a", replacementRange: NSRange(location: 6 + typed, length: 0))
-            typed += 1
-            try await Task.sleep(for: .milliseconds(300))
-        }
-        let waited = ContinuousClock.now - start
-        #expect(waited > .seconds(9) && waited < .seconds(11), "\(waited)")
-        #expect(try String(contentsOf: file.url, encoding: .utf8).hasPrefix("# Planaaa"))
+        file.textView.insertText("a", replacementRange: NSRange(location: 6, length: 0))
+        let since = try #require(file.live.unsavedSince)
+        file.textView.insertText("a", replacementRange: NSRange(location: 7, length: 0))
+        #expect(file.live.unsavedSince == since, "a keystroke keeps the first unsaved edit's time")
+        #expect(LiveFile.autosaveDue(now: since, since: since) == since + .seconds(2))
+        #expect(LiveFile.autosaveDue(now: since + .seconds(5), since: since) == since + .seconds(7))
+        #expect(LiveFile.autosaveDue(now: since + .seconds(9.7), since: since) == since + .seconds(10))
+        #expect(await file.live.autosave() == nil)
+        #expect(file.live.unsavedSince == nil)
+        #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Planaa\n")
     }
 
     @Test func closingSavesWithoutASheet() async throws {
@@ -343,12 +343,12 @@ struct LiveFileTests {
         defer { again.close() }
         let window = try #require(again.windowControllers.first as? MainWindowController)
         let live = try #require(again.live)
-        try await until { live.draft != nil }
+        await waitForMain { live.draft != nil }
         let message = try #require(window.statusBar.shown)
         #expect(message.text.hasPrefix("Unsaved text from ") && message.text.hasSuffix(" was kept"))
         #expect(message.actions.map(\.title) == ["Restore", "Discard"])
         message.actions[0].run(window.statusBar)
-        try await until { again.textView?.string == "# Plan for Friday\n" }
+        await waitForMain { again.textView?.string == "# Plan for Friday\n" }
         #expect(window.statusBar.shown == nil)
         #expect(await live.keptDraft() == nil)
     }
@@ -375,7 +375,7 @@ struct LiveFileTests {
         #expect(held.text == "Not saved: an agent is writing this note")
         #expect(held.actions.map(\.title) == ["Save Now"])
         held.actions[0].run(window.statusBar)
-        try await until { window.statusBar.shown == nil && !file.document.isDocumentEdited }
+        await waitForMain { window.statusBar.shown == nil && !file.document.isDocumentEdited }
         #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan!\n")
         #expect(window.savedState?.hasPrefix("Saved") == true)
 
@@ -395,7 +395,7 @@ struct LiveFileTests {
         defer { file.close() }
         try Data("# Plan\n\nAgent note.\n".utf8).write(to: file.url)
         await file.live.refresh()
-        try await until { !file.live.snapshots.isEmpty }
+        await waitForMain { !file.live.snapshots.isEmpty }
         let snapshots = file.live.snapshots
         let oldest = try #require(snapshots.last)
         #expect(snapshots.map(\.time) == snapshots.map(\.time).sorted(by: >))
@@ -412,10 +412,10 @@ struct LiveFileTests {
         defer { file.close() }
         try Data("# Plan\n\nAgent note.\n".utf8).write(to: file.url)
         await file.live.refresh()
-        try await until { !file.live.snapshots.isEmpty }
+        await waitForMain { !file.live.snapshots.isEmpty }
         let snapshot = file.live.snapshots[0]
         file.live.pin(snapshot, true)
-        try await until { file.live.snapshots.first { $0.time == snapshot.time && $0.origin == snapshot.origin }?.pinned == true }
+        await waitForMain { file.live.snapshots.first { $0.time == snapshot.time && $0.origin == snapshot.origin }?.pinned == true }
     }
 
     @Test func aRenameSeenOnlyByTheWatchFollowsTheFile() async throws {
@@ -424,11 +424,11 @@ struct LiveFileTests {
         let renamed = file.url.deletingLastPathComponent().appending(path: "renamed.md")
         try FileManager.default.moveItem(at: file.url, to: renamed)
         // The watch names the file by its realpath, under /private.
-        try await until { file.live.url.resolvingSymlinksInPath() == renamed.resolvingSymlinksInPath() }
+        await waitForMain { file.live.url.resolvingSymlinksInPath() == renamed.resolvingSymlinksInPath() }
         #expect(file.document.fileURL == file.live.url)
         // Writes to the new name land.
         try Data("# Plan\n\nAgent note.\n".utf8).write(to: renamed)
-        try await until { file.textView.string == "# Plan\n\nAgent note.\n" }
+        await waitForMain { file.textView.string == "# Plan\n\nAgent note.\n" }
     }
 
     @Test func saveAsOntoTheSameFileGoesThroughTheEngine() async throws {
@@ -447,9 +447,9 @@ struct LiveFileTests {
         try Data("# Plan\n\nSwitched.\n".utf8).write(to: file.url)
         await file.live.refresh()
         #expect(file.textView.string == "# Plan\n")
-        // The gitdir's watch lands it, well before the 1 s retry.
+        // The gitdir's watch lands it.
         try FileManager.default.removeItem(at: lock)
-        try await until(within: .milliseconds(700)) { file.textView.string == "# Plan\n\nSwitched.\n" }
+        await waitForMain { file.textView.string == "# Plan\n\nSwitched.\n" }
     }
 
     private static func hex(_ text: String) -> String {
@@ -480,7 +480,7 @@ struct LiveFileTests {
         #expect(try String(contentsOf: file.url, encoding: .utf8) == "# Plan\n")
         // The composition's end runs the refused autosave again.
         file.textView.unmarkText()
-        try await until { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!に\n" }
+        await waitForMain { (try? String(contentsOf: file.url, encoding: .utf8)) == "# Plan!に\n" }
         #expect(file.textView.string == "# Plan!に\n")
     }
 
@@ -560,7 +560,7 @@ struct LiveFileTests {
         file.claim(.postToolUse(.init(id: "toolu_1", tool: .write, path: file.realpath, hash: Self.hex(after), declared: nil)))
         await file.live.refresh()
         let (_, change) = try #require(file.live.changes.first { $0.value.marked })
-        try await until { file.live.changes.values.contains { $0.origin == .agent(.claude, session: "s1") } }
+        await waitForMain { file.live.changes.values.contains { $0.origin == .agent(.claude, session: "s1") } }
         file.textView.setSelectedRange(NSRange(location: change.range.location + 1, length: 0))
         file.event { file.textView.revertChange(nil) }
         #expect(file.undoManager.undoMenuItemTitle == "Undo Revert Claude's Change")
@@ -570,7 +570,7 @@ struct LiveFileTests {
         file.undo()
         #expect(file.textView.string == "# Plan\n\nShip on Friday.\n\nAgent note.\n")
 
-        try await until { !file.live.snapshots.isEmpty }
+        await waitForMain { !file.live.snapshots.isEmpty }
         let oldest = try #require(file.live.snapshots.last)
         await file.event { await file.live.restore(oldest) }
         #expect(file.undoManager.undoMenuItemTitle == "Undo Restore Snapshot")
@@ -596,17 +596,6 @@ struct LiveFileTests {
         file.undo()
         #expect(file.textView.string == "# Plan\n\nShip on Friday.\n\nAgent note.\n")
         #expect(file.document.isDocumentEdited)
-    }
-
-    private func until(within limit: Duration = .seconds(5), _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now + limit
-        while !condition() {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("timed out")
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
     }
 
     @MainActor

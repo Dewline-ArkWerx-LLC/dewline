@@ -25,10 +25,12 @@ final class Preferences {
     var showsIgnored: Bool { didSet { save(showsIgnored, "DewlineShowIgnored") } }
     var attachments: Attachments { didSet { save(attachments.rawValue, "DewlineAttachments") } }
     var inbox: URL { didSet { save(inbox.path, Self.inboxKey) } }
+    #if COLLAB
     /// The name a shared document's host and guests see.
     var collaborationName: String { didSet { save(collaborationName, "DewlineCollaborationName") } }
     /// Where a guest's copies of shared documents go.
     var sharedFolder: URL { didSet { save(sharedFolder.path, "DewlineSharedFolder") } }
+    #endif
     /// Cards and hover previews for web links, which ask each site for its title and picture.
     var linkPreviews: Bool { didSet { save(linkPreviews, "DewlineLinkPreviews") } }
     /// Source and config files list in the sidebar and Quick Open and open as highlighted code (`CodeFile`).
@@ -43,8 +45,10 @@ final class Preferences {
         showsIgnored = defaults.bool(forKey: "DewlineShowIgnored")
         attachments = defaults.string(forKey: "DewlineAttachments").flatMap(Attachments.init) ?? .beside
         inbox = path(Self.inboxKey) ?? documents.appending(path: "Dewline/Inbox.md")
+        #if COLLAB
         collaborationName = defaults.string(forKey: "DewlineCollaborationName").flatMap { $0.isEmpty ? nil : $0 } ?? NSFullUserName()
         sharedFolder = path("DewlineSharedFolder") ?? documents.appending(path: "Dewline Shared", directoryHint: .isDirectory)
+        #endif
         linkPreviews = defaults.bool(forKey: "DewlineLinkPreviews")
         opensCodeFiles = defaults.bool(forKey: CodeFile.key)
     }

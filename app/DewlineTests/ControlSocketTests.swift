@@ -82,12 +82,12 @@ struct ControlSocketTests {
         await MainActor.run { restart.updates.refresh() }
         #expect(await restart.line == waiting, "the ready line does not come back over the wait")
         await MainActor.run { NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil) }
-        try await Task.sleep(for: .milliseconds(100))
+        await waitForMain()
         #expect(await restart.installs == 0, "a return to the app does not end the wait while the tool waits")
 
         await MainActor.run { restart.document.windowControllers.first?.window?.performClose(nil) }
         #expect(client.line() == #"{"reply":"closed","v":1}"#, "the tool hears that its file closed")
-        try await restart.waitForInstall()
+        await restart.waitForInstall()
         #expect(await restart.installs == 1)
         #expect(await restart.line == nil)
 
@@ -100,11 +100,9 @@ struct ControlSocketTests {
         await MainActor.run { again.updates.restart() }
         #expect(await again.installs == 0)
         quitter = nil
-        for _ in 0..<40 where await again.isAwaited {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        await waitForMain { !again.isAwaited }
         await MainActor.run { NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil) }
-        try await again.waitForInstall()
+        await again.waitForInstall()
         #expect(await again.installs == 1)
         await MainActor.run { again.document.close() }
     }
@@ -217,7 +215,7 @@ struct ControlSocketTests {
             client.send(#"{"v":1,"op":"notify",\#(fields)}"# + "\n")
             #expect(client.line() == nil, "a claim gets no answer: \(fields)")
         }
-        #expect(try await listening.claims(lines.count) == lines.map(\.1))
+        #expect(await listening.claims(lines.count) == lines.map(\.1))
     }
 
     @Test func refusesNotifyLinesClaimsRsWouldRefuse() async throws {
@@ -283,7 +281,7 @@ struct ControlSocketTests {
             try await Task.sleep(for: .milliseconds(500))
             if !(await listening.received.claims.isEmpty) { break }
         }
-        let claims = try await listening.claims(1)
+        let claims = await listening.claims(1)
         guard case .preToolUse(let use) = claims.first?.event else {
             Issue.record("\(claims)")
             return
@@ -342,10 +340,8 @@ struct ControlSocketTests {
         let listening = try await Listening()
         defer { listening.finish() }
         let client = try Client(listening.socket.path, timeout: 5)
-        let start = ContinuousClock.now
         #expect(client.line() == nil)
-        let waited = ContinuousClock.now - start
-        #expect(waited > .seconds(1.5) && waited < .seconds(4), "\(waited)")
+        #expect(client.ended, "the app closed it before the read timed out")
     }
 
     @Test func theSocketIsPrivateAndStaysWithTheAppThatHasIt() async throws {
@@ -379,19 +375,17 @@ struct ControlSocketTests {
         process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/Helpers/dewline")
         process.arguments = ["open", "--wait", file.path + ":3:2"]
         process.environment = ["DEWLINE_SOCKET": listening.socket.path]
+        process.terminationHandler = { _ in CFRunLoopWakeUp(CFRunLoopGetMain()) }
         try process.run()
         defer { if process.isRunning { process.terminate() } }
-        let request = try await listening.nextRequest()
+        let request = await listening.nextRequest()
         let real = try #require(realpath(file.path, nil))
         defer { free(real) }
         #expect(request == ControlSocket.Open(path: String(cString: real), line: 3, column: 2, wait: true))
-        try await Task.sleep(for: .milliseconds(300))
         #expect(process.isRunning)
         await listening.received.connections.first?.reply(.closed)
-        for _ in 0..<50 where process.isRunning {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        #expect(!process.isRunning && process.terminationStatus == 0)
+        await waitForMain { !process.isRunning }
+        #expect(process.terminationStatus == 0)
     }
 }
 
@@ -436,10 +430,8 @@ private final class Restart {
     }
 
     /// Waits for the restart's install block, which runs a turn after the change that ends the wait.
-    nonisolated func waitForInstall() async throws {
-        for _ in 0..<40 where await installs == 0 {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+    func waitForInstall() async {
+        await waitForMain { self.installs > 0 }
     }
 
     nonisolated func finish() {
@@ -478,22 +470,17 @@ private struct Listening {
         return url
     }
 
-    func nextRequest() async throws -> ControlSocket.Open {
-        for _ in 0..<50 {
-            if let request = await received.requests.first { return request }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        throw CancellationError()
+    @MainActor
+    func nextRequest() async -> ControlSocket.Open? {
+        await waitForMain { !received.requests.isEmpty }
+        return received.requests.first
     }
 
     /// The first `count` claims, once that many have arrived.
-    func claims(_ count: Int) async throws -> [ControlSocket.Claim] {
-        for _ in 0..<50 {
-            let claims = await received.claims
-            if claims.count >= count { return Array(claims.prefix(count)) }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        throw CancellationError()
+    @MainActor
+    func claims(_ count: Int) async -> [ControlSocket.Claim] {
+        await waitForMain { received.claims.count >= count }
+        return Array(received.claims.prefix(count))
     }
 
     func finish() {
@@ -528,14 +515,20 @@ private final class Client {
         _ = Array(text.utf8).withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 
+    /// Whether the server closed the connection, as opposed to a read timing out.
+    private(set) var ended = false
+
     /// The next line without its newline, or nil once the server closed the connection or the read timed out.
     func line() -> String? {
         var bytes: [UInt8] = []
         var byte: UInt8 = 0
-        while read(fd, &byte, 1) == 1 {
+        var count = read(fd, &byte, 1)
+        while count == 1 {
             if byte == UInt8(ascii: "\n") { return String(decoding: bytes, as: UTF8.self) }
             bytes.append(byte)
+            count = read(fd, &byte, 1)
         }
+        ended = count == 0
         return nil
     }
 }

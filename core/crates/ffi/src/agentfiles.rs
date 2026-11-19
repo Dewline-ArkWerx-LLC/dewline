@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
 
-use dewline_core::{divergence, links, loads};
+use dewline_core::{links, loads};
 
 use crate::markdown::Text;
 
@@ -32,56 +31,6 @@ pub fn what_loads(folder: String, home: Option<String>) -> Result<Vec<LoadedFile
                 tokens: loaded.tokens,
             })
             .collect()
-    })
-}
-
-/// A sibling instruction file whose sections differ from another's.
-#[derive(uniffi::Record)]
-pub struct SiblingDivergence {
-    pub path: String,
-    pub other: String,
-    pub sections: Vec<String>,
-}
-
-#[uniffi::export]
-pub fn sibling_divergence(folder: String) -> Result<Vec<SiblingDivergence>, Panicked> {
-    contained(|| {
-        divergence::divergence(Path::new(&folder))
-            .into_iter()
-            .map(|found| SiblingDivergence {
-                path: found.path.to_string_lossy().into_owned(),
-                other: found.other.to_string_lossy().into_owned(),
-                sections: found.sections,
-            })
-            .collect()
-    })
-}
-
-/// A memory or plan file an agent writes, with when it last changed in seconds since 1970.
-#[derive(uniffi::Record)]
-pub struct ReviewFile {
-    pub path: String,
-    pub modified: f64,
-}
-
-#[uniffi::export]
-pub fn review_files(
-    home: Option<String>,
-    folder: Option<String>,
-) -> Result<Vec<ReviewFile>, Panicked> {
-    contained(|| {
-        loads::review_files(
-            home.as_deref().map(Path::new),
-            folder.as_deref().map(Path::new),
-        )
-        .into_iter()
-        .map(|(path, modified)| ReviewFile {
-            path: path.to_string_lossy().into_owned(),
-            modified: modified
-                .duration_since(UNIX_EPOCH)
-                .map_or(0.0, |since| since.as_secs_f64()),
-        })
-        .collect()
     })
 }
 

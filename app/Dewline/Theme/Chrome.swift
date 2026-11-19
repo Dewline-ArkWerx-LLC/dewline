@@ -30,12 +30,8 @@ enum Chrome {
     static var small: NSFont { .systemFont(ofSize: 12) }
     /// The status bar: 11 regular, with tabular digits.
     static var status: NSFont { .monospacedDigitSystemFont(ofSize: 11, weight: .regular) }
-    /// Empty-state titles: 15 semibold.
-    static var emptyTitle: NSFont { .systemFont(ofSize: 15, weight: .semibold) }
     /// The palette input: 18 regular.
     static var title: NSFont { .systemFont(ofSize: 18) }
-    /// Settings pane titles: 15 semibold.
-    static var paneTitle: NSFont { .systemFont(ofSize: 15, weight: .semibold) }
 
     /// Section label text with its tracking.
     static func sectionTitle(_ text: String, color: NSColor) -> NSAttributedString {
@@ -134,53 +130,6 @@ enum Glyph {
         image.isTemplate = true
         Self.cache[key] = image
         return image
-    }
-}
-
-/// A bare glyph button: `ink3` at rest, `ink2` under the pointer, dimmer when disabled. No bezel.
-final class GlyphButton: NSButton {
-    private var hovering = false {
-        didSet { tint() }
-    }
-
-    convenience init(_ glyph: Glyph, label: String, target: AnyObject?, action: Selector?) {
-        self.init(frame: .zero)
-        image = glyph.image
-        imagePosition = .imageOnly
-        isBordered = false
-        self.target = target
-        self.action = action
-        toolTip = label
-        setAccessibilityLabel(label)
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 24),
-            heightAnchor.constraint(equalToConstant: 24),
-        ])
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
-        tint()
-    }
-
-    override var isEnabled: Bool {
-        didSet { tint() }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-    }
-
-    @objc private func themeDidChange() {
-        tint()
-    }
-
-    private func tint() {
-        contentTintColor = Chrome.color(hovering && isEnabled ? .ink2 : .ink3)
-        alphaValue = isEnabled ? 1 : 0.45
     }
 }
 
@@ -449,26 +398,4 @@ class StationRowView: NSTableRowView {
 @MainActor
 protocol ChromeSelectable: AnyObject {
     var selected: Bool { get set }
-}
-
-/// A round dot in one color, such as a writer's.
-final class Dot: NSView {
-    var color: NSColor? {
-        didSet { needsDisplay = true }
-    }
-
-    convenience init(diameter: CGFloat) {
-        self.init(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: diameter),
-            heightAnchor.constraint(equalToConstant: diameter),
-        ])
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let color else { return }
-        color.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-    }
 }

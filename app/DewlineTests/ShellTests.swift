@@ -63,13 +63,6 @@ struct ShellTests {
         #expect(outline(of: text, in: map).map(\.title) == ["Plan", "Before the beta", "Monday"])
     }
 
-    @Test func firstProseLineSkipsFrontMatterHeadingsAndMarkers() {
-        #expect(firstProseLine(of: "---\ntitle: x\n---\n# Plan\n\n- [ ] Ship the **build** to [testers](t.md)\n") == "Ship the build to testers")
-        #expect(firstProseLine(of: "# Only a title\n\n---\n") == "Only a title")
-        #expect(firstProseLine(of: "> Quoted [[Wiki|alias]] `code`\n") == "Quoted Wiki code")
-        #expect(firstProseLine(of: "\n\n") == nil)
-    }
-
     @Test func shortDateNamesTodayYesterdayTheWeekThenTheDate() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_GB")

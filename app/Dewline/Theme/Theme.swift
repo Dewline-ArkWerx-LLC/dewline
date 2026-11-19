@@ -52,14 +52,6 @@ struct OKLCH: Hashable, Sendable {
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
     }
 
-    /// The distance to `other` in OKLab, times 100, so 1 is about the smallest difference anyone sees.
-    func deltaE(_ other: OKLCH) -> Double {
-        let (a0, b0) = (c * cos(h * .pi / 180), c * sin(h * .pi / 180))
-        let (a1, b1) = (other.c * cos(other.h * .pi / 180), other.c * sin(other.h * .pi / 180))
-        let (dl, da, db) = (l - other.l, a0 - a1, b0 - b1)
-        return (dl * dl + da * da + db * db).squareRoot() * 100
-    }
-
     func lightened(by delta: Double) -> OKLCH {
         OKLCH(l: l + delta, c: c, h: h)
     }

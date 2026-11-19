@@ -34,8 +34,6 @@ final class LiveFile {
         }
     }
     static let changesDidChange = Notification.Name("LiveFileChangesDidChange")
-    /// When you last typed in any file, for Follow Changes.
-    private(set) static var lastEdit = ContinuousClock.now
     /// The file's snapshots, newest first, as last read off the main thread for the Snapshots menu.
     private(set) var snapshots: [ChangeEngine.Snapshot] = []
     /// Why the last autosave wrote nothing, until one writes.
@@ -60,7 +58,7 @@ final class LiveFile {
     private var retry: Task<Void, Never>?
     private var autosaving: Task<Void, Never>?
     /// The first edit since the last autosave ran.
-    private var unsavedSince: ContinuousClock.Instant?
+    private(set) var unsavedSince: ContinuousClock.Instant?
     /// Refused autosaves in a row, which space their retries.
     private var retries = 0
     private var refreshing: Task<Void, Never>?
@@ -206,7 +204,7 @@ final class LiveFile {
 
     /// Open files by engine and document, since claims and git name documents.
     private static var open: [Key: LiveFile] = [:]
-    private static let claims = DispatchQueue(label: "dev.arkwerx.dewline.claims", qos: .utility)
+    static let claims = DispatchQueue(label: "dev.arkwerx.dewline.claims", qos: .utility)
 
     /// Sends a hook's claim to `engine` and acts on what it changed.
     static func claim(_ claim: ControlSocket.Claim, engine: ChangeEngine) {
@@ -566,7 +564,6 @@ final class LiveFile {
 
     private func edited(_ range: NSRange, delta: Int) {
         guard !applying else { return }
-        Self.lastEdit = .now
         let oldEnd = NSMaxRange(range) - delta
         func moved(_ offset: Int) -> Int {
             offset < range.location ? offset : offset >= oldEnd ? offset + delta : NSMaxRange(range)
@@ -758,10 +755,15 @@ final class LiveFile {
         unsavedSince = since
         autosaving?.cancel()
         autosaving = Task { [weak self] in
-            try? await Task.sleep(until: min(now + .seconds(2), since + .seconds(10)))
+            try? await Task.sleep(until: Self.autosaveDue(now: now, since: since))
             guard !Task.isCancelled else { return }
             await self?.autosave()
         }
+    }
+
+    /// When an edit at `now` autosaves: 2 s after it, or 10 s after the first unsaved edit, `since`, if sooner.
+    static func autosaveDue(now: ContinuousClock.Instant, since: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        min(now + .seconds(2), since + .seconds(10))
     }
 
     /// Waits before each retry of a refused autosave; the last repeats.

@@ -1,9 +1,7 @@
-//! Which instruction files each agent loads in a folder, with a local token estimate, and the agent-written memory
-//! and plans waiting for review. The agents' documented limits live in agents.json, under the Agent Files gauges.
+//! Which instruction files each agent loads in a folder, with a local token estimate.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use crate::links;
 
@@ -152,50 +150,4 @@ fn rule_trigger(text: &str) -> String {
         return "when the agent picks it".into();
     }
     "manual".into()
-}
-
-/// Agent-written memory and plans: `~/.claude/projects/*/memory/*.md`, `~/.claude/plans/*.md`, and the folder's
-/// `.claude/**/*.md` and `docs/plans/*.md`, each with when it last changed, newest first.
-pub fn review_files(home: Option<&Path>, folder: Option<&Path>) -> Vec<(PathBuf, SystemTime)> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(home) = home {
-        if let Ok(projects) = fs::read_dir(home.join(".claude/projects")) {
-            dirs.extend(
-                projects
-                    .flatten()
-                    .map(|project| project.path().join("memory")),
-            );
-        }
-        dirs.push(home.join(".claude/plans"));
-    }
-    if let Some(folder) = folder {
-        dirs.push(folder.join("docs/plans"));
-        let mut under = vec![(folder.join(".claude"), 0)];
-        while let Some((dir, depth)) = under.pop() {
-            dirs.push(dir.clone());
-            if depth < 3 {
-                under.extend(
-                    fs::read_dir(&dir)
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-                        .map(|entry| (entry.path(), depth + 1)),
-                );
-            }
-        }
-    }
-    let mut found: Vec<(PathBuf, SystemTime)> = dirs
-        .iter()
-        .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
-        .filter_map(|entry| {
-            let info = entry.metadata().ok()?;
-            Some((entry.path(), info.is_file().then(|| info.modified().ok())??))
-        })
-        .collect();
-    found.sort();
-    found.dedup_by(|a, b| a.0 == b.0);
-    found.sort_by_key(|&(_, modified)| std::cmp::Reverse(modified));
-    found
 }

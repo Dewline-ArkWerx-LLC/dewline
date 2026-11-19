@@ -415,7 +415,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         updatePresence()
         #endif
         changesChanged()
-        if let url = document.fileURL { ReviewInbox.noteOpened(url) }
         pane.note = document.fileURL
         sidebar.show(document.fileURL, headings: outline(of: textView.textStorage!.mutableString, in: textView.styler.map))
         markBrokenLinks()

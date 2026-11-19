@@ -92,13 +92,6 @@ struct SettingsPaneTests {
         try install(home.appending(path: "Gone/dewline").path)
         #expect(HookStatus.read(home: home).claude == false)
     }
-
-    @Test func installCommandRunsTheBundledToolQuoted() {
-        #expect(HookStatus.installCommand(bundle: URL(filePath: "/Applications/Dewline.app"))
-            == "'/Applications/Dewline.app/Contents/Helpers/dewline' doctor --install-hooks")
-        #expect(HookStatus.installCommand(bundle: URL(filePath: "/Users/someone/Rick's Apps/Dewline.app"))
-            == #"'/Users/someone/Rick'\''s Apps/Dewline.app/Contents/Helpers/dewline' doctor --install-hooks"#)
-    }
 }
 
 private extension HookStatus {

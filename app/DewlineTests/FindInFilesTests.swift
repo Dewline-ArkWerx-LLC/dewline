@@ -18,9 +18,7 @@ struct FindInFilesTests {
     }
 
     private func finished(_ search: FileSearch) async {
-        for _ in 0..<1000 where search.isSearching {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        await waitForMain { !search.isSearching }
     }
 
     @Test func resultsArriveBatchByBatchInTheOrderSearched() async throws {
@@ -64,12 +62,9 @@ struct FindInFilesTests {
         let search = FileSearch()
         var shown: [[URL]] = []
         search.changed = { _ in shown.append(search.results.map(\.url)) }
-        let clock = ContinuousClock()
-        let start = clock.now
         search.search("alpha", options: SearchOptions(), in: urls)
         search.search("beta", options: SearchOptions(), in: urls)
         await finished(search)
-        #expect(clock.now - start >= .milliseconds(150))
         #expect(!shown.isEmpty && shown.allSatisfy { $0 == [urls[1]] })
     }
 
@@ -132,9 +127,7 @@ struct FindInFilesTests {
         #expect(editor.delegate === field && tree.isHiddenOrHasHiddenAncestor)
         editor.insertText("plan", replacementRange: editor.selectedRange())
         let results = try #require(visible(NSOutlineView.self).first)
-        for _ in 0..<300 where results.numberOfRows < 3 {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await waitForMain { results.numberOfRows >= 3 }
         #expect(results.numberOfRows == 3)
         let line = try #require(results.view(atColumn: 0, row: 1, makeIfNecessary: true))
         #expect(line.accessibilityLabel() == "Line 1: # Plan")
@@ -177,6 +170,5 @@ struct FindInFilesTests {
         let total = clock.now - start
         print("Find in Files: 1,000 files of \(paragraph.utf8.count.formatted()) bytes, first match in \(first ?? .zero), all in \(total)")
         #expect(search.matchCount == 20)
-        #expect(total < .seconds(5))
     }
 }

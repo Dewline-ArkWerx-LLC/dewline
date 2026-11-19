@@ -1,7 +1,6 @@
 pub mod agents;
 pub mod claims;
 pub mod decisions;
-pub mod divergence;
 pub mod engine;
 pub mod export;
 pub mod file;

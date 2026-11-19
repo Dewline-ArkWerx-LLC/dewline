@@ -1314,6 +1314,20 @@ impl Engine {
         self.store.pin(&path, snapshot, pinned)
     }
 
+    /// Adds `bytes`, a version of the document's file it does not hold, to
+    /// the file's history.
+    pub fn snapshot(&self, doc: DocId, bytes: &[u8]) -> io::Result<()> {
+        let (path, private) = {
+            let state = self.state();
+            let d = state.docs.get(&doc).ok_or_else(closed)?;
+            (d.path.clone(), d.private)
+        };
+        if !private {
+            self.store.put(&path, bytes, UNKNOWN, (self.clock)().1)?;
+        }
+        Ok(())
+    }
+
     /// Prunes the store, keeping the drafts of every open document. Only the
     /// app prunes, once its documents are open again after launch.
     pub fn prune(&self) -> io::Result<()> {

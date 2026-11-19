@@ -18,7 +18,7 @@ final class BlockLine: NSObject {
     override func isEqual(_ object: Any?) -> Bool {
         switch (role, (object as? BlockLine)?.role) {
         case let (.picture(picture, label), .picture(other, otherLabel)?):
-            picture.image === other.image && picture.size == other.size && label == otherLabel
+            picture.identity == other.identity && picture.size == other.size && label == otherLabel
         case (.collapsed, .collapsed?): true
         case let (.error(message), .error(other)?): message == other
         case let (.table(rule), .table(other)?): rule == other
@@ -30,7 +30,7 @@ final class BlockLine: NSObject {
 
     override var hash: Int {
         switch role {
-        case .picture(let picture, _): ObjectIdentifier(picture.image).hashValue
+        case .picture(let picture, _): picture.identity.hashValue
         case .collapsed: 0
         case .error(let message): message.hashValue
         case .table(let rule): rule.columns.count
@@ -125,15 +125,7 @@ final class BlockFragment: NSTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         switch line.role {
         case .picture(let picture, _):
-            context.saveGState()
-            // On whole pixels a picture drawn at the screen's scale lands pixel for pixel; a narrowed one resamples smoothly.
-            let device = context.convertToDeviceSpace(point)
-            let origin = context.convertToUserSpace(CGPoint(x: device.x.rounded(), y: device.y.rounded()))
-            context.interpolationQuality = .high
-            context.translateBy(x: origin.x, y: origin.y + picture.size.height)
-            context.scaleBy(x: 1, y: -1)
-            context.draw(picture.image, in: CGRect(origin: .zero, size: picture.size))
-            context.restoreGState()
+            picture.draw(in: CGRect(origin: point, size: picture.size), of: context)
         case .collapsed:
             break
         case .summary(let line):

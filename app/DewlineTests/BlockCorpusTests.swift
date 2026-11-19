@@ -13,7 +13,7 @@ struct BlockCorpusTests {
     static let out = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEWLINE_CORPUS_OUT"] ?? "")
     /// Tidewater's light colors.
     static let colors = DiagramColors(
-        paper: 0xF9FC_FFFF, ink: 0x1A1F_29FF, ink2: 0x555B_66FF, accent: 0x2D54_D3FF, rule: 0x8C93_9FFF, fill: 0xEFF4_FAFF
+        paper: 0xF9FC_FFFF, ink: 0x1A1F_29FF, ink2: 0x555B_66FF, accent: 0x2D54_D3FF, fill: 0xEFF4_FAFF
     )
 
     /// Milliseconds to the finished picture, and the picture or why there is none.
@@ -26,7 +26,7 @@ struct BlockCorpusTests {
     static func save(_ picture: BlockPicture, as name: String) throws {
         let file: URL = out.appending(path: name)
         let destination = try #require(CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil))
-        CGImageDestinationAddImage(destination, picture.image, nil)
+        CGImageDestinationAddImage(destination, RenderedBlockTests.image(picture), nil)
         #expect(CGImageDestinationFinalize(destination))
     }
 

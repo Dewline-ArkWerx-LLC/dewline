@@ -18,7 +18,6 @@ final class InlineMath {
     struct Request: Hashable, Sendable {
         let tex: String
         let size: CGFloat
-        let scale: CGFloat
         /// sRGB 0xRRGGBBAA.
         let color: UInt32
     }
@@ -64,12 +63,12 @@ final class InlineMath {
                 let color = styled.attribute(.foregroundColor, at: local.content.location, effectiveRange: nil) as? NSColor
                 let request = Request(
                     tex: styled.mutableString.substring(with: local.content), size: font.pointSize,
-                    scale: textView.pictureScale, color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
+                    color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
                 )
                 switch formulas[request] {
                 case .success(let formula)?:
                     styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear, .dewlineMath: formula], range: local.range)
-                    styled.addAttribute(.kern, value: formula.size.width, range: NSRange(location: local.range.location, length: 1))
+                    styled.addAttribute(.kern, value: formula.drawing.size.width, range: NSRange(location: local.range.location, length: 1))
                 case .failure?:
                     continue
                 case nil:
@@ -84,14 +83,14 @@ final class InlineMath {
         guard pending.insert(request).inserted else { return }
         queue.async { [weak self] in
             let result = Result { () throws(RenderFailure) in
-                try ratexInlineImage(request.tex, size: Double(request.size), scale: Double(request.scale), color: request.color)
+                try mathDrawing(request.tex, size: Double(request.size), color: request.color)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, let textView = self.textView, let storage = textView.textStorage else { return }
                     self.pending.remove(request)
                     if self.formulas.count > 512 { self.formulas = [:] }
-                    self.formulas[request] = result.map { InlineFormula(image: $0.image, scale: request.scale, depth: $0.depth) }
+                    self.formulas[request] = result.map(InlineFormula.init)
                     let text = storage.mutableString
                     for block in self.map.blocks(in: NSRange(location: 0, length: storage.length)) {
                         for span in Self.spans(block) where NSMaxRange(span.content) <= text.length && text.substring(with: span.content) == request.tex {
@@ -125,16 +124,12 @@ final class InlineMath {
     }
 }
 
-/// A drawn formula: its picture, its size in points, and how far it reaches below the baseline.
+/// A typeset formula, the value of `.dewlineMath`.
 final class InlineFormula: NSObject {
-    let image: NSImage
-    let size: CGSize
-    let depth: CGFloat
+    let drawing: Drawing
 
-    init(image: CGImage, scale: CGFloat, depth: Double) {
-        size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
-        self.image = NSImage(cgImage: image, size: size)
-        self.depth = CGFloat(depth)
+    init(_ drawing: Drawing) {
+        self.drawing = drawing
     }
 }
 
@@ -148,11 +143,9 @@ extension EditorTextView {
             var whole = NSRange()
             storage.attribute(.dewlineMath, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
             guard drawn.insert(whole.location).inserted, let baseline = baseline(at: whole.location) else { return }
-            // On whole pixels, so the formula's pixels land on the screen's and stay sharp.
-            let rect = backingAlignedRect(NSRect(
-                x: line(whole.location).minX, y: baseline + formula.depth - formula.size.height, width: formula.size.width, height: formula.size.height
-            ), options: .alignAllEdgesNearest)
-            formula.image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            let size = formula.drawing.size
+            let rect = NSRect(x: line(whole.location).minX, y: baseline + formula.drawing.depth - size.height, width: size.width, height: size.height)
+            formula.drawing.draw(in: rect, of: NSGraphicsContext.current!.cgContext)
         }
     }
 }

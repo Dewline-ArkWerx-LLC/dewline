@@ -82,7 +82,7 @@ final class RenderedBlocks {
                 let fitted = picture.size.width > width ? CGSize(width: width, height: picture.size.height * width / picture.size.width) : picture.size
                 text.enumerateSubstrings(in: local, options: [.byLines, .substringNotRequired]) { _, line, enclosing, _ in
                     let first = line.location == range.location
-                    let role: BlockLine.Role = first ? .picture(BlockPicture(image: picture.image, size: fitted), label: block.label) : .collapsed
+                    let role: BlockLine.Role = first ? .picture(BlockPicture(art: picture.art, size: fitted), label: block.label) : .collapsed
                     let paragraph = NSIntersectionRange(enclosing, whole)
                     styled.addAttribute(.dewlineBlock, value: BlockLine(role), range: paragraph)
                     styled.addAttribute(.foregroundColor, value: NSColor.clear, range: line)
@@ -131,7 +131,7 @@ final class RenderedBlocks {
             }
             textView.effectiveAppearance.performAsCurrentDrawingAppearance {
                 colors = DiagramColors(
-                    paper: rgba(.paper), ink: rgba(.ink), ink2: rgba(.ink2), accent: rgba(.accent), rule: rgba(.syntax), fill: rgba(.codeBackground)
+                    paper: rgba(.paper), ink: rgba(.ink), ink2: rgba(.ink2), accent: rgba(.accent), fill: rgba(.codeBackground)
                 )
             }
         case .image, .frontMatter:

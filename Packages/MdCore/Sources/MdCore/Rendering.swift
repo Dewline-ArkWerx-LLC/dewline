@@ -12,32 +12,94 @@ public struct RenderFailure: Error, Sendable, Equatable {
     }
 }
 
-/// The editor theme's colors for a diagram, each sRGB 0xRRGGBBAA.
+/// The editor theme's colors for a diagram, each sRGB 0xRRGGBBAA: labels in the ink, lines and borders in ink2, boxes
+/// filled with `fill`, notes edged in the accent.
 public struct DiagramColors: Hashable, Sendable {
-    public let paper, ink, ink2, accent, rule, fill: UInt32
+    public let paper, ink, ink2, accent, fill: UInt32
 
-    public init(paper: UInt32, ink: UInt32, ink2: UInt32, accent: UInt32, rule: UInt32, fill: UInt32) {
-        (self.paper, self.ink, self.ink2, self.accent, self.rule, self.fill) = (paper, ink, ink2, accent, rule, fill)
+    public init(paper: UInt32, ink: UInt32, ink2: UInt32, accent: UInt32, fill: UInt32) {
+        (self.paper, self.ink, self.ink2, self.accent, self.fill) = (paper, ink, ink2, accent, fill)
+    }
+
+    fileprivate var ffi: DewlineFFIBindings.DiagramColors {
+        .init(paper: paper, ink: ink, ink2: ink2, accent: accent, fill: fill)
     }
 }
 
-/// A Mermaid diagram drawn by the engine in `colors` at `scale` pixels per point, narrowed to `maxWidth` pixels.
-public func mermaidImage(_ source: String, colors: DiagramColors, scale: Double, maxWidth: Int) throws(RenderFailure) -> CGImage {
-    let colors = DewlineFFIBindings.DiagramColors(
-        paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
-    )
-    let raster = try engine {
-        try rasterizeSvg(svg: try renderMermaid(source: source, colors: colors), scale: Float(scale), maxWidth: UInt32(clamping: maxWidth))
+/// A diagram or formula as outlines in points from its top left, filled at whatever scale the screen has, so it stays
+/// as sharp as the text around it. Unchecked because CGPath is not marked Sendable; the paths never change after init.
+public final class Drawing: @unchecked Sendable {
+    public let size: CGSize
+    /// How far a formula reaches below its baseline, in points.
+    public let depth: CGFloat
+    private let shapes: [(path: CGPath, color: CGColor, evenOdd: Bool)]
+    private let insets: [(rect: CGRect, image: CGImage)]
+
+    init(_ drawing: DewlineFFIBindings.Drawing) {
+        size = CGSize(width: CGFloat(drawing.width), height: CGFloat(drawing.height))
+        depth = CGFloat(drawing.depth)
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+        shapes = drawing.shapes.map { shape in
+            let path = CGMutablePath()
+            var at = 0
+            func next() -> CGPoint {
+                defer { at += 2 }
+                return CGPoint(x: CGFloat(shape.points[at]), y: CGFloat(shape.points[at + 1]))
+            }
+            for verb in shape.verbs {
+                switch verb {
+                case 0: path.move(to: next())
+                case 1: path.addLine(to: next())
+                case 2:
+                    let control = next()
+                    path.addQuadCurve(to: next(), control: control)
+                case 3:
+                    let (first, second) = (next(), next())
+                    path.addCurve(to: next(), control1: first, control2: second)
+                default: path.closeSubpath()
+                }
+            }
+            let rgba = withUnsafeBytes(of: shape.color.bigEndian) { $0.map { CGFloat($0) / 255 } }
+            return (path, CGColor(colorSpace: srgb, components: rgba)!, shape.evenOdd)
+        }
+        insets = drawing.insets.compactMap { inset in
+            guard let source = CGImageSourceCreateWithData(inset.data as CFData, nil),
+                let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            else { return nil }
+            return (CGRect(x: CGFloat(inset.x), y: CGFloat(inset.y), width: CGFloat(inset.width), height: CGFloat(inset.height)), image)
+        }
     }
-    guard let provider = CGDataProvider(data: raster.pixels as CFData),
-        let image = CGImage(
-            width: Int(raster.width), height: Int(raster.height), bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: Int(raster.width) * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
-        )
-    else { throw RenderFailure("the picture could not be made") }
-    return image
+
+    /// Fills the outlines into `rect` of a context whose y axis points down.
+    public func draw(in rect: CGRect, of context: CGContext) {
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.minY)
+        context.scaleBy(x: rect.width / size.width, y: rect.height / size.height)
+        for shape in shapes {
+            context.addPath(shape.path)
+            context.setFillColor(shape.color)
+            context.fillPath(using: shape.evenOdd ? .evenOdd : .winding)
+        }
+        context.interpolationQuality = .high
+        for inset in insets {
+            context.saveGState()
+            context.translateBy(x: inset.rect.minX, y: inset.rect.maxY)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(inset.image, in: CGRect(origin: .zero, size: inset.rect.size))
+            context.restoreGState()
+        }
+        context.restoreGState()
+    }
+}
+
+/// A Mermaid diagram drawn by the engine in `colors`.
+public func mermaidDrawing(_ source: String, colors: DiagramColors) throws(RenderFailure) -> Drawing {
+    Drawing(try engine { try drawMermaid(source: source, colors: colors.ffi) })
+}
+
+/// Math typeset by RaTeX at `size` points in `color` (0xRRGGBBAA), to sit on a line of text.
+public func mathDrawing(_ tex: String, size: Double, color: UInt32) throws(RenderFailure) -> Drawing {
+    Drawing(try engine { try drawMath(tex: tex, size: Float(size), color: color) })
 }
 
 /// `text` as a standalone HTML page with `css` inlined, images inside `folder` inlined, and diagrams and math in
@@ -47,12 +109,9 @@ public func exportPage(
     _ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, dark: DiagramColors?, mathSize: Double,
     syntaxes: URL?
 ) throws(RenderFailure) -> String {
-    func ffi(_ colors: DiagramColors) -> DewlineFFIBindings.DiagramColors {
-        .init(paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill)
-    }
-    return try engine {
+    try engine {
         try exportHtml(
-            text: text, title: title, css: css, folder: folder?.path, colors: ffi(colors), dark: dark.map(ffi), mathSize: Float(mathSize),
+            text: text, title: title, css: css, folder: folder?.path, colors: colors.ffi, dark: dark?.ffi, mathSize: Float(mathSize),
             syntaxes: syntaxes?.path
         )
     }
@@ -60,11 +119,8 @@ public func exportPage(
 
 /// `text` as an EPUB 3 book of the page `exportPage` writes in `colors`, its images, diagrams and math as files in it.
 public func exportEPUB(_ text: String, title: String, css: String, folder: URL?, colors: DiagramColors, mathSize: Double) throws(RenderFailure) -> Data {
-    let colors = DewlineFFIBindings.DiagramColors(
-        paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
-    )
     do {
-        return try exportEpub(text: text, title: title, css: css, folder: folder?.path, colors: colors, mathSize: Float(mathSize))
+        return try exportEpub(text: text, title: title, css: css, folder: folder?.path, colors: colors.ffi, mathSize: Float(mathSize))
     } catch ExportError.Io(let message) {
         throw RenderFailure(message)
     } catch {
@@ -75,10 +131,7 @@ public func exportEPUB(_ text: String, title: String, css: String, folder: URL?,
 /// `text` as a LaTeX article named `name`, and the files to write beside it, each at a path relative to the article's
 /// folder: diagrams drawn in `colors`, and PNG and JPEG images read from inside `folder`.
 public func exportLaTeX(_ text: String, name: String, folder: URL?, colors: DiagramColors) throws(RenderFailure) -> (tex: String, files: [(path: String, data: Data)]) {
-    let colors = DewlineFFIBindings.DiagramColors(
-        paper: colors.paper, ink: colors.ink, ink2: colors.ink2, accent: colors.accent, rule: colors.rule, fill: colors.fill
-    )
-    let article = try engine { try exportLatex(text: text, name: name, folder: folder?.path, colors: colors) }
+    let article = try engine { try exportLatex(text: text, name: name, folder: folder?.path, colors: colors.ffi) }
     return (article.text, article.files.map { ($0.path, $0.bytes) })
 }
 
@@ -103,24 +156,6 @@ public func exportWordDocument(_ text: String, folder: URL) throws(RenderFailure
 /// `text` as plain text: markers dropped, bullets, numbers and table columns kept.
 public func exportPlainText(_ text: String) throws(RenderFailure) -> String {
     try engine { try exportText(markdown: text) }
-}
-
-/// Display math typeset by RaTeX at `size` points and `scale` pixels per point, in `color` (0xRRGGBBAA).
-public func ratexImage(_ tex: String, size: Double, scale: Double, color: UInt32) throws(RenderFailure) -> CGImage {
-    try decode(try engine { try renderMath(tex: tex, size: Float(size), scale: Float(scale), color: color) })
-}
-
-/// A formula drawn to sit on a line of text, and how far it reaches below the baseline in points.
-public func ratexInlineImage(_ tex: String, size: Double, scale: Double, color: UInt32) throws(RenderFailure) -> (image: CGImage, depth: Double) {
-    let math = try engine { try renderInlineMath(tex: tex, size: Float(size), scale: Float(scale), color: color) }
-    return (try decode(math.png), Double(math.depth))
-}
-
-private func decode(_ png: Data) throws(RenderFailure) -> CGImage {
-    guard let source = CGImageSourceCreateWithData(png as CFData, nil),
-        let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-    else { throw RenderFailure("the picture could not be made") }
-    return image
 }
 
 private func engine<T>(_ call: () throws -> T) throws(RenderFailure) -> T {

@@ -55,8 +55,9 @@ struct MarkWriter: Equatable {
 
 /// Paints marked changes over the text at render time, never as text edits: a wash in the writer's hue under
 /// inserted text with an underline in the writer's style, a 3 pt rule in the writer's ink beside each changed row in
-/// the left margin, joined by a 1 pt line across the rows between, and the writer's name and time on hover. The
-/// focused change carries a `ChangeStamp` with Revert and Keep, in the margin or folded under its block. Short
+/// the left margin, joined by a 1 pt line across the rows between, and the writer's name and time on hover. Each
+/// writer session carries a `ChangeStamp` with Revert and Keep in the margin, on its focused or first change; a narrow
+/// margin folds the focused change's stamp under its block. Short
 /// removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
 /// change; longer removed text and a conflict's other version hang under the paragraph, in space the styler reserves
 /// below it. The marks sit under the text; ghosts and cards sit over it.
@@ -91,7 +92,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     }
     /// The last change the caret was in.
     private var focus: UInt64?
-    private var stamp: ChangeStamp?
+    /// The stamps by writer session, each with the change it sits on.
+    private var stamps: [String: (view: ChangeStamp, change: UInt64)] = [:]
     /// Where the folded stamp hangs.
     private var fold: Fold?
     /// The height the text view keeps to hold a folded stamp below the note's last line, else 0.
@@ -578,45 +580,45 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     private func placeStamp(left: CGFloat, hung: [UInt64: CGFloat]) {
         guard let textView, let id = stamped, let change = changes[id], NSMaxRange(change.range) <= textView.textStorage!.length else {
-            stamp?.removeFromSuperview()
-            stamp = nil
+            for stamp in stamps.values { stamp.view.removeFromSuperview() }
+            stamps = [:]
             setFold(nil)
             setReach(0)
             return
         }
-        let stamp = self.stamp ?? {
-            let stamp = ChangeStamp(revert: { [weak self] in self.map { $0.decideStamped(keep: false) } }, keep: { [weak self] in self.map { $0.decideStamped(keep: true) } })
-            stamp.resized = { [weak self] in
-                guard let self else { return }
-                self.dirty = true
-                self.textView?.needsLayout = true
-            }
-            textView.addSubview(stamp)
-            self.stamp = stamp
-            return stamp
-        }()
-        let group = group(of: id)
-        let external = change.origin == .external
-        stamp.show(
-            MarkWriter(change.origin), at: landed[id] ?? .now, count: group.count, external: external, shell: external && change.shell,
-            refused: group.contains { changes[$0]?.refused == true })
-        if left >= stamp.marginWidth + ChangeStamp.inset + ChangeStamp.gutter {
+        // One stamp per writer session: on the stamped change for its session, else on the session's first change.
+        let length = textView.textStorage!.length
+        var shown = [Review.key(change.origin): id]
+        for (other, change) in changes.sorted(by: { $0.value.range.location < $1.value.range.location })
+        where !change.conflict && NSMaxRange(change.range) <= length && shown[Review.key(change.origin)] == nil {
+            shown[Review.key(change.origin)] = other
+        }
+        for (key, stamp) in stamps where shown[key] == nil {
+            stamp.view.removeFromSuperview()
+            stamps[key] = nil
+        }
+        for (key, id) in shown { show(key, id) }
+        let primary = stamps[Review.key(change.origin)]!.view
+        if left >= stamps.values.map(\.view.marginWidth).max()! + ChangeStamp.inset + ChangeStamp.gutter {
             setFold(nil)
             setReach(0)
-            let storage = textView.textStorage!
-            let probe = change.range.length > 0 ? change.range
-                : NSRange(location: min(change.range.location, max(storage.length - 1, 0)), length: storage.length > 0 ? 1 : 0)
-            let lines = segments(probe).sorted { $0.frame.minY < $1.frame.minY }
-            guard let first = lines.first else { return stamp.isHidden = true }
-            stamp.isHidden = false
-            let line = ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight
-            if let row = drawnBaseline(at: first.location) {
-                return stamp.placeInMargin(right: left - ChangeStamp.inset, first: row.first, second: row.first + row.line)
+            // Stamps that would collide stack 8 pt apart.
+            var bottom = -CGFloat.infinity
+            for (key, id) in shown.sorted(by: { changes[$0.value]!.range.location < changes[$1.value]!.range.location }) {
+                let stamp = stamps[key]!.view
+                guard let (first, second) = baselines(of: changes[id]!.range) else {
+                    stamp.isHidden = true
+                    continue
+                }
+                stamp.isHidden = false
+                stamp.placeInMargin(right: left - ChangeStamp.inset, first: first, second: second)
+                let shift = bottom + 8 - stamp.frame.minY
+                if shift > 0 { stamp.placeInMargin(right: left - ChangeStamp.inset, first: first + shift, second: second + shift) }
+                bottom = stamp.frame.maxY
             }
-            let top = first.frame.minY + first.baseline
-            let next = lines.first { $0.frame.minY >= first.frame.maxY - 0.5 }
-            stamp.placeInMargin(right: left - ChangeStamp.inset, first: top, second: next.map { $0.frame.minY + $0.baseline } ?? top + line)
         } else {
+            // A narrow margin holds one stamp, folded under the stamped change's block.
+            for stamp in stamps.values where stamp.view !== primary { stamp.view.isHidden = true }
             let fold = fold(for: id, change)
             setFold(fold)
             let y: CGFloat? = if fold.before {
@@ -628,11 +630,44 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     return under.max() ?? bottom
                 }
             }
-            guard let y else { return stamp.isHidden = true }
-            stamp.isHidden = false
-            stamp.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
-            setReach(fold.end ? stamp.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
+            guard let y else { return primary.isHidden = true }
+            primary.isHidden = false
+            primary.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
+            setReach(fold.end ? primary.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
         }
+    }
+
+    /// Shows the stamp for writer session `key` on change `id`, making it the first time.
+    private func show(_ key: String, _ id: UInt64) {
+        guard let textView, let change = changes[id] else { return }
+        let stamp = stamps[key]?.view ?? {
+            let stamp = ChangeStamp(revert: { [weak self] in self?.decideStamp(key, keep: false) }, keep: { [weak self] in self?.decideStamp(key, keep: true) })
+            stamp.resized = { [weak self] in
+                guard let self else { return }
+                self.dirty = true
+                self.textView?.needsLayout = true
+            }
+            textView.addSubview(stamp)
+            return stamp
+        }()
+        stamps[key] = (stamp, id)
+        let group = group(of: id)
+        let external = change.origin == .external
+        stamp.show(
+            MarkWriter(change.origin), at: landed[id] ?? .now, count: group.count, external: external, shell: external && change.shell,
+            refused: group.contains { changes[$0]?.refused == true })
+    }
+
+    /// A stamp's first and second text baselines in the margin, beside the change in `range`.
+    private func baselines(of range: NSRange) -> (first: CGFloat, second: CGFloat)? {
+        let storage = textView!.textStorage!
+        let probe = range.length > 0 ? range : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: storage.length > 0 ? 1 : 0)
+        let lines = segments(probe).sorted { $0.frame.minY < $1.frame.minY }
+        guard let first = lines.first else { return nil }
+        if let row = drawnBaseline(at: first.location) { return (row.first, row.first + row.line) }
+        let top = first.frame.minY + first.baseline
+        let next = lines.first { $0.frame.minY >= first.frame.maxY - 0.5 }
+        return (top, next.map { $0.frame.minY + $0.baseline } ?? top + ThemeStore.shared.bodyFont.pointSize * ThemeStore.shared.lineHeight)
     }
 
     /// The text view sizes itself to its text on the run loop's next pass, outside the layout that asked, and keeps
@@ -676,8 +711,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         reserve([old?.target, fold?.target].compactMap { $0 })
     }
 
-    private func decideStamped(keep: Bool) {
-        guard let id = stamped else { return }
+    private func decideStamp(_ key: String, keep: Bool) {
+        guard let id = stamps[key]?.change else { return }
         textView?.decide(id, keep: keep)
     }
 

@@ -102,9 +102,10 @@ struct ClosedNote: Equatable {
 
 /// The right pane's Changes tab: the window's open notes with undecided changes, then "Changed while closed". A note
 /// heads its changes with "Claude Code · 2:36 PM"; each row is the changed line, its changed words in bold, and
-/// "line 17". Keep and Revert show on the selected or hovered row; with Option they decide the whole note.
+/// "line 17". Keep and Revert show on the selected or hovered row; with Option they decide the whole note. Up and Down
+/// select rows, Return reveals the selected change and keeps focus here, and Cmd-Return or Option-Cmd-Delete decides it.
 @MainActor
-final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     enum Row {
         case note(LiveFile, String)
         case change(LiveFile, UInt64, NSString?)
@@ -114,7 +115,7 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
 
     private(set) var rows: [Row] = []
     private weak var source: NSWindow?
-    private let table = NSTableView()
+    private let table = ReturnTable()
     private let empty = NSTextField(wrappingLabelWithString: """
         Nothing to review.
 
@@ -147,6 +148,7 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         table.delegate = self
         table.target = self
         table.action = #selector(clicked)
+        table.returned = { [weak self] in self?.revealSelected() }
         table.setAccessibilityLabel("Changes")
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -207,6 +209,7 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
     }
 
     func reload() {
+        let decided = rows.indices.contains(table.selectedRow) && isChange(table.selectedRow) ? table.selectedRow : nil
         let documents = Review.documents(in: source ?? view.window)
         let files = documents.compactMap(\.live)
         rows = []
@@ -226,6 +229,42 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         empty.textColor = ThemeStore.shared.color(.ink2)
         empty.isHidden = !rows.isEmpty
         table.reloadData()
+        // A selected change that was decided passes the selection to the next change, else the last.
+        if let decided, let next = rows.indices.first(where: { $0 >= decided && isChange($0) }) ?? rows.indices.last(where: isChange) {
+            table.selectRowIndexes([next], byExtendingSelection: false)
+        }
+    }
+
+    private func isChange(_ index: Int) -> Bool {
+        if case .change = rows[index] { return true }
+        return false
+    }
+
+    private func revealSelected() {
+        guard rows.indices.contains(table.selectedRow), case .change(let live, let id, _) = rows[table.selectedRow] else { return }
+        live.reveal(id, caret: true)
+        table.window?.makeFirstResponder(table)
+    }
+
+    /// Cmd-Return with the list focused: keeps the selected change.
+    @objc func keepChange(_ sender: Any?) {
+        decideSelected(keep: true)
+    }
+
+    /// Option-Cmd-Delete with the list focused: reverts the selected change.
+    @objc func revertChange(_ sender: Any?) {
+        decideSelected(keep: false)
+    }
+
+    private func decideSelected(keep: Bool) {
+        guard rows.indices.contains(table.selectedRow), case .change(let live, let id, _) = rows[table.selectedRow] else { return }
+        decide(live, id, keep: keep)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard [#selector(keepChange(_:)), #selector(revertChange(_:))].contains(menuItem.action) else { return true }
+        guard rows.indices.contains(table.selectedRow), case .change = rows[table.selectedRow] else { return false }
+        return true
     }
 
     @objc private func clicked() {
@@ -240,7 +279,6 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
             NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { _, _, _ in }
         case .closedHeading: break
         }
-        table.enumerateAvailableRowViews { row, index in (row.view(atColumn: 0) as? ChangeRow)?.selected = index == table.clickedRow }
     }
 
     /// Keep or Revert on a row; with Option, every change in its note.
@@ -262,8 +300,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
     }
 
-    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        false
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        table.enumerateAvailableRowViews { row, index in (row.view(atColumn: 0) as? ChangeRow)?.selected = index == table.selectedRow }
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -279,12 +317,13 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
             ])
             return ChangeRow(title, detail: Review.byline(note.origin, at: note.time), decide: nil)
         case .change(let live, let id, let text):
-            let row = ChangeRow(Self.line(of: id, in: live, text: text), detail: "line \(live.line(id))") { [weak self, weak live] keep in
+            let cell = ChangeRow(Self.line(of: id, in: live, text: text), detail: "line \(live.line(id))") { [weak self, weak live] keep in
                 guard let live else { return }
                 self?.decide(live, id, keep: keep)
             }
-            row.optionDown = optionDown
-            return row
+            cell.optionDown = optionDown
+            cell.selected = row == tableView.selectedRow
+            return cell
         }
     }
 
@@ -316,6 +355,16 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         let tail = String(trimmed.reversed().prefix { $0.isWhitespace }).utf16.count
         guard lead + tail < shown.length else { return NSAttributedString(string: "Blank lines", attributes: regular) }
         return shown.attributedSubstring(from: NSRange(location: lead, length: shown.length - lead - tail))
+    }
+}
+
+/// The Changes list's table: Return calls `returned`.
+private final class ReturnTable: NSTableView {
+    var returned: () -> Void = {}
+
+    override func keyDown(with event: NSEvent) {
+        guard [36, 76].contains(event.keyCode), event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return super.keyDown(with: event) }
+        returned()
     }
 }
 

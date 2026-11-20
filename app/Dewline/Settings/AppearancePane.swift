@@ -26,8 +26,18 @@ struct AppearancePane: View {
             Section {
                 stepper("Text size", $store.bodySize, in: ThemeStore.bodySizes, step: 1, text: "\(Int(store.bodySize)) pt",
                         spoken: "\(Int(store.bodySize)) points")
-                stepper("Line height", $store.lineHeight, in: ThemeStore.lineHeights, step: 0.02,
-                        text: store.lineHeight.formatted(.number.precision(.fractionLength(2))))
+                LabeledContent("Line height") {
+                    let text = store.lineHeight.formatted(.number.precision(.fractionLength(2)))
+                    HStack {
+                        Text(text)
+                            .monospacedDigit()
+                        Slider(value: Binding { store.lineHeight } set: { store.lineHeight = ($0 * 100).rounded() / 100 },
+                               in: ThemeStore.lineHeights, step: 0.05) { Text("Line height") }
+                            .labelsHidden()
+                            .frame(maxWidth: 200)
+                            .accessibilityValue(text)
+                    }
+                }
                 stepper("Line width", $store.columnWidth, in: ThemeStore.columnWidths, step: 2, text: "\(Int(store.columnWidth)) ch",
                         spoken: "\(Int(store.columnWidth)) characters")
             } header: {

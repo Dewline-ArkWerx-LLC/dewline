@@ -11,7 +11,11 @@ What changed in each Dewline release, newest first.
 - Find in Files results use the theme's inks.
 - Dragging a tab slides its neighbors aside as it passes; dragging it out of the strip drags the note's file. The unsaved dot sits where the close button appears on hover, Command-click on a tab shows the note's path, and the tab's tooltip names its Option-Command key.
 - Chrome type follows the macOS text styles; chevrons and the tab close button are SF Symbols. Activity and the sidebar's … menu open on mouse down, and Activity dims instead of hiding while you type. Command-Down Arrow opens the selected sidebar row.
-
+- Code blocks highlight in a fixed band against the paper, keywords in the accent's hue, so tokens read apart from the text in light and dark themes.
+- Headings step by 1.25 from the body: 31, 25, 20 and 16 pt at the default size, so H3 no longer matches body text.
+- Edit has Paste and Match Style (⌥⇧⌘V), Delete, and Spelling and Grammar, Substitutions and Transformations submenus; Find has Find and Replace… (⌥⌘F), Use Selection for Find (⌘E) and Jump to Selection (⌘J); File > Duplicate takes ⇧⌘S. Smart Punctuation moves into Edit > Substitutions.
+- Go to Line… (⌘L) opens Quick Open on its line scope instead of a dialog.
+- Settings > Appearance sets line height on a slider from 1.3 to 1.6.
 - Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
 - Images on a dark page draw at 90% brightness inside their faint rim.
 - Display math is centered in the column.

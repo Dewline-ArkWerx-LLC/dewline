@@ -18,6 +18,7 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Reopen Closed Tab | File | ⇧⌘T |
 | Close | File | ⌘W |
 | Save | File | ⌘S |
+| Duplicate | File | ⇧⌘S |
 | Earlier Versions… | File | ⌥⌘Y |
 | Export… | File | ⇧⌘E |
 | Print… | File | ⌘P |
@@ -26,12 +27,18 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Cut | Edit | ⌘X |
 | Copy | Edit | ⌘C |
 | Paste | Edit | ⌘V |
+| Paste and Match Style | Edit | ⌥⇧⌘V |
 | Select All | Edit | ⌘A |
 | Find… | Edit › Find | ⌘F |
+| Find and Replace… | Edit › Find | ⌥⌘F |
 | Find in Files… | Edit › Find | ⇧⌘F |
 | Find Next | Edit › Find | ⌘G |
 | Find Previous | Edit › Find | ⇧⌘G |
+| Use Selection for Find | Edit › Find | ⌘E |
+| Jump to Selection | Edit › Find | ⌘J |
 | Go to Line… | Edit | ⌘L |
+| Show Spelling and Grammar | Edit › Spelling and Grammar | ⌘: |
+| Check Document Now | Edit › Spelling and Grammar | ⌘; |
 | Move Line Up | Edit | ⌥⌘[ |
 | Move Line Down | Edit | ⌥⌘] |
 | Keep Change | Edit | ⌘↩ |
@@ -79,3 +86,4 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Minimize | Window | ⌘M |
 | Launch Window | Window | ⇧⌘1 |
 | Dewline Help | Help | ⌘? |
+| Tabs 1 to 9 | Window | ⌥⌘1 to ⌥⌘9 |

@@ -78,6 +78,43 @@ struct ThemeTests {
         }
     }
 
+    /// Code tokens sit on one band against the paper: text contrast on the paper and the code background, and far enough
+    /// from each other and from the ink to tell apart.
+    @Test func codeTokensReadAndStandApart() {
+        func distance(_ a: OKLCH, _ b: OKLCH) -> Double {
+            let (ha, hb) = (a.h * .pi / 180, b.h * .pi / 180)
+            let (da, db) = (a.c * cos(ha) - b.c * cos(hb), a.c * sin(ha) - b.c * sin(hb))
+            return ((a.l - b.l) * (a.l - b.l) + da * da + db * db).squareRoot()
+        }
+        for theme in Theme.all {
+            for (dark, tokens) in [(false, theme.light), (true, theme.dark)] {
+                let label = "\(theme.name) \(dark ? "dark" : "light")"
+                let roles = [Token.ink, .codeKeyword, .codeString, .codeNumber, .codeType, .codeFunction, .codeComment]
+                for token in roles {
+                    for ground in [Token.paper, .codeBackground] {
+                        #expect(tokens[token]!.contrast(with: tokens[ground]!) >= 4.5, "\(label) \(token) on \(ground)")
+                    }
+                }
+                for (index, a) in roles.enumerated() {
+                    for b in roles[(index + 1)...] {
+                        #expect(distance(tokens[a]!, tokens[b]!) >= 0.09, "\(label) \(a) and \(b)")
+                    }
+                }
+                #expect(tokens[.codeKeyword]!.h == tokens[.accent]!.h, "\(label)")
+            }
+        }
+    }
+
+    /// The heading ladder steps by 1.25 from the body in whole points: 31, 25, 20, then the body size.
+    @MainActor @Test func headingsStepByAQuarter() throws {
+        let suite = "dev.arkwerx.dewline.tests.themes.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ThemeStore(defaults: defaults)
+        #expect(store.bodySize == 16)
+        #expect((1...4).map { store.heading($0).font.pointSize } == [31, 25, 20, 16])
+    }
+
     @Test func mixingInOKLabKeepsGraysGray() {
         let gray = OKLCH(l: 0.2, c: 0, h: 0).mixed(with: OKLCH(l: 0.8, c: 0, h: 0), by: 0.25)
         #expect(abs(gray.l - 0.35) < 1e-9 && gray.c == 0)

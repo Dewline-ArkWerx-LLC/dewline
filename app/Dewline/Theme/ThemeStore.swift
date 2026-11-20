@@ -21,7 +21,7 @@ final class ThemeStore {
     /// The settings as a fresh install has them, for Restore Defaults.
     static var factory: ThemeStore { ThemeStore(defaults: .factory) }
     static let bodySizes = 12.0...28.0
-    static let lineHeights = 1.25...1.8
+    static let lineHeights = 1.3...1.6
     static let columnWidths = 50.0...120.0
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -206,12 +206,14 @@ final class ThemeStore {
         let kern: CGFloat
     }
 
-    /// Heading levels 1 to 6 (synthesis 2.3), scaled with the body size, as the site sets them: H1 34 / 620 with
-    /// -0.025 em tracking, H2 22 / 600, H3 17 / 600; those weights and the optical size axis apply to Bricolage, and
-    /// other faces set semibold.
+    /// Heading levels 1 to 6 (synthesis 2.3) on a 1.25 ratio from the body, in whole points: at 16 pt, H1 31 / 620 with
+    /// -0.025 em tracking, H2 25 / 600, H3 20 / 600, then the body size in semibold; those weights and the optical size
+    /// axis apply to Bricolage, and other faces set semibold.
     func heading(_ level: Int) -> Heading {
         if let heading = headings[level] { return heading }
-        let scale = bodySize / 17
+        func step(_ steps: Double) -> CGFloat {
+            (bodySize * pow(1.25, steps)).rounded()
+        }
         func display(_ size: CGFloat, _ weight: CGFloat, opticalSize: CGFloat? = nil) -> NSFont {
             guard headingFace == "Bricolage Grotesque" else { return Faces.font(headingFace, size: size, weight: .semibold) }
             // The variable font's default instance is 96 pt ExtraBold, so every axis is set.
@@ -222,11 +224,11 @@ final class ThemeStore {
         }
         let heading = switch level {
         case 1:
-            Heading(font: display(34 * scale, 620, opticalSize: 48), lineHeight: 40 * scale, kern: -0.85 * scale)
+            Heading(font: display(step(3), 620, opticalSize: 48), lineHeight: (step(3) * 1.2).rounded(), kern: -0.025 * step(3))
         case 2:
-            Heading(font: display(22 * scale, 600), lineHeight: 28 * scale, kern: 0)
+            Heading(font: display(step(2), 600), lineHeight: (step(2) * 1.25).rounded(), kern: 0)
         case 3:
-            Heading(font: display(17 * scale, 600), lineHeight: 24 * scale, kern: 0)
+            Heading(font: display(step(1), 600), lineHeight: (step(1) * 1.3).rounded(), kern: 0)
         default:
             Heading(font: Faces.font(bodyFace, size: bodySize, weight: .semibold), lineHeight: bodyLineHeight, kern: 0)
         }

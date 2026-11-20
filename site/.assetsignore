@@ -5,5 +5,7 @@ og
 package.json
 package-lock.json
 wrangler.jsonc
+worker.js
+go.json
 .gitignore
 docs/_template.html

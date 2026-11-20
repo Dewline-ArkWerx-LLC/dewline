@@ -1,6 +1,7 @@
 #!/bin/bash
-# Writes the newest stable version in site/appcast.xml into every site page's <span data-version> element, so the
-# deployed site names the release the feed offers. Deploys run it after putting the released feed in site/.
+# Writes the newest stable version in site/appcast.xml into every site page's <span data-version> element and into
+# worker.js, so the deployed site names and downloads the release the feed offers. Deploys run it after putting the
+# released feed in site/.
 set -euo pipefail
 fail() { echo "stamp-site-version.sh: $*" >&2; exit 1; }
 cd "$(dirname "$0")/../site"
@@ -18,4 +19,7 @@ for page in $pages; do
     sed -i.bak -E "s|(<span data-version>)[^<]*(</span>)|\1$version\2|g" "$page"
     rm "$page.bak"
 done
-echo "stamp-site-version.sh: $version in ${pages//$'\n'/ }"
+grep -q '^const version = "' worker.js || fail "worker.js has no version line"
+sed -i.bak -E "s|^const version = \"[^\"]*\";|const version = \"$version\";|" worker.js
+rm worker.js.bak
+echo "stamp-site-version.sh: $version in worker.js ${pages//$'\n'/ }"

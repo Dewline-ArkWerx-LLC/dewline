@@ -1,0 +1,10 @@
+{
+  "x-bio": { "to": "/", "source": "x", "medium": "social" },
+  "x-pin": { "to": "/", "source": "x", "medium": "social" },
+  "x-post": { "to": "/", "source": "x", "medium": "social" },
+  "reddit-macapps": { "to": "/", "source": "reddit", "medium": "social" },
+  "hn": { "to": "/", "source": "hackernews", "medium": "social" },
+  "readme": { "to": "/", "source": "github", "medium": "referral" },
+  "gh-org": { "to": "/", "source": "github", "medium": "referral" },
+  "brew": { "to": "/docs/first-steps/#install", "source": "share", "medium": "link" }
+}

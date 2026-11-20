@@ -12,6 +12,14 @@ What changed in each Dewline release, newest first.
 - Spell check skips hyphenated words such as `at-least-once` and inline math, whose marks drew a red dot after the formula.
 - Table columns of numbers use tabular figures, and images on a dark page get a faint rim.
 - The Welcome demo's writer is named Example.
+- The sidebar shows git's state as one letter (M, A, R, D, U) in a fixed column, with the word in its tooltip, so the file under review keeps its name. A long name loses its middle, not its end. A closed folder shows a dot when a file under it changed since the last commit.
+- A folder window with no note open shows no tab.
+- Edit > Copy Relative Path (⌥⇧⌘C) copies the note's path under the folder; file rows and tabs have it in their menus.
+- Go > Reveal in Sidebar (⇧⌘J) selects the note's row and puts the keyboard on the sidebar.
+- Tabs for notes with the same name add the folder that tells them apart ("spec.md · api").
+- A tab with changes waiting shows a dot in the writer's ink, and its tooltip says how many.
+- Edit > Keep Session (⌥⇧⌘↩) keeps every change of the session.
+- "No folder open" lines up with the sidebar's Outline header.
 - The hook setup sheet says in one sentence what hooks do and that agent edits still show without them, labeled Another app; it lists each settings file and its backup's name, and Show Details lists the JSON entries each file gains.
 - `dewline doctor --remove-hooks` takes Dewline's hooks out of each agent's settings, keeping a backup; `--agent` limits it, or `--install-hooks`, to one agent. Plain `dewline doctor` prints the entries `--install-hooks` would add.
 - Settings > Agents shows each agent's hook status with a symbol, with Set Up, Remove and Show File beside it.

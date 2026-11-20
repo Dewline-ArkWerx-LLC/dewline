@@ -35,7 +35,7 @@ enum Typeset {
     private static var again: Set<URL> = []
 
     static func typesets(_ url: URL) -> Bool {
-        CodeFile.language(of: url).map { ["typ", "tex"].contains($0) } ?? false
+        CodeFile.language(of: url).map(CodeFile.typeset.contains) ?? false
     }
 
     /// The document's file was saved or took an outside write: compile it, or once more after the running compile.

@@ -11,12 +11,19 @@ struct BlockPicture: Sendable {
 
     let art: Art
     let size: CGSize
+    /// The block it draws, or nil for a link card.
+    var kind: RenderedBlock.Kind?
 
     var identity: ObjectIdentifier {
         switch art {
         case .image(let image): ObjectIdentifier(image)
         case .drawing(let drawing): ObjectIdentifier(drawing)
         }
+    }
+
+    /// Where the picture starts in a column `width` points wide: display math centers, the rest starts at the edge.
+    func x(in width: CGFloat) -> CGFloat {
+        kind == .math ? max((width - size.width) / 2, 0).rounded() : 0
     }
 
     /// Draws into `rect` of a context whose y axis points down: outlines at the context's scale, pixels on whole device

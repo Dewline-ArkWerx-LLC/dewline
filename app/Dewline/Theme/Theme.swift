@@ -100,11 +100,11 @@ enum Brand {
     /// #7D550B / #BFA067 for modified (also git's ink as a writer), #22603B / #79C796 for new.
     static let marks: [Token: (light: OKLCH, dark: OKLCH)] = [
         .cursor: (OKLCH(l: 0.5753, c: 0.1700, h: 34.4), OKLCH(l: 0.7533, c: 0.1546, h: 41.6)),
-        .writerClaude: (OKLCH(l: 0.5686, c: 0.1521, h: 331.4), OKLCH(l: 0.8502, c: 0.0788, h: 328.3)),
-        .writerCodex: (OKLCH(l: 0.4595, c: 0.1615, h: 272.8), OKLCH(l: 0.7318, c: 0.1250, h: 277.3)),
-        .writerCursor: (OKLCH(l: 0.5200, c: 0.0900, h: 205.0), OKLCH(l: 0.7800, c: 0.0900, h: 205.0)),
-        .writerGemini: (OKLCH(l: 0.5000, c: 0.1200, h: 245.0), OKLCH(l: 0.7600, c: 0.1000, h: 245.0)),
-        .writerCopilot: (OKLCH(l: 0.5200, c: 0.1000, h: 115.0), OKLCH(l: 0.7800, c: 0.1000, h: 115.0)),
+        .writerClaude: (OKLCH(l: 0.5686, c: 0.1521, h: 331.4), OKLCH(l: 0.7700, c: 0.1250, h: 328.3)),
+        .writerCodex: (OKLCH(l: 0.4595, c: 0.1615, h: 272.8), OKLCH(l: 0.7700, c: 0.1250, h: 277.3)),
+        .writerCursor: (OKLCH(l: 0.5200, c: 0.0900, h: 205.0), OKLCH(l: 0.7700, c: 0.1250, h: 205.0)),
+        .writerGemini: (OKLCH(l: 0.5000, c: 0.1200, h: 245.0), OKLCH(l: 0.7700, c: 0.1250, h: 245.0)),
+        .writerCopilot: (OKLCH(l: 0.5200, c: 0.1000, h: 115.0), OKLCH(l: 0.7700, c: 0.1250, h: 115.0)),
         .writerApp: (OKLCH(l: 0.5200, c: 0.0200, h: 250.0), OKLCH(l: 0.7600, c: 0.0200, h: 250.0)),
         .gitModified: (OKLCH(l: 0.4813, c: 0.0969, h: 75.7), OKLCH(l: 0.7207, c: 0.0833, h: 82.0)),
         .gitAdded: (OKLCH(l: 0.4384, c: 0.0884, h: 154.1), OKLCH(l: 0.7658, c: 0.1052, h: 155.4)),

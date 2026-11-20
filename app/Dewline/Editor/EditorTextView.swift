@@ -340,7 +340,8 @@ final class EditorTextView: CaretTextView {
             switch (value as? BlockLine)?.role {
             case .picture(let picture, let label)?:
                 let line = firstRect(forCharacterRange: NSRange(location: range.location, length: 0), actualRange: nil)
-                let frame = NSRect(x: line.minX, y: line.maxY - picture.size.height, width: picture.size.width, height: picture.size.height)
+                let x = line.minX + picture.x(in: textContainer?.size.width ?? 0)
+                let frame = NSRect(x: x, y: line.maxY - picture.size.height, width: picture.size.width, height: picture.size.height)
                 children.append(NSAccessibilityElement.element(withRole: .image, frame: frame, label: label, parent: self))
             case .task(let task)?:
                 let box = range.location + task.at
@@ -454,7 +455,16 @@ final class EditorTextView: CaretTextView {
 
     override func layout() {
         super.layout()
+        let painted = marks.painted
         marks.layoutIfDirty()
+        // A change inside hidden markers shows them, after the layout that painted it.
+        guard marks.painted != painted else { return }
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.defersStyling else { return }
+                self.styler.updateReveal()
+            }
+        }
     }
 
     /// The change Keep Change and Revert Change decide: the one under the caret, else the one the stamp shows.

@@ -1,8 +1,9 @@
 import AppKit
 
 /// GFM tables laid out in place. Outside the selection a row hides its pipes, padding and extra cells, kerns its hidden
-/// characters so each cell starts at its column, and draws rules between the columns; the delimiter row hides and
-/// draws a rule under the head. A row the selection touches, or the head with its delimiter row, shows its source.
+/// characters so each cell starts at its column; the delimiter row collapses to a rule under the head, so the head
+/// sits one row's pitch above the first row. A column left unaligned whose body cells all start with a digit aligns
+/// right. A row the selection touches, or the head with its delimiter row, shows its source.
 /// Columns are as wide as their widest cell, and only widen while the selection stays in the table. A table wider than
 /// the text shrinks its columns toward their longest words, and its rows draw their cells wrapped in their columns.
 @MainActor
@@ -93,7 +94,9 @@ final class Tables {
         styled.enumerateAttribute(.font, in: header) { value, run, _ in
             styled.addAttribute(.font, value: store.font(value as! NSFont, adding: .bold), range: run)
         }
-        // A column whose body cells all start with a digit sets its figures tabular, so they line up.
+        // A column whose body cells all start with a digit sets its figures tabular, so they line up, and aligns right
+        // unless its delimiter row sets an alignment.
+        var aligned = (0..<count).map { alignments.count > $0 ? alignments[$0] ?? .left : .left }
         for column in 0..<count {
             let cells = lines.dropFirst().compactMap { $0.cells.count > column ? $0.cells[column].content : nil }
             let numeric = !cells.isEmpty && cells.allSatisfy { cell in
@@ -101,6 +104,7 @@ final class Tables {
                 return value.first?.isASCII == true && value.first?.isNumber == true
             }
             guard numeric else { continue }
+            if alignments.count <= column || alignments[column] == nil { aligned[column] = .right }
             for cell in cells {
                 styled.enumerateAttribute(.font, in: cell) { value, run, _ in
                     styled.addAttribute(.font, value: Self.tabular(value as! NSFont), range: run)
@@ -137,7 +141,7 @@ final class Tables {
         for width in widths.dropLast() { starts.append(starts.last! + width + gap) }
         let boundaries = starts.dropFirst().map { $0 - gap / 2 }
         let rule = { (across: Bool, cells: [TableCell]) in
-            BlockLine(.table(TableRule(columns: boundaries, width: starts.last! + widths.last!, across: across, color: store.color(.quoteRule), cells: cells)))
+            BlockLine(.table(TableRule(width: starts.last! + widths.last!, across: across, color: store.color(.quoteRule), cells: cells)))
         }
 
         for (index, line) in lines.enumerated() {
@@ -152,12 +156,12 @@ final class Tables {
             }
             if index == 0, delimiter.length > 0 {
                 styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: delimiter)
-                styled.addAttribute(.dewlineBlock, value: rule(true, []), range: text.paragraphRange(for: delimiter))
+                styled.addAttributes([.dewlineBlock: rule(true, []), .paragraphStyle: RenderedBlocks.collapsedLines], range: text.paragraphRange(for: delimiter))
             }
             let paragraph = text.paragraphRange(for: NSRange(location: line.range.location, length: 0))
             if wraps {
                 let cells = line.cells.prefix(count).enumerated().map { column, cell in
-                    let drawn = Self.cell(styled.attributedSubstring(from: cell.content), alignments.count > column ? alignments[column] : .left)
+                    let drawn = Self.cell(styled.attributedSubstring(from: cell.content), aligned[column])
                     return TableCell(x: starts[column], width: widths[column], text: drawn,
                         source: NSRange(location: cell.content.location - paragraph.location, length: cell.content.length))
                 }
@@ -180,7 +184,7 @@ final class Tables {
                     pen = boundaries[column - 1]
                 }
                 let width = measured[index][column]
-                let inset: CGFloat = switch alignments.count > column ? alignments[column] : .left {
+                let inset: CGFloat = switch aligned[column] {
                 case .left: 0
                 case .center: ((widths[column] - width) / 2).rounded()
                 case .right: widths[column] - width
@@ -236,14 +240,15 @@ final class Tables {
         return aligned
     }
 
-    /// The alignment of each column in a delimiter row: `:--` left, `:-:` center, `--:` right.
-    static func alignments(_ delimiter: String) -> [Alignment] {
+    /// The alignment of each column in a delimiter row: `:--` left, `:-:` center, `--:` right, `---` nil.
+    static func alignments(_ delimiter: String) -> [Alignment?] {
         var row = Substring(delimiter.trimmingCharacters(in: .whitespacesAndNewlines))
         if row.hasPrefix("|") { row = row.dropFirst() }
         if row.hasSuffix("|") { row = row.dropLast() }
         return row.split(separator: "|", omittingEmptySubsequences: false).map { cell in
             let cell = cell.trimmingCharacters(in: .whitespaces)
-            return cell.hasSuffix(":") ? (cell.hasPrefix(":") ? .center : .right) : .left
+            if cell.hasSuffix(":") { return cell.hasPrefix(":") ? .center : .right }
+            return cell.hasPrefix(":") ? .left : nil
         }
     }
 

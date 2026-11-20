@@ -35,9 +35,12 @@ enum CodeFile {
         return extensions.contains(ext) ? ext : nil
     }
 
-    /// The language of a code file that opens as code now; nil for a note, or for any file while the setting is off.
+    /// Sources Dewline typesets, which show as code whenever they open, whatever the setting.
+    static let typeset: Set<String> = ["typ", "tex"]
+
+    /// The language of a code file that opens as code now; nil for a note, or for any other file while the setting is off.
     static func opened(_ url: URL) -> String? {
-        isOn ? language(of: url) : nil
+        language(of: url).flatMap { isOn || typeset.contains($0) ? $0 : nil }
     }
 
     /// Why `url` doesn't open: it is code and the setting is off.

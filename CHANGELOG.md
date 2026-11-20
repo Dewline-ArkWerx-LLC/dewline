@@ -4,6 +4,12 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
+- Images on a dark page draw at 90% brightness inside their faint rim.
+- Display math is centered in the column.
+- A table column of numbers aligns right unless its delimiter row sets an alignment. The head sits one row above the first row with a single rule under it, and columns have no rules between them.
+- Typst and TeX sources always show in the code face.
+- A change that lies wholly inside hidden markup, such as a link's new target, shows that markup, so its mark no longer sits on nothing.
 - The Changes segment counts what the toolbar counts: every change waiting in the window's notes and in notes changed while closed.
 - The change stamp stays in the margin when the Changes pane opens, compact ("CLAUDE · 1 of 3" over icon buttons) where the full stamp won't fit, so toggling the pane no longer reflows the note. Revert and Keep share one width, the counter always reads "1 of N", and the full stamp shows Next Change's keys (⌃⌘↓). Only the stamp at the caret, or under the pointer, shows its buttons.
 - Changes list rows show the text around the change, with Markdown markers taken out; Revert Session and Keep Session are buttons, Keep filled.

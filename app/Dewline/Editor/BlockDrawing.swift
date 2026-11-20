@@ -33,17 +33,16 @@ final class BlockLine: NSObject {
         case .picture(let picture, _): picture.identity.hashValue
         case .collapsed: 0
         case .error(let message): message.hashValue
-        case .table(let rule): rule.columns.count
+        case .table(let rule): rule.width.hashValue
         case .task(let task): task.at
         case .summary(let line): line.string.hashValue
         }
     }
 }
 
-/// A table line's rules, in points from where its text starts: one between each pair of columns, and for the
-/// delimiter row one across them all. A row too wide for the text draws its cells, wrapped in their columns.
+/// A table line's rule, in points from where its text starts: the delimiter row's runs across the columns under the
+/// head. A row too wide for the text draws its cells, wrapped in their columns.
 struct TableRule: Equatable {
-    let columns: [CGFloat]
     let width: CGFloat
     let across: Bool
     let color: NSColor
@@ -102,22 +101,26 @@ final class BlockFragment: NSTextLayoutFragment {
         fatalError("BlockFragment is built in code")
     }
 
+    private var column: CGFloat {
+        textLayoutManager?.textContainer?.size.width ?? 0
+    }
+
     private var textBottom: CGFloat {
         textLineFragments.last?.typographicBounds.maxY ?? 0
     }
 
     override var renderingSurfaceBounds: CGRect {
         switch line.role {
-        case .picture(let picture, _): CGRect(origin: .zero, size: picture.size)
+        case .picture(let picture, _): CGRect(origin: CGPoint(x: picture.x(in: column), y: 0), size: picture.size)
         case .collapsed: .zero
         case .table(let rule):
-            super.renderingSurfaceBounds.union(CGRect(x: 0, y: 0, width: textStart + rule.width + 1, height: layoutFragmentFrame.height))
+            super.renderingSurfaceBounds.union(CGRect(x: 0, y: -1, width: textStart + rule.width + 1, height: layoutFragmentFrame.height + 2))
         case .task: super.renderingSurfaceBounds
         case .summary(let line): CGRect(origin: .zero, size: CGSize(width: line.size().width + 16, height: layoutFragmentFrame.height))
         case .error:
             // The error is wider than the line it hangs under.
             super.renderingSurfaceBounds.union(CGRect(
-                x: 0, y: textBottom, width: textLayoutManager?.textContainer?.size.width ?? 0, height: BlockLine.errorHeight
+                x: 0, y: textBottom, width: column, height: BlockLine.errorHeight
             ))
         }
     }
@@ -125,14 +128,23 @@ final class BlockFragment: NSTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         switch line.role {
         case .picture(let picture, _):
-            let frame = CGRect(origin: point, size: picture.size)
-            picture.draw(in: frame, of: context)
-            // On a dark page an image takes a faint 1 pt rim, so a light one reads as placed.
-            if case .image = picture.art, NSAppearance.currentDrawing().isDark {
-                context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
-                context.setLineWidth(1)
-                context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
+            let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y), size: picture.size)
+            guard case .image = picture.art, NSAppearance.currentDrawing().isDark else { return picture.draw(in: frame, of: context) }
+            // On a dark page an embedded image draws at 90% brightness, and any image takes a faint 1 pt rim, so a
+            // light one reads as placed.
+            if picture.kind == .image {
+                context.beginTransparencyLayer(in: frame, auxiliaryInfo: nil)
+                picture.draw(in: frame, of: context)
+                context.setBlendMode(.sourceAtop)
+                context.setFillColor(CGColor(gray: 0, alpha: 0.1))
+                context.fill(frame)
+                context.endTransparencyLayer()
+            } else {
+                picture.draw(in: frame, of: context)
             }
+            context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
+            context.setLineWidth(1)
+            context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
         case .collapsed:
             break
         case .summary(let line):
@@ -154,9 +166,6 @@ final class BlockFragment: NSTextLayoutFragment {
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
             rule.color.setFill()
             let left = point.x + textStart
-            for x in rule.columns {
-                NSRect(x: left + x - 0.5, y: point.y, width: 1, height: layoutFragmentFrame.height).fill()
-            }
             if rule.across {
                 NSRect(x: left, y: point.y + (layoutFragmentFrame.height / 2).rounded() - 0.5, width: rule.width, height: 1).fill()
             }

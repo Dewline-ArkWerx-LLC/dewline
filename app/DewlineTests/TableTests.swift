@@ -83,12 +83,14 @@ struct TableTests {
         let middle = (fine.start + fine.end) / 2
         #expect(abs((note.start + note.end) / 2 - middle) <= 1 && abs((ok.start + ok.end) / 2 - middle) <= 1)
         #expect(abs(fine.start - (qty.end + gap)) <= 1)
-        // Rules: between columns on each line, and across under the head.
+        // One rule, across under the head, whose delimiter row collapses so the head sits a row's pitch above the first row.
         guard case .table(let rule)? = editor.role(at: editor.find("| apple").location) else { Issue.record("no rule on a row"); return }
-        #expect(rule.columns.count == 2 && !rule.across)
+        #expect(!rule.across)
         guard case .table(let under)? = editor.role(at: editor.find("|:---").location) else { Issue.record("no rule under the head"); return }
-        #expect(under.across && under.columns == rule.columns)
-        #expect(Tables.alignments("|:-----|----:|:----:|") == [.left, .right, .center])
+        #expect(under.across && under.width == rule.width)
+        let (headY, appleY, kiwiY) = (editor.rect("Name").minY, editor.rect("apple").minY, editor.rect("kiwi").minY)
+        #expect(abs(abs(headY - appleY) - abs(appleY - kiwiY)) <= 1)
+        #expect(Tables.alignments("|:-----|----:|:----:|---|") == [.left, .right, .center, nil])
         #expect(editor.view.string == Self.text)
     }
 

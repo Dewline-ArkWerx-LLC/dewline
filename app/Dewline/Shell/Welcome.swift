@@ -10,7 +10,7 @@ enum Welcome {
     /// The demo's two edits: the words before the link it replaces, and the paragraph it inserts after the one that
     /// says what Keep and Revert do.
     static let replaced = "Try it:"
-    static let replacement = "Here it is, written from outside the editor:"
+    static let replacement = "Try it as an agent would, from outside the editor:"
     static let anchor = "Revert puts the old text back.\n"
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open.\n"
 

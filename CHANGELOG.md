@@ -4,6 +4,9 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- An agent's edit marks one change per stretch of a line: word edits a few characters apart join, and a line more than 40% rewritten shows struck whole with the new line under it.
+- Earlier Versions names a hooked write's snapshot after its agent even when the hook reports after you decide the change, keeps a reverted change's save as "You (Revert)", and no longer adds an "Another app" copy of the version a reopened note already ends with.
+- Earlier Versions names the note in its heading, shows seconds when two versions share a minute, pins with a pin symbol, previews the whole difference with tinted lines and a +/− gutter, moves between versions with ↑ and ↓, and hides scroll bars with nothing to scroll.
 - The Welcome demo swaps a word in place ("revert" becomes "undo"), so one of its two changes is a true replacement.
 - The hook setup sheet is titled "Let Dewline see which agent made each edit", says it adds one local command (dewline notify) to PreToolUse and PostToolUse, that nothing leaves the Mac and where to remove it; it shows the backup's whole name, lines up with the text above it, and shortens long paths in the middle.
 - Settings &gt; Agents gives each agent its own Set Up… or Remove, shows Codex as Not set up, Installed, needs trust, or Active, and says when each agent last named an edit. Set Up All Hooks… sits at the trailing edge.

@@ -75,7 +75,7 @@ public final class ChangeEngine: Sendable {
         public let origin: Origin
         public let pinned: Bool
         fileprivate let hash: Data
-        fileprivate let label: String
+        public let label: String
 
         /// Whether the snapshot is `bytes`.
         public func holds(_ bytes: Data) -> Bool {

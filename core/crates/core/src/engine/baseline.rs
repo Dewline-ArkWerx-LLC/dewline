@@ -483,7 +483,8 @@ fn places(before: &[u8], after: &[u8]) -> Option<u32> {
     ) else {
         return None;
     };
-    Some(merge::merge3(&before, &before, &after).edits.len() as u32)
+    let edits = merge::merge3(&before, &before, &after).edits;
+    Some(merge::coalesce(&before, edits).len() as u32)
 }
 
 /// The text between UTF-16 offsets `start` and `end`, if both fall between
@@ -908,17 +909,17 @@ mod tests {
         let (_, start, end) = ranges[0];
         assert_eq!(
             (&mark.origin, mark.start, mark.end, mark.removed.as_str()),
-            (&Origin::External, start, end, "Friday")
+            (&Origin::External, start, end, "Ship Friday.")
         );
-        assert_eq!(&NEW[start as usize..end as usize], "Monday");
+        assert_eq!(&NEW[start as usize..end as usize], "Ship Monday.");
         // Reverting it after the reopen puts back what it replaced.
         let reverted = engine.decide(
             opened.doc,
             mark.change,
             crate::engine::Decision::Other,
-            "Monday",
+            "Ship Monday.",
         );
-        assert_eq!(reverted.as_deref(), Some("Friday"));
+        assert_eq!(reverted.as_deref(), Some("Ship Friday."));
 
         engine.keep_marks(opened.doc, NEW, &[]).unwrap();
         engine.close(opened.doc);

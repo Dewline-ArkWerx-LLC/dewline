@@ -492,7 +492,7 @@ struct JourneyTests {
         await waitForMain { closed.marked.count == 1 }
         #expect(closed.textView.string == "# A\n\nNew a.\n")
         #expect(closed.marked.first?.change.origin == claude)
-        #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New")
+        #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New a.")
         #expect(!closed.document.isDocumentEdited)
         await waitForMain { ClosedChanges.all.count == 1 }
         #expect(ClosedChanges.all.map { Self.realpath($0.url) } == [Self.realpath(vault.url("b.md"))])

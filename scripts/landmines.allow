@@ -30,5 +30,3 @@ core/crates/cli/tests/open.rs no-wall-clock-asserts 1
 core/crates/core/src/highlight.rs no-fixed-sleep 1
 core/crates/core/src/highlight.rs no-wall-clock-asserts 1
 core/crates/core/src/merge.rs no-wall-clock-asserts 1
-core/crates/sync/src/tests.rs no-fixed-sleep 11
-core/crates/sync/src/tests.rs no-wall-clock-asserts 1

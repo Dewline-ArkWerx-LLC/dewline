@@ -11,6 +11,16 @@ What changed in each Dewline release, newest first.
 - Find in Files results use the theme's inks.
 - Dragging a tab slides its neighbors aside as it passes; dragging it out of the strip drags the note's file. The unsaved dot sits where the close button appears on hover, Command-click on a tab shows the note's path, and the tab's tooltip names its Option-Command key.
 - Chrome type follows the macOS text styles; chevrons and the tab close button are SF Symbols. Activity and the sidebar's … menu open on mouse down, and Activity dims instead of hiding while you type. Command-Down Arrow opens the selected sidebar row.
+- The window goes as narrow as 420 pt with the sidebar and Changes pane closed, so it shares a laptop screen with a terminal; below 700 pt the sidebar collapses on its own and comes back when the window widens. The Changes pane can narrow to 260 pt.
+- Changes (⇧⌘R) takes the keyboard on the first change; pressed again it hands the keyboard back to the note. In the list, J and K move, Y or Return keeps, X reverts, O reveals. Vim's ]c and [c are Next and Previous Change, and the command palette finds Changes by "Diff" or "Review".
+- Next Change (⌃⌘↓) past the last change in the open notes opens the next note waiting, changed while closed or since the last commit, at its first change, and the status bar says how many more wait.
+- The folder page lists notes deleted since the last commit; opening one shows its committed text, read-only.
+- With agent hooks on, the folder page offers Copy a Test Prompt to make the first marked change.
+- Keep on the change stamp and Keep Yours on the conflict card fill with the theme's accent instead of the system accent.
+- Changes rows show a change over several lines as "+N / −M lines" and open it in full with → or Space; note headings show the path in the folder, session names are small section labels, and changed words take the writer's ink instead of bold.
+- The change stamp reads "CLAUDE 3:25 PM · saved · 1 of 2", shows Next Change's keys only under the pointer or once you've decided a change, draws its shortcuts as keycaps, and its tooltips read "Option-click: Keep All (⇧⌘↩)".
+- The status bar keeps its line in a folder window so messages no longer move the note, reads results and problems to VoiceOver, and shows a problem ahead of a request.
+- Revert on a change you typed inside asks first, showing what it puts back, instead of refusing.
 - Code blocks highlight in a fixed band against the paper, keywords in the accent's hue, so tokens read apart from the text in light and dark themes.
 - Headings step by 1.25 from the body: 31, 25, 20 and 16 pt at the default size, so H3 no longer matches body text.
 - Edit has Paste and Match Style (⌥⇧⌘V), Delete, and Spelling and Grammar, Substitutions and Transformations submenus; Find has Find and Replace… (⌥⌘F), Use Selection for Find (⌘E) and Jump to Selection (⌘J); File > Duplicate takes ⇧⌘S. Smart Punctuation moves into Edit > Substitutions.

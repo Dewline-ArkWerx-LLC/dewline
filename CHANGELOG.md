@@ -4,6 +4,14 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- An agent's write that adds list items no longer drops the bullet of the item after them.
+- Ticking a task box in an agent's change no longer shifts its row to the right.
+- A change's highlight leaves out the blanks at its ends and runs unbroken across inline code; code spans get rounded chips.
+- Inserted text is underlined with dots, so it no longer reads as a link, and each change gets one bar in the margin.
+- A long line in fenced code wraps one indent past its own indentation instead of at the block's left edge.
+- Spell check skips hyphenated words such as `at-least-once` and inline math, whose marks drew a red dot after the formula.
+- Table columns of numbers use tabular figures, and images on a dark page get a faint rim.
+- The Welcome demo's writer is named Example.
 - With Open code files on, `.typ` files open as highlighted Typst. After Dewline saves a `.typ` or `.tex` file, or an agent's write lands in it, Dewline typesets it with the `typst`, `latexmk` or `tectonic` you have installed; the status bar shows errors with Go to Line, and error lines number in red. File > Export writes the PDF. Dewline bundles no compiler.
 - A scan of closed files also covers `.typ` and `.tex`, so an agent's write to one while it was closed opens marked.
 - `dewline doctor` lists `latexmk` and `tectonic`.

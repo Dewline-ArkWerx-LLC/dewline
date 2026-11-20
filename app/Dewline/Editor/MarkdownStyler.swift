@@ -68,7 +68,7 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     /// The attributes styling owns; restyling leaves every other attribute in the storage as it is.
     private static let keys = [
         NSAttributedString.Key.font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .underlineColor, .strikethroughStyle, .kern, .toolTip,
-        .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .baselineOffset, .dewlineCallout, .dewlineCode, .dewlineMath,
+        .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .baselineOffset, .dewlineCallout, .dewlineCode, .dewlineMath, .dewlineCodeChip,
     ].map { $0.rawValue as NSString }
     /// The text a long restyle styles at once, which covers the view: several screens.
     private static let chunk = BlockMap.screen
@@ -186,9 +186,18 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
         if folds.contains(where: inside) { setFolds(folds.filter { !inside($0) }) }
     }
 
-    /// Spelling and grammar marks skip code, math, front matter, HTML, addresses and wikilink targets.
+    /// Spelling and grammar marks skip code, math (inline too), front matter, HTML, addresses, wikilink targets and
+    /// hyphenated words.
     func textView(_ textView: NSTextView, shouldSetSpellingState value: Int, range affectedCharRange: NSRange) -> Int {
         guard value != 0 else { return value }
+        let text = textView.textStorage!.mutableString
+        let start = max(affectedCharRange.location - 1, 0)
+        let around = NSRange(location: start, length: min(NSMaxRange(affectedCharRange) + 1, text.length) - start)
+        if text.substring(with: around).contains("-") { return 0 }
+        let math = map.blocks(touching: affectedCharRange).contains { block in
+            block.spans.contains { $0.kind == .inlineMath && NSIntersectionRange($0.shifted(by: block.range.location).range, affectedCharRange).length > 0 }
+        }
+        if math { return 0 }
         return map.literals(in: affectedCharRange).contains { NSIntersectionRange($0, affectedCharRange).length > 0 } ? 0 : value
     }
 
@@ -232,6 +241,12 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
             unstyled.remove(integersIn: editedRange.location..<oldEnd)
             unstyled.shift(startingAt: oldEnd, by: delta)
             let text = textView!.textStorage!.mutableString
+            // Lines after an edit can move, and what the view draws under them (bullets, wells, chips) must move with
+            // them: an agent's write lands in the storage, outside the view's own redraw. One typed character is the
+            // view's.
+            if delta != 1 || edit.length != 1 || [0x0A, 0x0D].contains(text.character(at: edit.location)) {
+                textView!.setNeedsDisplay(textView!.visibleRect)
+            }
             // An edit in folded text unfolds it; an edit before a fold moves it.
             let editEnd = NSMaxRange(edit) - delta
             var unfolded: NSRange?
@@ -440,7 +455,7 @@ extension MarkdownStyler {
                     styled.enumerateAttribute(.font, in: span.content) { value, run, _ in
                         styled.addAttribute(.font, value: Self.code(matching: value as! NSFont), range: run)
                     }
-                    styled.addAttribute(.backgroundColor, value: store.color(.codeBackground), range: span.range)
+                    styled.addAttribute(.dewlineCodeChip, value: true, range: span.range)
                 default:
                     Constructs.style(span, in: styled, source: source)
                 }
@@ -672,4 +687,6 @@ private struct Runs: Hashable {
 
 extension NSAttributedString.Key {
     static let dewlineMarkerFont = NSAttributedString.Key("DewlineMarkerFont")
+    /// A code span, whose chip the view draws under the change marks.
+    static let dewlineCodeChip = NSAttributedString.Key("DewlineCodeChip")
 }

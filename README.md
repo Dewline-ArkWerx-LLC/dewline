@@ -7,7 +7,7 @@
 
 Dewline is a native Markdown editor for Mac. It opens the .md files you already keep, in any folder or Obsidian vault, and saves them exactly as you wrote them.
 
-macOS 26+ · Free · No account, no telemetry
+macOS 26+ · Free to start · No account, no telemetry
 
 ## Why switch
 

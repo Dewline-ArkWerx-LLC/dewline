@@ -7,10 +7,10 @@ import MdCore
 enum Welcome {
     /// True once the first launch wrote the guide and opened it.
     static let shownKey = "DewlineWelcomeShown"
-    /// The demo's two edits: the words before the link it replaces, and the paragraph it inserts after the one that
-    /// says what Keep and Revert do.
-    static let replaced = "Try it:"
-    static let replacement = "Try it as an agent would, from outside the editor:"
+    /// The demo's two edits: a word it swaps in the paragraph that holds the link, and the paragraph it inserts after
+    /// the one that says what Keep and Revert do.
+    static let replaced = "keep or revert it."
+    static let replacement = "keep or undo it."
     static let anchor = "Revert puts the old text back.\n"
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open.\n"
 
@@ -38,7 +38,7 @@ enum Welcome {
     }
 }
 
-/// "Show me a change" in Welcome.md: the demo writer rewrites the words before the link and inserts a paragraph below
+/// "Show me a change" in Welcome.md: the demo writer swaps a word before the link and inserts a paragraph below
 /// it through the change engine, claimed as an agent's hooks claim a write, so two changes land marked with Keep and
 /// Revert where the reader is looking.
 @MainActor

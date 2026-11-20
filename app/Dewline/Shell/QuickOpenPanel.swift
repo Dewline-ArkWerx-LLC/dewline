@@ -908,7 +908,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             let writer = touched[result.file.url.path]?.writer
             let detail = line.map { "line \($0)" } ?? recents[result.file.url.path].map { relativeTime($0) } ?? (result.file.boost != nil ? "pinned" : "")
             let positions = result.positions.compactMap { $0 >= text.nameStart ? $0 - text.nameStart : nil }
-            content.lead = writer.map { _ in .dot(Chrome.color(.accent)) } ?? .none
+            content.lead = writer.map { _ in .dot(Chrome.color(.accent)) } ?? .symbol("doc.text")
             let style: PaletteCell.Segment.Style = FolderEntry(url: result.file.url, isFolder: false).isCode ? .code : .title
             content.title = [.init(name, positions: positions, style: style, dimUnmatched: !positions.isEmpty)]
             let folderName = (folderPath as NSString).lastPathComponent
@@ -960,7 +960,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case .choice(let index, let positions):
             let name = choices?.names[index] ?? ""
             let current = choices?.current == index
-            content.lead = current ? .bead : .none
+            content.lead = current ? .bead : .empty
             content.title = [.init(name, positions: positions)]
             content.trailing = .text(current ? "current" : "")
             content.hints = [("↩", "keep"), ("⎋", "restore")]
@@ -1010,14 +1010,18 @@ private final class QuickOpenTable: NSTableView {
     }
 }
 
-/// A result row on one line, drawn: a 16 pt leading slot (a writer's dot, a mono tag or the current value's bead), the
-/// title in Bricolage with its matched letters underlined in signal, an optional mono subtitle after it, and at the
-/// right a value or keycaps. On the selected row the keyboard hints in mono take the value's place.
+/// A result row on one line, drawn: a 16 pt leading slot (a writer's dot, a note's symbol, a mono tag or the current
+/// value's bead), left out on rows that never fill it, the title in Bricolage with its matched letters in semibold, an
+/// optional mono subtitle after it, and at the right a value or keycaps. On the selected row the keyboard hints in mono take the value's place.
 private final class PaletteCell: NSView, ChromeSelectable {
     static let identifier = NSUserInterfaceItemIdentifier("palette")
 
     enum Lead {
+        /// No slot: the title starts at the header's inset.
         case none
+        /// A slot left empty, so the row lines up with its neighbors.
+        case empty
+        case symbol(String)
         case dot(NSColor)
         case tag(String)
         case bead
@@ -1069,9 +1073,6 @@ private final class PaletteCell: NSView, ChromeSelectable {
         }
     }
 
-    /// Where the title font's baseline sits below the top of its line.
-    private static let baseline = NSLayoutManager().defaultBaselineOffset(for: Chrome.brand(14))
-
     init() {
         super.init(frame: .zero)
         identifier = Self.identifier
@@ -1111,7 +1112,7 @@ private final class PaletteCell: NSView, ChromeSelectable {
             right -= ceil(size.width) + 16
         }
         drawLead(midY: titleY)
-        let left: CGFloat = 44
+        let left: CGFloat = if case .none = content.lead { 12 } else { 44 }
         let width = max(right - left, 0)
         guard !content.subtitle.isEmpty else {
             drawTitle(x: left, width: width, midY: titleY)
@@ -1134,8 +1135,13 @@ private final class PaletteCell: NSView, ChromeSelectable {
     private func drawLead(midY: CGFloat) {
         let dot = NSRect(x: 21, y: midY - 3, width: 6, height: 6)
         switch content.lead {
-        case .none:
+        case .none, .empty:
             break
+        case .symbol(let name):
+            let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [Chrome.color(.ink3)]))
+            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) else { break }
+            image.draw(in: NSRect(x: 24 - image.size.width / 2, y: midY - image.size.height / 2, width: image.size.width, height: image.size.height))
         case .dot(let color):
             color.setFill()
             NSBezierPath(ovalIn: dot).fill()
@@ -1156,41 +1162,19 @@ private final class PaletteCell: NSView, ChromeSelectable {
         }
     }
 
-    /// The title line, truncated at the tail, with a 1.5 pt signal underline 2 pt under the baseline of each run of
-    /// matched letters that is not cut off. Returns the width it took.
+    /// The title line, truncated at the tail. Returns the width it took.
     @discardableResult
     private func drawTitle(x: CGFloat, width: CGFloat, midY: CGFloat) -> CGFloat {
-        let (string, matched) = Self.title(content.title)
+        let string = Self.title(content.title)
         let size = string.size()
         let box = NSRect(x: x, y: midY - ceil(size.height) / 2, width: width, height: ceil(size.height))
         string.draw(with: box, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        let taken = min(ceil(size.width), width)
-        guard !matched.isEmpty else { return taken }
-        // Past this x the tail is cut off and an ellipsis drawn.
-        let limit = size.width <= width ? box.maxX : box.maxX - 14
-        let y = box.minY + Self.baseline + 2
-        Chrome.color(.signal).setFill()
-        var runs: [(start: Int, end: Int)] = []
-        for position in matched.sorted() {
-            if let last = runs.last, last.end == position {
-                runs[runs.count - 1].end = position + 1
-            } else {
-                runs.append((position, position + 1))
-            }
-        }
-        for run in runs {
-            let x0 = box.minX + string.attributedSubstring(from: NSRange(location: 0, length: run.start)).size().width
-            let x1 = box.minX + string.attributedSubstring(from: NSRange(location: 0, length: run.end)).size().width
-            guard x1 <= limit else { break }
-            NSRect(x: x0, y: y, width: x1 - x0, height: 1.5).fill()
-        }
-        return taken
+        return min(ceil(size.width), width)
     }
 
-    /// The segments as one line two spaces apart, and the offsets of their matched letters in it.
-    private static func title(_ segments: [Segment]) -> (NSAttributedString, [Int]) {
+    /// The segments as one line two spaces apart.
+    private static func title(_ segments: [Segment]) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        var matched: [Int] = []
         for segment in segments where !segment.text.isEmpty {
             let aside = segment.style == .aside
             let size: CGFloat = aside ? 13 : 14
@@ -1202,13 +1186,12 @@ private final class PaletteCell: NSView, ChromeSelectable {
             let strong: [NSAttributedString.Key: Any] = [.font: Chrome.brand(size, weight: 560), .foregroundColor: Chrome.color(aside ? .ink2 : .ink)]
             for position in segment.positions where position >= 0 && position < length {
                 result.addAttributes(strong, range: NSRange(location: start + position, length: 1))
-                matched.append(start + position)
             }
         }
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byTruncatingTail
         result.addAttribute(.paragraphStyle, value: line, range: NSRange(location: 0, length: result.length))
-        return (result, matched)
+        return result
     }
 
     /// "↩ open   ⌘↩ new tab": keys in `ink2`, words in `ink3`, mono 11.

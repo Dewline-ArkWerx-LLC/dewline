@@ -2,12 +2,14 @@ import AppKit
 import SwiftUI
 
 /// Dewline > Settings: a standard preferences window, 640 wide, with one toolbar button per pane. Each pane is as tall
-/// as its content, up to 720, and the window resizes to it as panes change. It opens on the pane last shown.
+/// as its content, up to the screen's height, and the window resizes to it as panes change. It opens on the pane last shown.
 final class SettingsWindowController: NSWindowController {
     private static var shared: SettingsWindowController?
     static let paneKey = "DewlineSettingsPane"
     static let width: CGFloat = 640
-    static let maxHeight: CGFloat = 720
+    static var maxHeight: CGFloat {
+        max((NSScreen.main?.visibleFrame.height ?? 800) - 80, 480)
+    }
 
     @objc static func showSettings(_ sender: Any?) {
         let controller = shared ?? SettingsWindowController()

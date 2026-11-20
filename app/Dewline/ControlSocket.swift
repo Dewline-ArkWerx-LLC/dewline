@@ -335,7 +335,10 @@ final class ControlSocket: @unchecked Sendable {
         case .success(.notify(let claim)):
             drop(connection)
             let notify = notify
-            Task { @MainActor in notify(claim) }
+            Task { @MainActor in
+                claim.recordNamedEdit()
+                notify(claim)
+            }
         case .success(.export(let request)):
             connection.request = .export(request)
             connection.buffer = []
@@ -427,6 +430,21 @@ final class ControlSocket: @unchecked Sendable {
 }
 
 extension ControlSocket.Claim {
+    private static func namedEditKey(_ vendor: String) -> String {
+        "DewlineLastNamedEdit." + vendor
+    }
+
+    /// When `vendor`'s hooks last reported a finished edit, for Settings > Agents.
+    static func lastNamedEdit(_ vendor: String) -> Date? {
+        UserDefaults.standard.object(forKey: namedEditKey(vendor)) as? Date
+    }
+
+    /// Notes the time of a PostToolUse claim for an edit, which names the agent's write.
+    func recordNamedEdit() {
+        guard case .postToolUse(let use) = event, use.tool != .read else { return }
+        UserDefaults.standard.set(Date(), forKey: Self.namedEditKey(vendor.rawValue))
+    }
+
     /// Session and tool use ids are 1 to this many printable ASCII characters.
     static let maxId = 128
     /// PATH_MAX: no realpath is longer.

@@ -120,7 +120,7 @@ struct JourneyTests {
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
         #expect(guide.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code, Codex or Cursor edits a note, Dewline marks the change"))
-        #expect(guide.contains(Welcome.replaced + " [Show me a change](dewline://demo)"))
+        #expect(guide.contains(Welcome.replaced + " Try it: [Show me a change](dewline://demo)"))
         #expect(guide.contains(Welcome.anchor))
         #expect(!guide.contains("'"), "curly quotes throughout")
         #expect(!guide.contains("\u{2014}") && !guide.contains("--"))
@@ -152,7 +152,7 @@ struct JourneyTests {
         guard case .agent(.demo, _) = change.change.origin else { Issue.record("Demo didn't write it: \(change.change.origin)"); return }
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
         #expect((tab.textView.string as NSString).substring(with: paragraph).contains("dewline://demo"))
-        #expect(tab.textView.string.contains(Welcome.replacement + " [Show me a change](dewline://demo)"))
+        #expect(tab.textView.string.contains(Welcome.replacement + " Try it: [Show me a change](dewline://demo)"))
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         let stamp = try #require(Self.stamp(in: tab))
         #expect(stamp.accessibilityLabel()?.hasSuffix(", 2 changes") == true)
@@ -492,7 +492,7 @@ struct JourneyTests {
         await waitForMain { closed.marked.count == 1 }
         #expect(closed.textView.string == "# A\n\nNew a.\n")
         #expect(closed.marked.first?.change.origin == claude)
-        #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New")
+        #expect(closed.marked.first.map { closed.live.excerpt($0.id) } == "New a.")
         #expect(!closed.document.isDocumentEdited)
         await waitForMain { ClosedChanges.all.count == 1 }
         #expect(ClosedChanges.all.map { Self.realpath($0.url) } == [Self.realpath(vault.url("b.md"))])

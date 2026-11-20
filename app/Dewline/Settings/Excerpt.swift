@@ -5,7 +5,7 @@ import MdCore
 /// one of 80 characters or more, if any) with the markers removed and its links marked, and its first line of code; a
 /// sample stands in for anything missing.
 struct Excerpt {
-    var heading = "Dewline 1.0 launch plan"
+    var heading = "Public beta plan"
     var paragraph = "Ship the notarized build to the first forty testers. Public beta opens on 2 December, after the dry run. Steps in the release checklist."
     var links = [NSRange(location: 118, length: 17)]
     /// A few words to show the selection on.

@@ -88,15 +88,15 @@ struct AgentsPane: View {
                 )
                 .padding(.bottom, 10)
                 ForEach(hooks.agents) { agent in
-                    SettingsRow(label: agent.title, detail: Self.detail(agent.name)) {
-                        row(agent)
-                    }
+                    row(agent)
                 }
-                SettingsRow(label: "") {
+                HStack {
+                    Spacer()
                     Button("Set Up All Hooks\u{2026}") { HookSetup.install(from: NSApp.keyWindow) { _ in Task { await refresh() } } }
                         .fixedSize()
                         .help(hooks.version ?? "")
                 }
+                .padding(.top, 8)
             }
         }
         .task { await refresh() }
@@ -115,35 +115,60 @@ struct AgentsPane: View {
         hooks = await Task.detached { HookStatus.read() }.value
     }
 
-    /// The agent's state with its symbol, then Set Up or Remove, and Show File when it has a settings file.
+    /// "Last named edit 16:10", or the date too before today: when the agent's hooks last named a write.
+    private static func lastEdit(_ agent: String) -> String {
+        guard let date = ControlSocket.Claim.lastNamedEdit(agent) else { return "No named edit yet" }
+        return "Last named edit " + date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
+    }
+
+    /// The agent's name, what its hooks give and when they last named an edit, then its state with a symbol on the
+    /// name's baseline, then Set Up or Remove, and Show File when it has a settings file.
     private func row(_ agent: HookStatus.Agent) -> some View {
         let (text, symbol, color): (String, String, Color) =
             switch (agent.installed, agent.needsTrust) {
-            case (true, false): ("Installed", "checkmark.circle.fill", .green)
-            case (true, true): ("Needs trust", "exclamationmark.triangle.fill", .orange)
+            case (true, false): ("Active", "checkmark.circle.fill", .green)
+            case (true, true): ("Installed, needs trust", "exclamationmark.triangle.fill", .orange)
             default: ("Not set up", "circle.dashed", Station.color(.ink2))
             }
-        return HStack(spacing: 8) {
+        return HStack(alignment: .firstTextBaseline, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.title)
+                    .font(Station.label)
+                    .foregroundStyle(Station.color(.ink))
+                Text(Self.detail(agent.name))
+                    .font(Station.small)
+                    .foregroundStyle(Station.color(.ink2))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Self.lastEdit(agent.name))
+                    .font(Station.small)
+                    .foregroundStyle(Station.color(.ink2))
+            }
+            .frame(width: 230, alignment: .leading)
             Label {
                 Text(text).foregroundStyle(Station.color(agent.installed ? .ink : .ink2))
             } icon: {
                 Image(systemName: symbol).foregroundStyle(color)
             }
             .font(Station.label)
-            .frame(width: 110, alignment: .leading)
-            if agent.installed {
-                Button("Remove") { HookSetup.remove(agent.name) { _ in Task { await refresh() } } }
-                    .fixedSize()
-                    .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
-            } else if agent.file != nil {
-                Button("Set Up\u{2026}") { HookSetup.install(from: NSApp.keyWindow, agent: agent.name) { _ in Task { await refresh() } } }
-                    .fixedSize()
-            }
-            if let file = agent.file, FileManager.default.fileExists(atPath: file) {
-                Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
-                    .fixedSize()
-                    .help((file as NSString).abbreviatingWithTildeInPath)
+            .help(agent.needsTrust ? "Type /hooks in Codex to trust them." : "")
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                if agent.installed {
+                    Button("Remove") { HookSetup.remove(agent.name) { _ in Task { await refresh() } } }
+                        .fixedSize()
+                        .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
+                } else {
+                    Button("Set Up\u{2026}") { HookSetup.install(from: NSApp.keyWindow, agent: agent.name) { _ in Task { await refresh() } } }
+                        .fixedSize()
+                }
+                if let file = agent.file, FileManager.default.fileExists(atPath: file) {
+                    Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
+                        .fixedSize()
+                        .help((file as NSString).abbreviatingWithTildeInPath)
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+        .padding(.vertical, 6)
     }
 }

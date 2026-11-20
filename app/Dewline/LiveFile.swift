@@ -34,6 +34,8 @@ final class LiveFile {
         }
     }
     static let changesDidChange = Notification.Name("LiveFileChangesDidChange")
+    /// A revert left a change pending for text typed inside it; the note's stamp asks whether to revert over it.
+    static let revertRefused = Notification.Name("LiveFileRevertRefused")
     /// The file's snapshots, newest first, as last read off the main thread for the Snapshots menu.
     private(set) var snapshots: [ChangeEngine.Snapshot] = []
     /// Why the last autosave wrote nothing, until one writes.
@@ -595,10 +597,10 @@ final class LiveFile {
         guard let textView = document?.textView, let pending = changes[change] else { return }
         let current = (textView.string as NSString).substring(with: pending.range)
         let replacement = engine.decide(doc, change: change, decision: decision, current: current)
-        // A revert that would drop text typed inside the change leaves it pending, and its stamp says why.
+        // A revert that would drop text typed inside the change leaves it pending, and its stamp asks.
         if replacement == nil, decision == .other, !pending.conflict {
-            NSSound.beep()
             changes[change]?.refused = true
+            NotificationCenter.default.post(name: Self.revertRefused, object: self)
             return
         }
         changes[change] = nil

@@ -248,7 +248,6 @@ final class ChangeStamp: NSView {
     private var count = 0
     private var external = false
     private var shell = false
-    private var refused = false
     private(set) var folded = false
     /// Whether Keep and Revert show without the pointer on the stamp.
     var active = true {
@@ -282,9 +281,7 @@ final class ChangeStamp: NSView {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.handler = { [weak self] in
-            guard let self else { return }
-            if self.refused { return self.confirmRevert() }
+        self.revert.handler = {
             Self.decided = true
             revert()
         }
@@ -305,6 +302,7 @@ final class ChangeStamp: NSView {
         setAccessibilityRole(.group)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(revertRefused(_:)), name: LiveFile.revertRefused, object: nil)
     }
 
     required init?(coder: NSCoder) {
@@ -365,9 +363,6 @@ final class ChangeStamp: NSView {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
         if writer == self.writer, count < self.count { Self.decided = true }
-        let asks = refused && !self.refused
-        self.refused = refused
-        if asks { Task { [weak self] in self?.confirmRevert() } }
         self.writer = writer
         self.time = time
         self.count = count
@@ -385,10 +380,18 @@ final class ChangeStamp: NSView {
         if external && !shell { offerHooks() }
     }
 
+    /// Every Revert that finds your typing inside a change in this stamp's note asks, once however many stamps the note
+    /// shows, after the revert's other changes are decided.
+    @objc private func revertRefused(_ notification: Notification) {
+        guard let textView = superview as? EditorTextView, textView.marks.live === notification.object as? LiveFile else { return }
+        Task { [weak self] in self?.confirmRevert() }
+    }
+
     /// Revert found your typing inside the change: asks, showing what reverting does to its lines, then puts the old
     /// text back over it as one undoable edit.
     private func confirmRevert() {
-        guard let textView = superview as? EditorTextView, let window = textView.window, let live = textView.marks.live else { return }
+        guard let textView = superview as? EditorTextView, let window = textView.window, window.attachedSheet == nil,
+            let live = textView.marks.live else { return }
         let refused = live.changes.filter { $0.value.refused && $0.value.marked }.sorted { $0.value.range.location > $1.value.range.location }
         guard let first = refused.last?.value.range, let last = refused.first?.value.range else { return }
         let text = textView.string as NSString

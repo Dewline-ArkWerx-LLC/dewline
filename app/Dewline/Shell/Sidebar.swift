@@ -15,6 +15,8 @@ final class SidebarNode {
         case entry(FolderEntry)
         /// A pinned file or folder.
         case shortcut(FolderEntry)
+        /// A file git lists as deleted since the last commit, in the folder it was in.
+        case ghost(URL)
         case heading(Heading)
         /// The last row of a folder: what its .gitignore hides.
         case ignored([String])
@@ -35,6 +37,7 @@ final class SidebarNode {
         switch kind {
         case .root(let url): url
         case .entry(let entry), .shortcut(let entry): entry.url
+        case .ghost(let url): url
         default: nil
         }
     }
@@ -127,6 +130,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var waitingChanges: [String: [WaitingCount]] = [:]
     /// The file Quick Look shows.
     private var looking: URL?
+    /// The folders that held a deleted file when git last changed.
+    private var ghostFolders: Set<String> = []
 
     init(folder: Folder?) {
         self.folder = folder
@@ -173,6 +178,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outlineView.registerForDraggedTypes([.fileURL])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         outlineView.returnPressed = { [weak self] in self?.renameSelected() }
+        outlineView.openPressed = { [weak self] in self?.openSelected() }
         outlineView.clickedWithoutSelecting = { [weak self] node in
             switch node.kind {
             case .heading(let heading):
@@ -291,7 +297,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         filled = true
         tree = folder.map { folder in
             let listing = folder.children(of: folder.url, showingIgnored: showsIgnored)
-            let rows = listing.entries.map { SidebarNode(.entry($0)) }
+            let rows = listing.entries.map { SidebarNode(.entry($0)) } + ghosts(in: folder.url)
             return SidebarNode(.root(folder.url), children: rows + (listing.ignored.isEmpty ? [] : [SidebarNode(.ignored(listing.ignored))]))
         }
         libraryChanged()
@@ -496,7 +502,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 for child in children {
                     if case .entry(let entry) = child.kind { kept[entry.url] = child }
                 }
-                node.children = listing.entries.map { kept[$0.url] ?? SidebarNode(.entry($0)) }
+                node.children = listing.entries.map { kept[$0.url] ?? SidebarNode(.entry($0)) } + ghosts(in: url)
                     + (node === tree && !listing.ignored.isEmpty ? [SidebarNode(.ignored(listing.ignored))] : [])
                 outlineView.reloadItem(node === tree && !sectioned ? nil : node, reloadChildren: true)
             }
@@ -513,9 +519,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let children = node.children { return children }
         guard case .entry(let entry) = node.kind, entry.isFolder, let folder else { return [] }
         let listing = folder.children(of: entry.url, showingIgnored: showsIgnored)
-        let children = listing.entries.map { SidebarNode(.entry($0)) }
+        let children = listing.entries.map { SidebarNode(.entry($0)) } + ghosts(in: entry.url)
         node.children = children
         return children
+    }
+
+    /// The files git lists as deleted since the last commit that are gone from disk.
+    private var deleted: [URL] {
+        (index?.git.changed ?? []).filter { $0.state == .deleted && !FileManager.default.fileExists(atPath: $0.url.path) }
+            .map(\.url.standardizedFileURL)
+    }
+
+    /// Rows for the deleted files that were in `url`.
+    private func ghosts(in url: URL) -> [SidebarNode] {
+        let path = url.standardizedFileURL.path
+        return deleted.filter { $0.deletingLastPathComponent().path == path }.map { SidebarNode(.ghost($0)) }
     }
 
     @objc private func preferencesChanged() {
@@ -533,10 +551,22 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         reload()
     }
 
-    /// A click opens a note or code file in this tab and a Command-click in a new one; any other file opens in Quick Look.
+    /// A click opens a note or code file in this tab and a Command-click in a new one.
     @objc private func clicked(_ sender: Any?) {
         guard let node = outlineView.item(atRow: outlineView.clickedRow) as? SidebarNode else { return }
-        let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+        activate(node, newTab: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+    }
+
+    /// Command-Down Arrow opens the selected row: a folder expands, any other row acts as a click.
+    private func openSelected() {
+        guard let node = outlineView.item(atRow: outlineView.selectedRow) as? SidebarNode else { return }
+        if case .entry(let entry) = node.kind, entry.isFolder { return outlineView.expandItem(node) }
+        activate(node, newTab: false)
+    }
+
+    /// Opens a note or code file, opens or closes a folder, shows a deleted file's change in the Changes pane, and
+    /// opens any other file in Quick Look.
+    private func activate(_ node: SidebarNode, newTab: Bool) {
         switch node.kind {
         case .entry(let entry) where entry.isFolder:
             outlineView.isItemExpanded(node) ? outlineView.collapseItem(node) : outlineView.expandItem(node)
@@ -550,6 +580,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             } else {
                 open(entry.url, newTab)
             }
+        case .ghost:
+            reviewUncommitted(nil)
         default:
             break
         }
@@ -581,7 +613,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func refreshHeader() {
         guard let header, let folder else { return }
         let key = Self.openFolderItem.map { KeyEquivalent($0.keyEquivalent, $0.keyEquivalentModifierMask).glyphs } ?? ""
-        header.picker.show(FileManager.default.displayName(atPath: folder.url.path), branch: gitBranch(at: folder.url), openKey: key)
+        header.picker.show(FileManager.default.displayName(atPath: folder.url.path), branch: gitBranch(at: folder.url),
+            changed: index?.git.changed.count ?? 0, ahead: index?.git.ahead ?? 0, openKey: key)
     }
 
     /// The folder pop-up: Open Folder…, Open Recent, Copy Branch Name, Reveal in Finder.
@@ -677,8 +710,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         refreshRows()
     }
 
-    /// Shows git's words again, and scans again for the notes whose uncommitted changes wait.
+    /// Shows git's words, the deleted files' rows and the header's count again, and scans again for the notes whose
+    /// uncommitted changes wait.
     @objc private func gitChanged() {
+        let folders = Set(deleted.map { $0.deletingLastPathComponent().path })
+        let stale = folders.symmetricDifference(ghostFolders)
+        ghostFolders = folders
+        if !stale.isEmpty { foldersChanged(stale) }
+        refreshHeader()
         refreshRows()
         if filled, let folder { Self.scanClosed(folder.url, in: folder) }
     }
@@ -703,6 +742,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
                 waiting: waitingChanges[path] ?? [], git: nil)
+        case .ghost(let url):
+            cell.show(FolderEntry(url: url, isFolder: false), gone: true, expanded: false, waiting: [], git: .deleted)
         default:
             break
         }
@@ -741,19 +782,27 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             return
         }
         guard let url = node.url else { return }
+        func add(_ title: String, _ action: Selector, _ object: Any = url, mine: Bool = false) {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = mine ? self : nil
+            item.representedObject = object
+        }
+        if case .ghost = node.kind {
+            add("Review Uncommitted Changes", #selector(reviewUncommitted(_:)), mine: true)
+            add("Copy Relative Path", #selector(copyRelativePath(_:)), mine: true)
+            return
+        }
         let isFolder: Bool
         switch node.kind {
         case .root: isFolder = true
         case .entry(let entry), .shortcut(let entry): isFolder = entry.isFolder
         default: return
         }
-        func add(_ title: String, _ action: Selector, _ object: Any = url, mine: Bool = false) {
-            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
-            item.target = mine ? self : nil
-            item.representedObject = object
-        }
         if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) || CodeFile.opened(url) != nil {
             add("Open in New Tab", #selector(openInNewTab(_:)), mine: true)
+            if case .entry = node.kind, index?.git.state(of: url) != nil {
+                add("Review Uncommitted Changes", #selector(reviewUncommitted(_:)), mine: true)
+            }
         }
         let container = isFolder ? url : url.deletingLastPathComponent()
         add("New Note", FileCommand.newNote, container)
@@ -780,6 +829,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func openInNewTab(_ sender: NSMenuItem) {
         open(sender.representedObject as! URL, true)
+    }
+
+    /// Opens the row's note, unless it is gone from disk, and the Changes pane, which lists its uncommitted changes.
+    @objc private func reviewUncommitted(_ sender: NSMenuItem?) {
+        if let url = sender?.representedObject as? URL, FileManager.default.fileExists(atPath: url.path) { open(url, false) }
+        guard let controller = view.window?.windowController as? MainWindowController, !controller.showsChanges else { return }
+        controller.toggleChanges(nil)
     }
 
     @objc private func pin(_ sender: NSMenuItem) {
@@ -1005,6 +1061,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
         switch (item as! SidebarNode).kind {
         case .entry(let entry), .shortcut(let entry): entry.url.lastPathComponent
+        case .ghost(let url): url.lastPathComponent
         default: nil
         }
     }
@@ -1018,7 +1075,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
         switch (item as! SidebarNode).kind {
-        case .entry, .shortcut: true
+        case .entry, .shortcut, .ghost: true
         default: false
         }
     }
@@ -1034,7 +1091,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let cell = cell(SidebarCell.header)
             cell.show(title)
             return cell
-        case .entry, .shortcut:
+        case .entry, .shortcut, .ghost:
             let cell = outlineView.makeView(withIdentifier: SidebarFileCell.identifier, owner: nil) as? SidebarFileCell ?? SidebarFileCell()
             show(node, in: cell)
             return cell
@@ -1085,7 +1142,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
 /// Headings and Show All act on mouse down and never take the selection, which stays on the open file. Rows draw
 /// their own chevrons, so the system's disclosure triangles are gone. A top-level cell starts 8 pt in, each level
-/// 16 pt further, so names sit on the pane edge + 30. Return on a row renames it.
+/// 16 pt further, so names sit on the pane edge + 30. Return on a row renames it; Command-Down Arrow opens it.
 private final class SidebarOutlineView: NSOutlineView {
     /// The guide for the folder at `depth` runs under its chevron: x 14, then 16 pt a level.
     static func guideX(_ depth: Int) -> CGFloat {
@@ -1094,6 +1151,7 @@ private final class SidebarOutlineView: NSOutlineView {
 
     var clickedWithoutSelecting: (SidebarNode) -> Bool = { _ in false }
     var returnPressed: () -> Void = {}
+    var openPressed: () -> Void = {}
     /// Whether the top level is section rows, so the tree starts a level down.
     var sectioned = false
 
@@ -1111,6 +1169,10 @@ private final class SidebarOutlineView: NSOutlineView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
             returnPressed()
+            return
+        }
+        if event.keyCode == 125, event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command {
+            openPressed()
             return
         }
         super.keyDown(with: event)
@@ -1200,7 +1262,7 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
             return
         }
         if identifier == Self.heading {
-            textField?.font = current ? .systemFont(ofSize: 12, weight: .medium) : Chrome.small
+            textField?.font = current ? .systemFont(ofSize: Chrome.size(.callout), weight: .medium) : Chrome.small
         }
         textField?.textColor = Chrome.color(selected || current ? .ink : .ink2)
     }

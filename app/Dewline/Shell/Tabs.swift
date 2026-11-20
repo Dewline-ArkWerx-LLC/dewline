@@ -105,14 +105,18 @@ final class WindowState {
     var fullScreen = false
 }
 
-/// The tab strip in the title row: one 26 pt pill per tab, SF Pro 13, radius 6, at most 200 pt, its file name with the
-/// extension in `ink2`. The selected tab is the brightest pill; any tab under the pointer shows the close x 3 pt into
-/// it. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
-/// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
-/// and the selected tab always shows. Dragging a tab along the strip moves it. A tab whose note has changes waiting carries the sidebar's writer badge after its name: a 3 x 10
-/// rule in the ink of the writer with the most of them and the count of all of them, on that ink at 14%. Tabs whose notes share a name add the shortest parent path that tells them apart
-/// ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says what is waiting, when its
-/// note was saved and how many words it has; its context menu renames or moves the note, or copies its path.
+/// The tab strip in the title row: one 26 pt pill per tab, SF Pro body, radius 6, at most 200 pt, its file name with
+/// the extension in `ink2`. The selected tab is the brightest pill; a tab with unsaved edits shows a dot 3 pt into it,
+/// which turns into the close x under the pointer. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at
+/// 10%, hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N"
+/// pop-up, and the selected tab always shows. Dragging a tab along the strip moves it, its neighbors sliding aside as it
+/// passes; dragging it out of the strip drags its file. Command-click shows the note's path. A tab whose note has
+/// changes waiting carries the sidebar's writer badge after its name: a 3 x 10 rule in the ink of the writer with the
+/// most of them and the count of all of them, on that ink at 14%. Tabs whose notes share a name add the shortest parent
+/// path that tells them apart ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says
+/// what is waiting, when its note was saved, how many words it has and its Option-Command key; its context menu renames
+/// or moves the note, or copies its path. Under Full Keyboard Access the strip takes the focus: the arrow keys move the
+/// system's focus ring between tabs and Space or Return selects one.
 final class TabStrip: NSView {
     private static let height: CGFloat = 26
     private static let padding: CGFloat = 16
@@ -139,6 +143,11 @@ final class TabStrip: NSView {
     private var more: NSRect?
     private var hovered: MainWindowController?
     private var dragging: (tab: MainWindowController, offset: CGFloat)?
+    /// How far each other tab has slid aside for the dragged one, and how far it is going.
+    private var shifts: [ObjectIdentifier: (now: CGFloat, target: CGFloat)] = [:]
+    private var slide: Timer?
+    /// The tab the keyboard is on.
+    private var focused: MainWindowController?
 
     /// The opacity of everything but the selected tab; at 0 those tabs and "+N" take no clicks and leave VoiceOver.
     @objc dynamic var othersAlpha: CGFloat = 1 {
@@ -237,9 +246,9 @@ final class TabStrip: NSView {
         11 + ceil(("\(waiting.count ?? 0)" as NSString).size(withAttributes: [.font: badgeFont]).width) + 5
     }
 
-    /// Room after the name for the writer badge and the edited dot.
+    /// Room after the name for the writer badge.
     private static func trailing(_ tab: MainWindowController) -> CGFloat {
-        (waiting(tab).map { badgeWidth($0) + 6 } ?? 0) + (edited(tab) ? 8 : 0)
+        waiting(tab).map { badgeWidth($0) + 6 } ?? 0
     }
 
     private static func width(_ tab: MainWindowController, _ title: String) -> CGFloat {
@@ -302,10 +311,11 @@ final class TabStrip: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let selected = tabs?.selected
-        for (index, slot) in slots.enumerated() where slot.tab !== dragging?.tab {
+        for (index, var slot) in slots.enumerated() where slot.tab !== dragging?.tab {
             context.setAlpha(slot.tab === selected ? 1 : othersAlpha)
+            slot.frame.origin.x += shifts[ObjectIdentifier(slot.tab)]?.now ?? 0
             draw(slot, selected: slot.tab === selected)
-            guard index + 1 < slots.count else { continue }
+            guard index + 1 < slots.count, dragging == nil else { continue }
             let next = slots[index + 1].tab
             let quiet = [slot.tab, next].allSatisfy { $0 !== selected && $0 !== hovered && $0 !== dragging?.tab }
             if quiet {
@@ -343,26 +353,22 @@ final class TabStrip: NSView {
             Chrome.hover.setFill()
             pill.fill()
         }
+        let box = Self.close.offsetBy(dx: frame.minX, dy: frame.minY)
         if hovering {
-            let box = Self.close.offsetBy(dx: frame.minX, dy: frame.minY)
             faint.setFill()
             NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
-            Chrome.color(.ink).setStroke()
-            let cross = NSBezierPath()
-            cross.lineWidth = 1.2
-            cross.lineCapStyle = .round
-            let glyph = box.insetBy(dx: 3.5, dy: 3.5)
-            cross.move(to: NSPoint(x: glyph.minX, y: glyph.minY))
-            cross.line(to: NSPoint(x: glyph.maxX, y: glyph.maxY))
-            cross.move(to: NSPoint(x: glyph.minX, y: glyph.maxY))
-            cross.line(to: NSPoint(x: glyph.maxX, y: glyph.minY))
-            cross.stroke()
+            if let cross = Chrome.symbol("xmark", Chrome.color(.ink)) {
+                let size = cross.size
+                cross.draw(in: NSRect(x: box.midX - size.width / 2, y: box.midY - size.height / 2, width: size.width, height: size.height))
+            }
+        } else if Self.edited(slot.tab) {
+            Chrome.color(.ink2).setFill()
+            NSBezierPath(ovalIn: NSRect(x: box.midX - 3, y: box.midY - 3, width: 6, height: 6)).fill()
         }
         let name = NSMutableAttributedString(attributedString: Self.name(slot.tab, slot.title))
         if !selected, !hovering {
             name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: name.length))
         }
-        let edited = Self.edited(slot.tab)
         let height = ceil(name.size().height)
         let room = frame.width - Self.padding * 2 - Self.trailing(slot.tab)
         name.draw(
@@ -377,10 +383,6 @@ final class TabStrip: NSView {
             NSBezierPath(roundedRect: NSRect(x: badge.minX + 4, y: badge.midY - 5, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
             let count = NSAttributedString(string: "\(waiting.count ?? 0)", attributes: [.font: Self.badgeFont, .foregroundColor: Chrome.color(.ink)])
             count.draw(at: NSPoint(x: badge.minX + 11, y: badge.midY - count.size().height / 2))
-        }
-        if edited {
-            Chrome.color(.ink2).setFill()
-            NSBezierPath(ovalIn: NSRect(x: frame.maxX - Self.padding - 4, y: frame.midY - 3, width: 6, height: 6)).fill()
         }
     }
 
@@ -419,7 +421,8 @@ final class TabStrip: NSView {
         needsDisplay = true
     }
 
-    /// A click selects or closes a tab, or opens "+N"; a drag of more than 3 pt moves the tab along the strip.
+    /// A click selects or closes a tab, or opens "+N", and a Command-click shows the note's path; a drag of more than
+    /// 3 pt moves the tab along the strip, and out of it drags the note's file.
     override func mouseDown(with event: NSEvent) {
         let start = convert(event.locationInWindow, from: nil)
         if let more, more.contains(start), othersAlpha > 0 { return showMore() }
@@ -429,23 +432,135 @@ final class TabStrip: NSView {
         if Self.close.insetBy(dx: -2, dy: -2).offsetBy(dx: slot.frame.minX, dy: slot.frame.minY).contains(start) {
             return close(slot.tab)
         }
+        let url = (slot.tab.document as? NSDocument)?.fileURL
+        if event.modifierFlags.contains(.command), let url { return showPath(url, under: slot.frame) }
         var moved = false
+        defer {
+            dragging = nil
+            endSlide()
+        }
         while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            let offset = convert(next.locationInWindow, from: nil).x - start.x
+            let point = convert(next.locationInWindow, from: nil)
+            let offset = point.x - start.x
             if next.type == .leftMouseUp { break }
+            if let url, point.y < -12 || point.y > bounds.maxY + 12 {
+                return export(url, from: next)
+            }
             moved = moved || abs(offset) > 3
             guard moved else { continue }
             let low = -slot.frame.minX
             let high = (frames.last?.frame.maxX ?? 0) - slot.frame.maxX
             dragging = (slot.tab, min(max(offset, low), high))
+            slideNeighbors(frames, around: slot, to: position(of: slot, in: frames))
             needsDisplay = true
         }
-        guard moved, let dragging else { return slot.tab.showWindow(nil) }
-        self.dragging = nil
-        let middle = slot.frame.midX + dragging.offset
+        guard moved, dragging != nil else { return slot.tab.showWindow(nil) }
         let others = frames.filter { $0.tab !== slot.tab }
-        let before = others.count { $0.frame.midX < middle }
+        let before = position(of: slot, in: frames)
         tabs?.move(slot.tab, after: before == 0 ? nil : others[before - 1].tab)
+    }
+
+    /// How many of the other tabs sit before the dragged one's middle.
+    private func position(of slot: Slot, in frames: [Slot]) -> Int {
+        let middle = slot.frame.midX + (dragging?.offset ?? 0)
+        return frames.filter { $0.tab !== slot.tab }.count { $0.frame.midX < middle }
+    }
+
+    /// Slides the tabs between the dragged one's place and `position` among the others aside by its width, over 0.2 s,
+    /// at once under Reduce Motion.
+    private func slideNeighbors(_ frames: [Slot], around slot: Slot, to position: Int) {
+        let from = frames.firstIndex { $0.tab === slot.tab } ?? 0
+        let width = slot.frame.width + Self.gap
+        for (index, other) in frames.filter({ $0.tab !== slot.tab }).enumerated() {
+            let target: CGFloat = index >= from && index < position ? -width : index < from && index >= position ? width : 0
+            let id = ObjectIdentifier(other.tab)
+            shifts[id] = (shifts[id]?.now ?? 0, target)
+        }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            shifts = shifts.mapValues { ($0.target, $0.target) }
+            return
+        }
+        guard slide == nil else { return }
+        let step = width / 0.2 / 60
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.shifts = self.shifts.mapValues { shift in
+                    let gap = shift.target - shift.now
+                    return (abs(gap) <= step ? shift.target : shift.now + (gap > 0 ? step : -step), shift.target)
+                }
+                self.needsDisplay = true
+            }
+        }
+        RunLoop.current.add(timer, forMode: .common)
+        slide = timer
+    }
+
+    private func endSlide() {
+        slide?.invalidate()
+        slide = nil
+        shifts = [:]
+        needsDisplay = true
+    }
+
+    /// Drags the note's file out of the strip, as its icon.
+    private func export(_ url: URL, from event: NSEvent) {
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let point = convert(event.locationInWindow, from: nil)
+        item.setDraggingFrame(NSRect(x: point.x - 16, y: point.y - 16, width: 32, height: 32), contents: NSWorkspace.shared.icon(forFile: url.path))
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    /// The note and each folder above it, as the title bar's path menu lists them; choosing one shows it in Finder.
+    private func showPath(_ url: URL, under frame: NSRect) {
+        let menu = NSMenu()
+        var each = url
+        while true {
+            let item = menu.addItem(withTitle: FileManager.default.displayName(atPath: each.path), action: #selector(revealPath(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = each
+            let icon = NSWorkspace.shared.icon(forFile: each.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            guard each.pathComponents.count > 1 else { break }
+            each = each.deletingLastPathComponent()
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.maxY + 4), in: self)
+    }
+
+    @objc private func revealPath(_ sender: NSMenuItem) {
+        NSWorkspace.shared.activateFileViewerSelecting([sender.representedObject as! URL])
+    }
+
+    // MARK: Keyboard
+
+    override var acceptsFirstResponder: Bool { takesKeyboardFocus && !slots.isEmpty }
+
+    override func becomeFirstResponder() -> Bool {
+        focused = tabs?.selected
+        noteFocusRingMaskChanged()
+        return true
+    }
+
+    private var focusedFrame: NSRect? {
+        slots.first { $0.tab === focused }?.frame
+    }
+
+    override var focusRingMaskBounds: NSRect { focusedFrame ?? .zero }
+
+    override func drawFocusRingMask() {
+        guard let frame = focusedFrame else { return }
+        NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6).fill()
+    }
+
+    /// Left and Right Arrow move between the shown tabs; Space or Return selects the one the keyboard is on.
+    override func keyDown(with event: NSEvent) {
+        let shown = slots.filter { othersAlpha > 0 || $0.tab === tabs?.selected }.map(\.tab)
+        let index = shown.firstIndex { $0 === focused }
+        if pressesOnKey(event), let focused { return focused.showWindow(nil) }
+        guard let index, [123, 124].contains(event.keyCode) else { return super.keyDown(with: event) }
+        focused = shown[min(max(index + (event.keyCode == 123 ? -1 : 1), 0), shown.count - 1)]
+        noteFocusRingMaskChanged()
     }
 
     private func close(_ tab: MainWindowController) {
@@ -507,7 +622,15 @@ extension TabStrip: NSViewToolTipOwner {
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         guard let tab = slot(at: point)?.tab, othersAlpha > 0 || tab === tabs?.selected else { return "" }
         let title = slots.first { $0.tab === tab }?.title ?? tab.tabFileName
-        return ([title, Self.waiting(tab)?.tip, tab.savedState, tab.wordCount] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        let key = (tabs?.tabs.firstIndex { $0 === tab }).flatMap { $0 < 9 ? "Show with \u{2325}\u{2318}\($0 + 1)" : nil }
+        return ([title, Self.waiting(tab)?.tip, tab.savedState, tab.wordCount, key] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+}
+
+extension TabStrip: NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy
     }
 }
 

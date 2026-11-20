@@ -4,6 +4,14 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- A file deleted since the last commit stays in the sidebar as a struck-through row; clicking it opens the Changes pane.
+- The sidebar's folder header shows how many files changed since the last commit and how many commits the branch is ahead of its upstream ("main ↑2 · 7 changed"); Activity carries the same line while the sidebar is collapsed. Changed files' context menus add Review Uncommitted Changes.
+- Filled chrome buttons use the theme accent with paper text.
+- Under Full Keyboard Access, chrome buttons, the folder pop-up and the tab strip take the focus with the system's focus ring and act on Space or Return; the arrow keys move between tabs. A list that has the keyboard shows its selection as a solid accent pill.
+- Find in Files results use the theme's inks.
+- Dragging a tab slides its neighbors aside as it passes; dragging it out of the strip drags the note's file. The unsaved dot sits where the close button appears on hover, Command-click on a tab shows the note's path, and the tab's tooltip names its Option-Command key.
+- Chrome type follows the macOS text styles; chevrons and the tab close button are SF Symbols. Activity and the sidebar's … menu open on mouse down, and Activity dims instead of hiding while you type. Command-Down Arrow opens the selected sidebar row.
+
 - Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
 - Images on a dark page draw at 90% brightness inside their faint rim.
 - Display math is centered in the column.

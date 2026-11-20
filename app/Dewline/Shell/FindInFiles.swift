@@ -590,7 +590,8 @@ private final class ResultsOutlineView: NSOutlineView {
     }
 }
 
-/// A file's row: its name, the folder it is in and how many matches it holds.
+/// A file's row: its name in `ink`, the folder it is in and how many matches it holds in `ink2`, the symbol in `ink3`;
+/// `paper` on the focused list's selection.
 private final class FileResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchFile")
 
@@ -602,16 +603,14 @@ private final class FileResultCell: NSTableCellView {
         identifier = Self.identifier
         let icon = NSImageView(image: NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)!)
         icon.symbolConfiguration = .init(pointSize: 13, weight: .regular)
-        icon.contentTintColor = .secondaryLabelColor
         let name = NSTextField(labelWithString: "")
+        name.font = Chrome.label
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
-        folder.font = .systemFont(ofSize: 11)
-        folder.textColor = .secondaryLabelColor
+        folder.font = .systemFont(ofSize: Chrome.size(.subheadline))
         folder.lineBreakMode = .byTruncatingHead
         folder.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        count.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        count.textColor = .tertiaryLabelColor
+        count.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
         count.setContentHuggingPriority(.required, for: .horizontal)
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
         imageView = icon
@@ -632,10 +631,23 @@ private final class FileResultCell: NSTableCellView {
             count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             count.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
         ])
+        NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: nil)
+        paint()
     }
 
     required init?(coder: NSCoder) {
         fatalError("FileResultCell is built in code")
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { paint() }
+    }
+
+    @objc private func paint() {
+        let onAccent = backgroundStyle == .emphasized
+        imageView?.contentTintColor = Chrome.color(onAccent ? .paper : .ink3)
+        textField?.textColor = Chrome.color(onAccent ? .paper : .ink)
+        for label in [folder, count] { label.textColor = Chrome.color(onAccent ? .paper : .ink2) }
     }
 
     func show(_ name: String, in path: String, count matches: Int) {
@@ -647,8 +659,9 @@ private final class FileResultCell: NSTableCellView {
     }
 }
 
-/// A match's row: its line number, then the line with the match on the theme's find highlight. The line is not the
-/// cell's `textField`, which a source list restyles, dropping the highlight.
+/// A match's row: its line number in `ink2`, then the line in `ink` with the match on the theme's find highlight, all
+/// `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
+/// dropping the highlight.
 private final class LineResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchLine")
 
@@ -659,8 +672,7 @@ private final class LineResultCell: NSTableCellView {
     init() {
         super.init(frame: .zero)
         identifier = Self.identifier
-        number.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        number.textColor = .tertiaryLabelColor
+        number.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
         number.alignment = .right
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for view in [number, line] {
@@ -675,6 +687,7 @@ private final class LineResultCell: NSTableCellView {
             line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        NotificationCenter.default.addObserver(self, selector: #selector(render), name: ThemeStore.didChange, object: nil)
     }
 
     required init?(coder: NSCoder) {
@@ -692,16 +705,17 @@ private final class LineResultCell: NSTableCellView {
         setAccessibilityLabel("Line \(match.line): \(match.preview)")
     }
 
-    /// On a selected row the line takes the selection's text color and the match a lighter wash of it.
-    private func render() {
+    /// On the focused list's selection the line is `paper` and the match a lighter wash of it.
+    @objc private func render() {
         guard let match else { return }
         let selected = backgroundStyle == .emphasized
+        number.textColor = Chrome.color(selected ? .paper : .ink2)
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
-        let ink = selected ? NSColor.alternateSelectedControlTextColor : .labelColor
+        let ink = Chrome.color(selected ? .paper : .ink)
         let (preview, range) = Self.centered(match.preview, on: match.previewRange)
         let text = NSMutableAttributedString(string: preview, attributes: [
-            .font: NSFont.systemFont(ofSize: 12), .foregroundColor: ink, .paragraphStyle: style,
+            .font: Chrome.small, .foregroundColor: ink, .paragraphStyle: style,
         ])
         text.addAttributes([
             .backgroundColor: selected ? ink.withAlphaComponent(0.25) : Self.findMatch,

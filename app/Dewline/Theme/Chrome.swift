@@ -1,7 +1,7 @@
 import AppKit
 
-/// The chrome's faces: SF Pro for every label Dewline draws (11 in the status bar, 13 in the sidebar, tabs and panels,
-/// 15 semibold for empty-state titles), and SF Mono for branch names, counts, badges and keycaps.
+/// The chrome's faces: SF Pro at the macOS text styles' sizes for every label Dewline draws (subheadline in the status
+/// bar, body in the sidebar, tabs and panels), and SF Mono for branch names, counts, badges and keycaps.
 @MainActor
 enum Chrome {
     /// Section labels' tracking.
@@ -18,20 +18,31 @@ enum Chrome {
         .monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    /// Sidebar rows, tabs, panels and Settings rows: 13 regular.
-    static var label: NSFont { .systemFont(ofSize: 13) }
-    /// The selected tab and other emphasis in a row: 13 medium.
-    static var labelActive: NSFont { .systemFont(ofSize: 13, weight: .medium) }
-    /// The folder's name over its tree: 13 semibold.
-    static var labelStrong: NSFont { .systemFont(ofSize: 13, weight: .semibold) }
-    /// Section labels in the palette and Settings: 11 medium.
-    static var section: NSFont { .systemFont(ofSize: 11, weight: .medium) }
-    /// Outline headings and secondary rows: 12 regular.
-    static var small: NSFont { .systemFont(ofSize: 12) }
-    /// The status bar: 11 regular, with tabular digits.
-    static var status: NSFont { .monospacedDigitSystemFont(ofSize: 11, weight: .regular) }
-    /// The palette input: 18 regular.
-    static var title: NSFont { .systemFont(ofSize: 18) }
+    /// The size of a macOS text style.
+    static func size(_ style: NSFont.TextStyle) -> CGFloat {
+        NSFont.preferredFont(forTextStyle: style).pointSize
+    }
+
+    /// Sidebar rows, tabs, panels and Settings rows: body.
+    static var label: NSFont { .systemFont(ofSize: size(.body)) }
+    /// The selected tab and other emphasis in a row: body medium.
+    static var labelActive: NSFont { .systemFont(ofSize: size(.body), weight: .medium) }
+    /// The folder's name over its tree: body semibold.
+    static var labelStrong: NSFont { .systemFont(ofSize: size(.body), weight: .semibold) }
+    /// Section labels in the palette and Settings: subheadline medium.
+    static var section: NSFont { .systemFont(ofSize: size(.subheadline), weight: .medium) }
+    /// Outline headings and secondary rows: callout.
+    static var small: NSFont { .systemFont(ofSize: size(.callout)) }
+    /// The status bar: subheadline, with tabular digits.
+    static var status: NSFont { .monospacedDigitSystemFont(ofSize: size(.subheadline), weight: .regular) }
+    /// The palette input: title 2.
+    static var title: NSFont { .systemFont(ofSize: size(.title2)) }
+
+    /// An SF Symbol at the label's size, small scale, in `color`.
+    static func symbol(_ name: String, _ color: NSColor) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(textStyle: .body, scale: .small).applying(.init(paletteColors: [color])))
+    }
 
     /// Section label text with its tracking.
     static func sectionTitle(_ text: String, color: NSColor) -> NSAttributedString {
@@ -56,11 +67,6 @@ enum Chrome {
         return NSColor(name: nil) { ink.resolved(for: $0).withAlphaComponent($0.isDark ? 0.07 : 0.08) }
     }
 
-    /// Nothing glows any more; the horizon reads this until it goes.
-    static func glowOpacity(dark: Bool) -> Float {
-        0
-    }
-
     /// Ink at 8%, 25% under Increase Contrast: the selected row in a window that isn't key.
     static var inactiveSelection: NSColor {
         let ink = color(.ink)
@@ -71,65 +77,6 @@ enum Chrome {
     static var strokeSubtle: NSColor {
         let (ink, ink2) = (color(.ink), color(.ink2))
         return NSColor(name: nil) { $0.isDark ? ink2.resolved(for: $0).withAlphaComponent(0.10) : ink.resolved(for: $0).withAlphaComponent(0.08) }
-    }
-}
-
-/// Dewline's own 1.5 pt line glyphs, in place of SF Symbols, as template images that take their view's tint.
-@MainActor
-enum Glyph {
-    case sidebar, back, forward, up, down, share, close, disclosure, disclosed
-
-    private static var cache: [String: NSImage] = [:]
-
-    var image: NSImage {
-        let key = "\(self)"
-        if let image = Self.cache[key] { return image }
-        let side: CGFloat = switch self {
-        case .disclosure, .disclosed, .up, .down: 12
-        default: 16
-        }
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { _ in
-            let path = NSBezierPath()
-            path.lineWidth = 1.5
-            path.lineCapStyle = .round
-            path.lineJoinStyle = .round
-            func line(_ points: [(CGFloat, CGFloat)]) {
-                path.move(to: NSPoint(x: points[0].0, y: points[0].1))
-                for point in points.dropFirst() { path.line(to: NSPoint(x: point.0, y: point.1)) }
-            }
-            switch self {
-            case .sidebar:
-                line([(2.75, 2.75), (2.75, 13.25)])
-                line([(6.25, 4.25), (13.25, 4.25)])
-                line([(6.25, 8), (11.25, 8)])
-                line([(6.25, 11.75), (12.25, 11.75)])
-            case .back:
-                line([(10, 3.5), (5.5, 8), (10, 12.5)])
-            case .forward:
-                line([(6, 3.5), (10.5, 8), (6, 12.5)])
-            case .up:
-                line([(3, 7.5), (6, 4.5), (9, 7.5)])
-            case .down:
-                line([(3, 4.5), (6, 7.5), (9, 4.5)])
-            case .share:
-                line([(4.5, 11), (11.5, 4)])
-                line([(6.5, 4), (11.5, 4), (11.5, 9)])
-                line([(2.75, 13.75), (13.25, 13.75)])
-            case .close:
-                line([(4.5, 4.5), (11.5, 11.5)])
-                line([(11.5, 4.5), (4.5, 11.5)])
-            case .disclosure:
-                line([(4.5, 2.75), (7.75, 6), (4.5, 9.25)])
-            case .disclosed:
-                line([(2.75, 4.5), (6, 7.75), (9.25, 4.5)])
-            }
-            NSColor.black.setStroke()
-            path.stroke()
-            return true
-        }
-        image.isTemplate = true
-        Self.cache[key] = image
-        return image
     }
 }
 
@@ -184,8 +131,9 @@ enum Keycap {
     }
 }
 
-/// A chrome button drawn by Dewline: a text button in `ink2` (`ink` under the pointer), or, filled, `ink` with the
-/// island's color for its text, 6 pt radius, 28 pt tall. Signal never fills it. Keycaps follow the title.
+/// A chrome button drawn by Dewline: a text button in `ink2` (`ink` under the pointer), or, filled, the accent with
+/// `paper` for its text, 6 pt radius, 28 pt tall. Keycaps follow the title. Under Full Keyboard Access it takes the
+/// focus, with the system's ring, and Space or Return presses it.
 final class ChromeButton: NSControl {
     enum Style {
         case text, filled
@@ -233,7 +181,7 @@ final class ChromeButton: NSControl {
     override func draw(_ dirtyRect: NSRect) {
         let filled = style == .filled
         if filled {
-            Chrome.color(.ink).withAlphaComponent(pressed ? 0.82 : 1).setFill()
+            Chrome.color(.accent).withAlphaComponent(pressed ? 0.82 : 1).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         let color: NSColor = filled ? Chrome.color(.paper) : Chrome.color(hovering || pressed ? .ink : .ink2)
@@ -244,12 +192,19 @@ final class ChromeButton: NSControl {
         if !keys.isEmpty {
             Keycap.draw(keys, x: x + ceil(size.width) + 8, midY: bounds.midY, onFill: filled, alpha: isEnabled ? 1 : 0.6)
         }
-        if window?.firstResponder === self {
-            Chrome.color(.accent).setStroke()
-            let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6)
-            ring.lineWidth = 1.5
-            ring.stroke()
-        }
+    }
+
+    override var acceptsFirstResponder: Bool { isEnabled && takesKeyboardFocus }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isEnabled, pressesOnKey(event) else { return super.keyDown(with: event) }
+        handler()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -345,9 +300,10 @@ final class DewMark: NSView {
     }
 }
 
-/// A selected row: the accent at 15% in a 6 pt radius pill while its window is key, ink at 8% when it isn't. No
-/// hover, no system highlight. Cells that conform to `ChromeSelectable` hear about selection. Keyboard focus in the
-/// list changes nothing: the selection marks what is open, so `isEmphasized` only prompts a redraw.
+/// A selected row: a 6 pt radius pill 6 pt in from each side. While the list has the keyboard in the key window it is
+/// the solid accent and its cells, their background style `.emphasized`, draw in `paper`; otherwise the accent at 15%
+/// while the window is key, ink at 8% when it isn't. No hover, no system highlight. Cells that conform to
+/// `ChromeSelectable` hear about selection.
 class StationRowView: NSTableRowView {
     /// Where the selection draws.
     var pill: NSRect { bounds.insetBy(dx: 6, dy: 0) }
@@ -365,8 +321,7 @@ class StationRowView: NSTableRowView {
     }
 
     override var isEmphasized: Bool {
-        get { false }
-        set { if isSelected { needsDisplay = true } }
+        didSet { if isSelected { needsDisplay = true } }
     }
 
     override func viewDidMoveToWindow() {
@@ -384,7 +339,7 @@ class StationRowView: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {}
 
     override func drawSelection(in dirtyRect: NSRect) {
-        (isWindowActive ? Chrome.wash : Chrome.inactiveSelection).setFill()
+        (!isWindowActive ? Chrome.inactiveSelection : isEmphasized ? Chrome.color(.accent) : Chrome.wash).setFill()
         NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
     }
 
@@ -398,4 +353,15 @@ class StationRowView: NSTableRowView {
 @MainActor
 protocol ChromeSelectable: AnyObject {
     var selected: Bool { get set }
+}
+
+/// Whether a control Dewline draws takes the focus: under Full Keyboard Access, and not from a click, which leaves the
+/// focus where it was.
+@MainActor var takesKeyboardFocus: Bool {
+    NSApp.isFullKeyboardAccessEnabled && NSApp.currentEvent?.type != .leftMouseDown
+}
+
+/// Space, Return or Enter with no modifier: the keys that press a focused control.
+func pressesOnKey(_ event: NSEvent) -> Bool {
+    event.modifierFlags.intersection([.command, .control, .option]).isEmpty && [49, 36, 76].contains(event.keyCode)
 }

@@ -56,7 +56,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     }
 
     private static let width: CGFloat = 600
-    /// The input row, the horizon under it and the list's padding above and below.
+    /// The input row, the rule under it and the list's padding above and below.
     private static let chromeHeight: CGFloat = 56 + 1 + 6 + 6
     /// Nine rows show; a longer list scrolls.
     private static let listMax: CGFloat = 9 * 32 + 8
@@ -77,7 +77,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private let field = NSTextField()
     private let mark = DewMark()
     private let chip = ScopeChip()
-    private let horizon = PaletteHorizon()
+    private let rule = PaletteRule()
     private let table = QuickOpenTable()
     private let fade = TopFade()
     private let empty = NSTextField(labelWithString: "")
@@ -179,7 +179,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         empty.font = Chrome.label
         empty.alignment = .center
         fade.isHidden = true
-        for view in [input, horizon, scroll, fade, empty] as [NSView] {
+        for view in [input, rule, scroll, fade, empty] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -189,10 +189,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             input.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             input.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             input.centerYAnchor.constraint(equalTo: root.topAnchor, constant: 28),
-            horizon.centerYAnchor.constraint(equalTo: root.topAnchor, constant: 56.5),
-            horizon.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            horizon.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            horizon.heightAnchor.constraint(equalToConstant: 10),
+            rule.centerYAnchor.constraint(equalTo: root.topAnchor, constant: 56.5),
+            rule.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 10),
             scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 57 + 6),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
@@ -294,7 +294,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     /// The theme's colors on the panel's own views; rows take them as they draw.
     private func recolor() {
         let theme = ThemeStore.shared
-        for view in [background, horizon, chip, fade, mark] as [NSView] {
+        for view in [background, rule, chip, fade, mark] as [NSView] {
             view.needsDisplay = true
         }
         field.textColor = theme.color(.ink)
@@ -450,15 +450,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         chip.title = word ?? ""
         chip.isHidden = word == nil
         placeholder(text)
-        updateHorizon()
-    }
-
-    /// The lit stretch of the horizon runs from the panel's left edge to the end of the typed text.
-    private func updateHorizon() {
-        background.layoutSubtreeIfNeeded()
-        let typed = ceil((field.stringValue as NSString).size(withAttributes: [.font: Chrome.title]).width)
-        let start = field.convert(NSPoint.zero, to: background).x + 2
-        horizon.lit = min(start + typed, background.bounds.width - 24)
     }
 
     /// With nothing typed: files with an agent's changes (three at most), then recents, then pins.
@@ -1000,7 +991,7 @@ private final class QuickOpenTable: NSTableView {
 }
 
 /// A result row on one line, drawn: a 16 pt leading slot (a writer's dot, a note's symbol, a mono tag or the current
-/// value's bead), left out on rows that never fill it, the title in Bricolage with its matched letters in semibold, an
+/// value's bead), left out on rows that never fill it, the title with its matched letters in semibold, an
 /// optional mono subtitle after it, and at the right a value or keycaps. On the selected row the keyboard hints in mono take the value's place.
 private final class PaletteCell: NSView, ChromeSelectable {
     static let identifier = NSUserInterfaceItemIdentifier("palette")
@@ -1135,17 +1126,10 @@ private final class PaletteCell: NSView, ChromeSelectable {
             color.setFill()
             NSBezierPath(ovalIn: dot).fill()
         case .bead:
-            NSGraphicsContext.saveGraphicsState()
-            let glow = NSShadow()
-            glow.shadowColor = Chrome.color(.glow).withAlphaComponent(CGFloat(Chrome.glowOpacity(dark: effectiveAppearance.isDark)))
-            glow.shadowBlurRadius = 4
-            glow.shadowOffset = .zero
-            glow.set()
             Chrome.color(.signal).setFill()
             NSBezierPath(ovalIn: dot).fill()
-            NSGraphicsContext.restoreGraphicsState()
         case .tag(let tag):
-            let string = NSAttributedString(string: tag, attributes: [.font: Chrome.mono(10.5), .foregroundColor: Chrome.color(.ink3)])
+            let string = NSAttributedString(string: tag, attributes: [.font: Chrome.mono(Chrome.size(.footnote)), .foregroundColor: Chrome.color(.ink3)])
             let size = string.size()
             string.draw(at: NSPoint(x: 24 - size.width / 2, y: midY - size.height / 2))
         }
@@ -1196,7 +1180,7 @@ private final class PaletteCell: NSView, ChromeSelectable {
     }
 }
 
-/// A group header: Bricolage 11.5 / 600 in sentence case, `ink3`, sitting on the bottom of its 30 pt row.
+/// A group header: the section label in sentence case, `ink3`, sitting on the bottom of its 30 pt row.
 private final class PaletteHeader: NSView {
     static let identifier = NSUserInterfaceItemIdentifier("paletteHeader")
 
@@ -1375,64 +1359,11 @@ private final class PanelBackground: NSView {
     }
 }
 
-/// The horizon under the input, the editor's line in small: a `hairline` across the panel, lit in signal with its glow
-/// from the left edge to `lit`, where a bead sits, then fading out over 24 pt.
-private final class PaletteHorizon: NSView {
-    var lit: CGFloat = 0 {
-        didSet {
-            if lit != oldValue { needsDisplay = true }
-        }
-    }
-
-    private let rule = CALayer()
-    private let glowing = CAGradientLayer()
-    private let bead = CALayer()
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        // Only the rule draws; the lit stretch and its bead are gone.
-        layer?.addSublayer(rule)
-        glowing.startPoint = CGPoint(x: 0, y: 0.5)
-        glowing.endPoint = CGPoint(x: 1, y: 0.5)
-        glowing.shadowOffset = .zero
-        glowing.shadowRadius = 3
-        bead.cornerRadius = 4.5
-        bead.borderWidth = 1.5
-        setAccessibilityElement(false)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("PaletteHorizon is built in code")
-    }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func layout() {
-        super.layout()
-        needsDisplay = true
-    }
-
-    override func updateLayer() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        let appearance = effectiveAppearance
-        let signal = Chrome.color(.signal).resolved(for: appearance)
-        let mid = bounds.midY
-        let lit = min(max(lit, 0), bounds.width)
-        let end = min(lit + 24, bounds.width)
-        rule.frame = NSRect(x: 0, y: mid - 0.5, width: bounds.width, height: 1)
-        rule.backgroundColor = Chrome.color(.hairline).resolved(for: appearance).cgColor
-        glowing.frame = NSRect(x: 0, y: mid - 1, width: end, height: 2)
-        glowing.colors = [signal.cgColor, signal.cgColor, signal.withAlphaComponent(0).cgColor]
-        glowing.locations = [0, NSNumber(value: Double(end > 0 ? lit / end : 0)), 1]
-        glowing.shadowColor = Chrome.color(.glow).resolved(for: appearance).cgColor
-        glowing.shadowOpacity = Chrome.glowOpacity(dark: appearance.isDark)
-        // A 6 pt bead in a 1.5 pt ring of the panel's color, so it reads as sitting on the line.
-        bead.frame = NSRect(x: lit - 4.5, y: mid - 4.5, width: 9, height: 9)
-        bead.backgroundColor = signal.cgColor
-        bead.borderColor = Chrome.color(.raised).resolved(for: appearance).cgColor
+/// The `hairline` across the panel under the input.
+private final class PaletteRule: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        Chrome.color(.hairline).setFill()
+        NSRect(x: 0, y: bounds.midY - 0.5, width: bounds.width, height: 1).fill()
     }
 }
 

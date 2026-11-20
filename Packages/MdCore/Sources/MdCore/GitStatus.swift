@@ -12,6 +12,8 @@ public struct FolderGitStatus: Sendable, Equatable {
     /// The files that differ from HEAD or the index, by their "/"-separated paths from the folder. An untracked folder
     /// holding no tracked file is one entry.
     public let files: [String: GitFileState]
+    /// The commits HEAD's branch has that its upstream lacks; nil without an upstream.
+    public let ahead: Int?
 }
 
 /// The git state of the files under `folder`, or nil when the folder is in no repository or the repository can't be
@@ -29,7 +31,8 @@ public func gitStatus(of folder: URL) -> FolderGitStatus? {
                 case .conflicted: .conflicted
                 }
                 return (file.path, state)
-            })
+            }),
+            ahead: status.ahead.map(Int.init)
         )
     }
 }

@@ -4,7 +4,7 @@
 //! repository's files, as the rest of this module reads them; no git runs.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::ffi::{OsStr, c_void};
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -42,6 +42,9 @@ pub enum Status {
 pub struct Statuses {
     pub gitdir: PathBuf,
     pub files: Vec<(PathBuf, Status)>,
+    /// Commits on HEAD's branch that its upstream lacks, when the branch has
+    /// an upstream and both can be walked.
+    pub ahead: Option<u32>,
 }
 
 /// Bounds the work of reading one object: deltas in its chain, and bytes
@@ -65,6 +68,8 @@ const MAX_RENAME_BYTES: u64 = 256 << 10;
 /// search; past either, nothing pairs.
 const MAX_RENAME_TOTAL: u64 = 8 << 20;
 const MAX_RENAME_LOOKUPS: usize = 1 << 22;
+/// The most commits read counting HEAD's lead on its upstream.
+const MAX_AHEAD_WALK: usize = 2000;
 
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
@@ -114,10 +119,12 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     // HEAD's files, but those in folders whose tree the index holds as is.
     let objects = Objects::open(&common.join("objects"));
     let checkout = Checkout::new(&configs, &objects);
-    let tree = match head_commit(&repo.gitdir, &common)? {
+    let head = head_commit(&repo.gitdir, &common)?;
+    let tree = match head {
         Some(commit) => Some(objects.commit_tree(commit)?),
         None => None,
     };
+    let ahead = head.and_then(|head| ahead(&repo.gitdir, &common, &configs, &objects, head));
     let mut head = HashMap::new();
     let mut same = HashSet::new();
     if let Some(tree) = tree {
@@ -256,7 +263,88 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     Some(Statuses {
         gitdir: repo.gitdir,
         files,
+        ahead,
     })
+}
+
+/// How many commits `head` has that the upstream of HEAD's branch lacks, as
+/// `git rev-list --count @{u}..HEAD` counts them, walking both newest first
+/// by commit time. None when HEAD is detached, its branch has no upstream,
+/// or the walk passes `MAX_AHEAD_WALK` commits or a commit it can't read.
+fn ahead(
+    gitdir: &Path,
+    common: &Path,
+    configs: &[Vec<u8>],
+    objects: &Objects,
+    head: Oid,
+) -> Option<u32> {
+    let line = read_line(&gitdir.join("HEAD"))?;
+    let branch = line.strip_prefix("ref: refs/heads/")?.trim_end();
+    let section = format!("branch \"{branch}\"");
+    let remote = setting(configs, section.as_bytes(), b"remote")?;
+    let merge = String::from_utf8(setting(configs, section.as_bytes(), b"merge")?).ok()?;
+    let name = if remote == b"." {
+        merge
+    } else {
+        let remote = String::from_utf8(remote).ok()?;
+        format!(
+            "refs/remotes/{remote}/{}",
+            merge.strip_prefix("refs/heads/")?
+        )
+    };
+    if name
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    let upstream = match read_line(&common.join(&name)) {
+        Some(line) => parse_oid(&line)?,
+        None => packed_ref(common, &name)??,
+    };
+
+    // Each commit's sides: 1 reached from HEAD, 2 from the upstream. The
+    // walk ends once every queued commit is the upstream's.
+    type Queue = BinaryHeap<(i64, [u8; 20], Vec<Oid>)>;
+    fn reach(
+        objects: &Objects,
+        sides: &mut HashMap<Oid, u8>,
+        queue: &mut Queue,
+        id: Oid,
+        side: u8,
+    ) -> Option<()> {
+        let sides = sides.entry(id).or_default();
+        if *sides & side == 0 {
+            *sides |= side;
+            let (time, parents) = objects.commit_links(id)?;
+            queue.push((time, id.0, parents));
+        }
+        Some(())
+    }
+    let mut sides = HashMap::new();
+    let mut queue = Queue::new();
+    let mut walked = HashSet::new();
+    let mut count = 0;
+    reach(objects, &mut sides, &mut queue, head, 1)?;
+    reach(objects, &mut sides, &mut queue, upstream, 2)?;
+    while queue.iter().any(|(_, id, _)| sides[&Oid(*id)] & 2 == 0) {
+        let (_, id, parents) = queue.pop()?;
+        let id = Oid(id);
+        if !walked.insert(id) {
+            continue;
+        }
+        if walked.len() > MAX_AHEAD_WALK {
+            return None;
+        }
+        let side = sides[&id];
+        if side == 1 {
+            count += 1;
+        }
+        for parent in parents {
+            reach(objects, &mut sides, &mut queue, parent, side)?;
+        }
+    }
+    Some(count)
 }
 
 /// HEAD's version of the file at `path`, a realpath holding `bytes`, as
@@ -860,6 +948,28 @@ impl Objects {
             bytes = apply(&bytes, delta, limit)?;
         }
         Some((kind, bytes))
+    }
+
+    /// A commit's committer time and parents.
+    fn commit_links(&self, commit: Oid) -> Option<(i64, Vec<Oid>)> {
+        let (kind, bytes) = self.read(commit, MAX_INFLATED)?;
+        if kind != 1 {
+            return None;
+        }
+        let mut parents = Vec::new();
+        let mut time = 0;
+        for line in bytes
+            .split(|&byte| byte == b'\n')
+            .take_while(|line| !line.is_empty())
+        {
+            if let Some(id) = line.strip_prefix(b"parent ") {
+                parents.push(parse_oid(std::str::from_utf8(id).ok()?)?);
+            } else if let Some(who) = line.strip_prefix(b"committer ") {
+                let who = std::str::from_utf8(who).ok()?;
+                time = who.rsplit(' ').nth(1)?.parse().ok()?;
+            }
+        }
+        Some((time, parents))
     }
 
     fn commit_tree(&self, commit: Oid) -> Option<Oid> {
@@ -1694,6 +1804,19 @@ mod tests {
         assert!(tree_deltas > 0, "{verify}");
 
         assert_eq!(statuses(&root), []);
+        assert_eq!(status(&root).unwrap().ahead, None);
+        git(&root, &["branch", "-q", "base", "main~3"]);
+        git(&root, &["branch", "-q", "-u", "base"]);
+        assert_eq!(status(&root).unwrap().ahead, Some(3));
+        git(&root, &["update-ref", "refs/remotes/origin/main", "main~5"]);
+        git(&root, &["remote", "add", "origin", "."]);
+        git(&root, &["config", "branch.main.remote", "origin"]);
+        git(&root, &["config", "branch.main.merge", "refs/heads/main"]);
+        let count = git(&root, &["rev-list", "--count", "@{u}..HEAD"]);
+        assert_eq!(
+            status(&root).unwrap().ahead,
+            Some(count.trim().parse().unwrap())
+        );
         write(&root, "docs/more/7.md", b"edited\n");
         assert_eq!(
             statuses(&root),

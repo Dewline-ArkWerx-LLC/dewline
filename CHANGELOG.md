@@ -4,6 +4,14 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- The Welcome demo swaps a word in place ("revert" becomes "undo"), so one of its two changes is a true replacement.
+- The hook setup sheet is titled "Let Dewline see which agent made each edit", says it adds one local command (dewline notify) to PreToolUse and PostToolUse, that nothing leaves the Mac and where to remove it; it shows the backup's whole name, lines up with the text above it, and shortens long paths in the middle.
+- Settings &gt; Agents gives each agent its own Set Up… or Remove, shows Codex as Not set up, Installed, needs trust, or Active, and says when each agent last named an edit. Set Up All Hooks… sits at the trailing edge.
+- Settings: rows of a disabled group dim with their switches, panes grow to the screen's height before they scroll, the four theme cards sit in one row under Light and Dark, every menu choice uses one pop-up style, Restore Defaults has a bezel, "Never" is set in the label face, and the font preview's sample heading reads "Public beta plan".
+- Find in Files puts its options on a second row so the field spans the sidebar, shows Regular Expression as ".*", adds a close button back to Files, and says what a search with no matches looked in, with a button that turns its options off. Snippets start a few words before a match far along its line, results sit on the sidebar's inset, and Replace All with an empty field asks to delete.
+- Quick Open no longer lists Open Recent's files or the Window menu's windows as commands, sets matched letters in semibold without an underline, gives notes a document symbol, and starts commands at the header's inset.
+- The sidebar puts a note's writer badge and git's letter together at the trailing edge; a closed folder shows a dot per writer.
+- The Export panel's Format menu lines up with the panel's own labels and fields.
 - An agent's write that adds list items no longer drops the bullet of the item after them.
 - Ticking a task box in an agent's change no longer shifts its row to the right.
 - A change's highlight leaves out the blanks at its ends and runs unbroken across inline code; code spans get rounded chips.

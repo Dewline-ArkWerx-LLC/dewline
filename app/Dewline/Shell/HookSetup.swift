@@ -90,8 +90,10 @@ enum HookSetup {
                     : "Every agent Dewline knows has its hooks."
                 return present(alert, on: window) { _ in done(true) }
             }
-            alert.messageText = "Name your agents\u{2019} edits"
-            alert.informativeText = "Hooks let each change name the agent that wrote it; without them, agent edits still show, labeled Another app."
+            alert.messageText = "Let Dewline see which agent made each edit"
+            alert.informativeText = "Hooks let each change name the agent that wrote it; without them, agent edits still show, labeled Another app. "
+                + "Adds one local command (dewline notify) to PreToolUse and PostToolUse. Nothing leaves this Mac. "
+                + "Remove it any time in Settings > Agents."
             alert.accessoryView = HookDetails(missing, command: command, alert: alert)
             alert.addButton(withTitle: "Add Hooks")
             alert.addButton(withTitle: "Not Now")
@@ -157,13 +159,17 @@ enum HookSetup {
     }
 }
 
-/// The Set Up sheet's accessory: each agent's settings file and its backup's name, then, under Show Details, the
-/// entries each file gains and the command they run, in SF Mono 11.
+/// The Set Up sheet's accessory, on the informative text's leading edge: each agent's settings file, its middle cut when
+/// long with the whole path as its tooltip, and its backup's name, then, under Show Details, the entries each file
+/// gains and the command they run, in SF Mono 11.
 private final class HookDetails: NSView {
     private static let width: CGFloat = 420
     private static let detailsHeight: CGFloat = 160
+    /// NSAlert sets its accessory this far left of the informative text.
+    private static let inset: CGFloat = 4
 
     private weak var alert: NSAlert?
+    private let files: [NSTextField]
     private let summary: NSTextField
     private let disclosure = NSButton()
     private let label = NSTextField(labelWithString: "Show Details")
@@ -171,15 +177,18 @@ private final class HookDetails: NSView {
 
     init(_ missing: [HookSetup.Missing], command: URL, alert: NSAlert) {
         self.alert = alert
-        let files = missing.map { "\($0.agent): \(($0.file as NSString).abbreviatingWithTildeInPath)" }
-        let backup = ((missing[0].file as NSString).lastPathComponent) + ".dewline-backup-\u{2026}"
-        summary = NSTextField(
-            wrappingLabelWithString: files.joined(separator: "\n")
-                + "\n\nEach file is copied first to a backup beside it, such as \(backup)."
-        )
+        files = missing.map { item in
+            let field = NSTextField(labelWithString: "\(item.agent): \((item.file as NSString).abbreviatingWithTildeInPath)")
+            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            field.lineBreakMode = .byTruncatingMiddle
+            field.toolTip = item.file
+            return field
+        }
+        let backup = ((missing[0].file as NSString).lastPathComponent) + ".dewline-backup-\(Int(Date().timeIntervalSince1970))"
+        summary = NSTextField(wrappingLabelWithString: "Each file is copied first to a backup beside it, such as \(backup).")
         super.init(frame: .zero)
         summary.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        summary.preferredMaxLayoutWidth = Self.width
+        summary.preferredMaxLayoutWidth = Self.width - Self.inset
         disclosure.bezelStyle = .disclosure
         disclosure.setButtonType(.pushOnPushOff)
         disclosure.title = ""
@@ -202,7 +211,7 @@ private final class HookDetails: NSView {
         details.hasVerticalScroller = true
         details.borderType = .bezelBorder
         details.isHidden = true
-        for view in [summary, disclosure, label, details] { addSubview(view) }
+        for view in files + [summary, disclosure, label, details] { addSubview(view) }
         layOut()
     }
 
@@ -217,19 +226,26 @@ private final class HookDetails: NSView {
         alert?.layout()
     }
 
-    /// Stacks the summary, the disclosure row and, when shown, the details, top down.
+    /// Stacks the files, the summary, the disclosure row and, when shown, the details, top down.
     private func layOut() {
-        let summaryHeight = summary.sizeThatFits(NSSize(width: Self.width, height: .greatestFiniteMagnitude)).height
+        let x = Self.inset
+        let width = Self.width - x
+        let fileHeight = files.first?.intrinsicContentSize.height ?? 0
+        let filesHeight = CGFloat(files.count) * fileHeight
+        let summaryHeight = summary.sizeThatFits(NSSize(width: width, height: .greatestFiniteMagnitude)).height
         let row: CGFloat = 20
         let shown = details.isHidden ? 0 : Self.detailsHeight + 6
-        let height = summaryHeight + 8 + row + shown
+        let height = filesHeight + 8 + summaryHeight + 8 + row + shown
         setFrameSize(NSSize(width: Self.width, height: height))
-        summary.frame = NSRect(x: 0, y: height - summaryHeight, width: Self.width, height: summaryHeight)
-        let rowY = height - summaryHeight - 8 - row
-        disclosure.frame = NSRect(x: 0, y: rowY, width: 20, height: row)
+        for (index, file) in files.enumerated() {
+            file.frame = NSRect(x: x, y: height - CGFloat(index + 1) * fileHeight, width: width, height: fileHeight)
+        }
+        summary.frame = NSRect(x: x, y: height - filesHeight - 8 - summaryHeight, width: width, height: summaryHeight)
+        let rowY = summary.frame.minY - 8 - row
+        disclosure.frame = NSRect(x: x, y: rowY, width: 20, height: row)
         label.sizeToFit()
-        label.frame.origin = NSPoint(x: 22, y: rowY + (row - label.frame.height) / 2)
-        details.frame = NSRect(x: 0, y: 0, width: Self.width, height: Self.detailsHeight)
+        label.frame.origin = NSPoint(x: x + 22, y: rowY + (row - label.frame.height) / 2)
+        details.frame = NSRect(x: x, y: 0, width: width, height: Self.detailsHeight)
         details.documentView?.frame.size.width = details.contentSize.width
     }
 }

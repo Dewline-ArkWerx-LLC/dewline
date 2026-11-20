@@ -265,7 +265,6 @@ struct ControlSocketTests {
         let real = try #require(realpath(file.path, nil))
         defer { free(real) }
         let event = #"{"session_id":"s1","cwd":"/","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"\#(file.path)","old_string":"Ship it.","new_string":"Ship it soon."},"tool_use_id":"toolu_1"}"#
-        for _ in 0..<3 {
         let process = Process()
         process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/Helpers/dewline")
         process.arguments = ["notify", "--hook", "claude"]
@@ -277,8 +276,6 @@ struct ControlSocketTests {
         try stdin.fileHandleForWriting.close()
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
-        if !(await listening.received.claims.isEmpty) { break }
-        }
         let claims = await listening.claims(1)
         guard case .preToolUse(let use) = claims.first?.event else {
             Issue.record("\(claims)")

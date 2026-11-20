@@ -54,7 +54,7 @@ struct GeneralPane: View {
                     SettingsRow(label: "Last checked") {
                         HStack(spacing: 14) {
                             Text(updates.lastCheck?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
-                                .font(Station.mono(12))
+                                .font(updates.lastCheck == nil ? Station.label : Station.mono(12))
                                 .foregroundStyle(Station.color(.ink2))
                             // Sparkle starts no check while it holds a staged update.
                             Button("Check Now") { updates.checkNow() }

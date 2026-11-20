@@ -237,7 +237,7 @@
 .mk-group { padding: 0.9em 0.5em 0.4em; font-size: 0.74em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--mk-quiet); }
 .mk-li {
   display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto; align-items: center; gap: 0.75em;
-  padding: 0.6em 0.5em; border-radius: 0.5em; font-size: 0.9em;
+  padding: 0.6em 0.875em; border-radius: 0.5em; font-size: 0.9em;
 }
 .mk-li:nth-child(2) { background: color-mix(in oklab, var(--mk-accent) 10%, var(--mk-paper)); }
 .mk-li + .mk-li { box-shadow: 0 -1px 0 var(--mk-rule); }
@@ -256,7 +256,7 @@
 /* 3. Git */
 .mk-repo { padding: 0.2em 0.4em 0.7em; font-weight: 600; }
 .mk-repo code { margin-left: 0.3em; font-weight: 400; color: var(--mk-ink2); }
-.mk-tree li { display: flex; justify-content: space-between; gap: 0.5em; padding: 0.3em 0.45em; border-radius: 0.4em; white-space: nowrap; }
+.mk-tree li { display: flex; justify-content: space-between; gap: 0.5em; padding: 0.3em 0.875em 0.3em 0.45em; border-radius: 0.4em; white-space: nowrap; }
 .mk-tree li.d::before { content: "▾"; margin-right: 0.4em; color: var(--mk-quiet); }
 .mk-tree li.d { justify-content: flex-start; color: var(--mk-ink2); }
 .mk-tree li.i { padding-left: 1.6em; }
@@ -289,9 +289,9 @@
 .mk-frac { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.15; font-size: 0.9em; }
 .mk-frac span:first-child { padding: 0 0.2em 0.1em; border-bottom: 1px solid currentColor; }
 .mk-code { border-radius: 0.55em; background: var(--mk-side); box-shadow: 0 0 0 1px var(--mk-rule); overflow: hidden; }
-.mk-code-h { display: flex; justify-content: space-between; align-items: center; padding: 0.45em 0.8em 0; font: 400 0.72em/1 var(--mono); color: var(--mk-quiet); }
+.mk-code-h { display: flex; justify-content: space-between; align-items: center; padding: 0.75em 0.75em 0 1.25em; font: 400 0.72em/1 var(--mono); color: var(--mk-quiet); }
 .mk-copy { padding: 0.35em 0.6em; border-radius: 0.35em; background: var(--mk-paper); box-shadow: 0 0 0 1px var(--mk-rule); font-family: var(--chrome); color: var(--mk-ink2); }
-.mk-code pre { margin: 0; padding: 0.5em 0.9em 0.8em; overflow: hidden; font: 400 0.76em/1.65 var(--mono); color: var(--mk-ink); white-space: pre; }
+.mk-code pre { margin: 0; padding: 0.5em 1.2em 0.9em; overflow: hidden; font: 400 0.76em/1.65 var(--mono); color: var(--mk-ink); white-space: pre; }
 .mk-code .c { color: var(--mk-quiet); font-style: italic; }
 .mk-code .k { color: var(--mk-accent); font-weight: 600; }
 .mk-code .f { color: #3C6FA8; }
@@ -303,7 +303,7 @@
 }
 
 /* 5. Finding */
-.mk-find { display: flex; flex-direction: column; gap: 0.4em; }
+.mk-find { display: flex; flex-direction: column; gap: 0.4em; padding-inline: 1em; }
 .mk-field {
   display: flex; align-items: center; gap: 0.4em; padding: 0.35em 0.35em 0.35em 0.6em; border-radius: 0.45em;
   background: var(--mk-paper); box-shadow: 0 0 0 1px var(--mk-rule); font-family: var(--mono); font-size: 0.92em; white-space: nowrap;

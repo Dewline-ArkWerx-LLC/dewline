@@ -4,44 +4,67 @@ struct AppearancePane: View {
     @Bindable var store: ThemeStore
 
     var body: some View {
-        SettingsPage {
-            SettingsSection(title: "Theme") {
+        SettingsForm(restore: { Self.restore(store) }) {
+            Section("Theme") {
                 HStack(alignment: .top, spacing: 16) {
                     themes("Light", Theme.light, dark: false)
                     themes("Dark", Theme.dark, dark: true)
                 }
             }
-            SettingsSection(note: "Match system follows macOS between the light theme and the dark one.") {
-                SettingsRow(label: "Mode") {
-                    TextChoice(label: "Mode", selection: $store.appearance, options: [("Light", .light), ("Dark", .dark), ("Match system", .auto)])
+            Section {
+                Picker("Mode", selection: $store.appearance) {
+                    Text("Light").tag(ThemeStore.Appearance.light)
+                    Text("Dark").tag(ThemeStore.Appearance.dark)
+                    Text("Match system").tag(ThemeStore.Appearance.auto)
                 }
+            } footer: {
+                Text("Match system follows macOS between the light theme and the dark one.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             FontSlots(store: store)
-            SettingsSection(title: "The page", note: "Line width is in characters at this size.") {
-                SettingsRow(label: "Text size") {
-                    KeyStepper(label: "Text size", value: $store.bodySize, range: ThemeStore.bodySizes, step: 1,
-                               text: { "\(Int($0)) pt" }, spoken: { "\(Int($0)) points" })
-                }
-                SettingsRow(label: "Line height") {
-                    KeyStepper(label: "Line height", value: $store.lineHeight, range: ThemeStore.lineHeights, step: 0.02,
-                               text: { $0.formatted(.number.precision(.fractionLength(2))) })
-                }
-                SettingsRow(label: "Line width") {
-                    KeyStepper(label: "Line width", value: $store.columnWidth, range: ThemeStore.columnWidths, step: 2,
-                               text: { "\(Int($0)) ch" }, spoken: { "\(Int($0)) characters" })
-                }
+            Section {
+                stepper("Text size", $store.bodySize, in: ThemeStore.bodySizes, step: 1, text: "\(Int(store.bodySize)) pt",
+                        spoken: "\(Int(store.bodySize)) points")
+                stepper("Line height", $store.lineHeight, in: ThemeStore.lineHeights, step: 0.02,
+                        text: store.lineHeight.formatted(.number.precision(.fractionLength(2))))
+                stepper("Line width", $store.columnWidth, in: ThemeStore.columnWidths, step: 2, text: "\(Int(store.columnWidth)) ch",
+                        spoken: "\(Int(store.columnWidth)) characters")
+            } header: {
+                Text("The page")
+            } footer: {
+                Text("Line width is in characters at this size.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            RestoreDefaults {
-                let factory = ThemeStore.factory
-                store.appearance = factory.appearance
-                store.lightTheme = factory.lightTheme
-                store.darkTheme = factory.darkTheme
-                store.bodyFace = factory.bodyFace
-                store.headingFace = factory.headingFace
-                store.codeFace = factory.codeFace
-                store.bodySize = factory.bodySize
-                store.lineHeight = factory.lineHeight
-                store.columnWidth = factory.columnWidth
+        }
+    }
+
+    /// Puts this pane's settings, and no others, back as a fresh install has them.
+    static func restore(_ store: ThemeStore) {
+        let factory = ThemeStore.factory
+        store.appearance = factory.appearance
+        store.lightTheme = factory.lightTheme
+        store.darkTheme = factory.darkTheme
+        store.bodyFace = factory.bodyFace
+        store.headingFace = factory.headingFace
+        store.codeFace = factory.codeFace
+        store.bodySize = factory.bodySize
+        store.lineHeight = factory.lineHeight
+        store.columnWidth = factory.columnWidth
+    }
+
+    /// The value, then a stepper that moves it by `step` within `range`, rounded to hundredths so steps of 0.02 never drift.
+    private func stepper(_ label: String, _ value: Binding<Double>, in range: ClosedRange<Double>, step: Double, text: String,
+                         spoken: String? = nil) -> some View {
+        LabeledContent(label) {
+            HStack {
+                Text(text)
+                    .monospacedDigit()
+                Stepper(label, value: Binding { value.wrappedValue } set: { value.wrappedValue = ($0 * 100).rounded() / 100 },
+                        in: range, step: step)
+                    .labelsHidden()
+                    .accessibilityValue(spoken ?? text)
             }
         }
     }
@@ -50,8 +73,6 @@ struct AppearancePane: View {
     private func themes(_ mode: String, _ themes: [Theme], dark: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(mode)
-                .font(Station.label)
-                .foregroundStyle(Station.color(.ink))
                 .accessibilityAddTraits(.isHeader)
             HStack(alignment: .top, spacing: 16) {
                 ForEach(themes) { ThemeCard(theme: $0, store: store, dark: dark).frame(maxWidth: .infinity) }
@@ -61,7 +82,7 @@ struct AppearancePane: View {
     }
 }
 
-/// A theme as a window in miniature, in its own mode, with its name under it. A 1.5 pt signal ring, 2 pt
+/// A theme as a window in miniature, in its own mode, with its name under it. A 1.5 pt accent ring, 2 pt
 /// out, marks the theme its mode uses; the name keeps its weight, so selecting one doesn't shift its line.
 private struct ThemeCard: View {
     let theme: Theme
@@ -79,19 +100,18 @@ private struct ThemeCard: View {
                 MiniWindow(theme: theme, dark: dark)
                     .aspectRatio(1.55, contentMode: .fit)
                     .clipShape(card)
-                    .overlay(card.strokeBorder(Station.stroke, lineWidth: 1 / scale))
+                    .overlay(card.strokeBorder(.separator, lineWidth: 1 / scale))
                     .padding(3.5)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12.5, style: .continuous)
-                            .strokeBorder(selected ? Station.color(.accent) : .clear, lineWidth: 1.5)
+                            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
                     )
                 Text(theme.name)
-                    .font(Station.label)
-                    .foregroundStyle(Station.color(selected ? .ink : .ink2))
+                    .foregroundStyle(selected ? .primary : .secondary)
                     .padding(.horizontal, 3.5)
             }
         }
-        .buttonStyle(BareButtonStyle(radius: 12.5))
+        .buttonStyle(.plain)
         .help(theme.summary)
         .accessibilityLabel(theme.name)
         .accessibilityHint(theme.summary)
@@ -107,7 +127,7 @@ private struct MiniWindow: View {
 
     var body: some View {
         let colors = dark ? theme.darkColors : theme.lightColors
-        let titleFont = Station.brand(11, weight: 600)
+        let titleFont = Font(Chrome.brand(11, weight: 600))
         Canvas { context, size in
             func color(_ token: Token) -> Color {
                 Color(nsColor: colors[token] ?? colors[.ink2]!)

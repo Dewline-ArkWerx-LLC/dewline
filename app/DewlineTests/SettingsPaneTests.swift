@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import SwiftUI
 import Testing
 @testable import Dewline
 
@@ -47,6 +48,53 @@ struct SettingsPaneTests {
             let preferences = Preferences(defaults: defaults, home: URL(filePath: "/Users/someone", directoryHint: .isDirectory))
             #expect(preferences.inbox.path == "/Users/someone/Documents/Dewline/Inbox.md")
             #expect(preferences.attachments == .beside)
+        }
+    }
+
+    /// Each pane's Restore Defaults puts back its own settings as a fresh install has them, and leaves the others.
+    @Test func restoreDefaultsPutsBackEachPanesSettings() {
+        withDefaults { defaults in
+            let store = ThemeStore(defaults: defaults)
+            let preferences = Preferences(defaults: defaults)
+            let factory = ThemeStore.factory
+            store.appearance = factory.appearance == .dark ? .light : .dark
+            store.lightTheme = Theme.light.first { $0 != factory.lightTheme }!
+            store.darkTheme = Theme.dark.first { $0 != factory.darkTheme }!
+            store.bodyFace = "Menlo"
+            store.headingFace = "Menlo"
+            store.codeFace = "Menlo"
+            store.bodySize = factory.bodySize + 3
+            store.lineHeight = factory.lineHeight + 0.1
+            store.columnWidth = factory.columnWidth + 10
+            store.vimMode = !factory.vimMode
+            store.tabWidth = factory.tabWidth == 4 ? 2 : 4
+            store.spellCheck = !factory.spellCheck
+            preferences.linkPreviews = !Preferences.factory.linkPreviews
+            preferences.opensCodeFiles = !Preferences.factory.opensCodeFiles
+
+            AppearancePane.restore(store)
+            #expect(store.appearance == factory.appearance)
+            #expect(store.lightTheme == factory.lightTheme)
+            #expect(store.darkTheme == factory.darkTheme)
+            #expect([store.bodyFace, store.headingFace, store.codeFace] == [factory.bodyFace, factory.headingFace, factory.codeFace])
+            #expect([store.bodySize, store.lineHeight, store.columnWidth] == [factory.bodySize, factory.lineHeight, factory.columnWidth])
+            #expect(store.vimMode != factory.vimMode, "Appearance leaves the Editor's settings")
+
+            EditorPane.restore(store, preferences)
+            #expect(store.vimMode == factory.vimMode)
+            #expect(store.tabWidth == factory.tabWidth)
+            #expect(store.spellCheck == factory.spellCheck)
+            #expect(preferences.linkPreviews == Preferences.factory.linkPreviews)
+            #expect(preferences.opensCodeFiles == Preferences.factory.opensCodeFiles)
+        }
+    }
+
+    /// Every pane is a grouped form the window's width, as tall as its settings and no taller than the window allows.
+    @Test func panesSizeToTheirContent() {
+        for pane in SettingsPane.allCases {
+            let size = NSHostingController(rootView: SettingsPaneView(pane: pane)).view.fittingSize
+            #expect(size.width == SettingsWindowController.width, "\(pane)")
+            #expect(size.height > 100 && size.height <= SettingsWindowController.maxHeight, "\(pane): \(size.height)")
         }
     }
 

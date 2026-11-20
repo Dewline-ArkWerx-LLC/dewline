@@ -9,6 +9,8 @@ final class GitStates {
     static let changed = Notification.Name("DewlineGitStatesChanged")
     private let folder: URL
     private var files: [String: GitFileState] = [:]
+    /// Every folder above a file in `files`, by its path under the folder.
+    private var dirtyFolders: Set<String> = []
     /// Watches a gitdir outside the folder.
     private var watch: FolderWatch?
     private var gitdir: URL?
@@ -32,6 +34,13 @@ final class GitStates {
             if files[path] == .new { return .new }
         }
         return nil
+    }
+
+    /// Whether a file under `folder`, a folder under the folder, differs from the last commit.
+    func holdsChanges(_ folder: URL) -> Bool {
+        let path = folder.standardizedFileURL.path
+        guard path.hasPrefix(self.folder.path + "/") else { return false }
+        return dirtyFolders.contains(String(path.dropFirst(self.folder.path.count + 1)))
     }
 
     func read() {
@@ -60,6 +69,9 @@ final class GitStates {
         let files = status?.files ?? [:]
         if !kept && files != self.files {
             self.files = files
+            dirtyFolders = Set(files.keys.flatMap { path in
+                path.indices.filter { path[$0] == "/" }.map { String(path[..<$0]) }
+            })
             NotificationCenter.default.post(name: Self.changed, object: self)
         }
         if stale {

@@ -216,7 +216,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             root.addSubview(empty)
             NSLayoutConstraint.activate([
                 empty.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-                empty.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+                empty.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 13),
                 empty.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -16),
             ])
             top = empty.bottomAnchor
@@ -363,6 +363,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         find?.view.isHidden = true
         outlineView.enclosingScrollView?.isHidden = false
         view.window?.makeFirstResponder(outlineView)
+    }
+
+    /// Reveal in Sidebar: the sidebar and its tree show, `url`'s row is selected, and the keyboard is on it.
+    func revealFile(_ url: URL) {
+        (parent as? NSSplitViewController)?.splitViewItem(for: self)?.isCollapsed = false
+        if showsOutline { toggleOutline() }
+        showFiles()
+        guard filled, let node = treeNode(for: url) else { return }
+        fileNode = node
+        outlineView.scrollRowToVisible(outlineView.row(forItem: node))
+        selectOpenFile()
     }
 
     /// Shows `url` as the open file: reveals and selects its row. A window without a folder lists its headings.
@@ -678,7 +689,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let path = entry.url.standardizedFileURL.path
             let expanded = entry.isFolder && outlineView.isItemExpanded(node)
             let badges = entry.isFolder ? expanded ? [] : rollUp(under: path) : waitingChanges[path] ?? []
-            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: index?.git.state(of: entry.url))
+            cell.show(entry, gone: false, expanded: expanded, waiting: badges, git: index?.git.state(of: entry.url),
+                holdsChanges: entry.isFolder && !expanded && index?.git.holdsChanges(entry.url) == true)
         case .shortcut(let entry):
             let path = entry.url.standardizedFileURL.path
             cell.show(entry, gone: !FileManager.default.fileExists(atPath: entry.url.path), expanded: false,
@@ -747,7 +759,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         let isPinned = Library.pins.contains { $0.path == url.path }
         add(isPinned ? "Unpin" : "Pin", isPinned ? #selector(unpin(_:)) : #selector(pin(_:)), mine: true)
+        add("Copy Relative Path", #selector(copyRelativePath(_:)), mine: true)
         add("Show in Finder", #selector(showInFinder(_:)), mine: true)
+    }
+
+    /// The clicked row's path, or with the keyboard here, the selected row's.
+    @objc func copyRelativePath(_ sender: Any?) {
+        guard let url = (sender as? NSMenuItem)?.representedObject as? URL ?? (outlineView.item(atRow: outlineView.selectedRow) as? SidebarNode)?.url
+        else { return }
+        copyPath(url, in: folder)
     }
 
     @objc private func openInNewTab(_ sender: NSMenuItem) {
@@ -1204,5 +1224,25 @@ final class SidebarOutline: NSObject {
     @objc static func validateMenuItem(_ item: NSMenuItem) -> Bool {
         item.state = sidebar?.showsOutline == true ? .on : .off
         return sidebar?.hasFolder == true
+    }
+}
+
+/// Copies `url`'s path under `folder`, or its whole path outside one.
+@MainActor func copyPath(_ url: URL, in folder: Folder?) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(folder?.relativePath(of: url) ?? url.path, forType: .string)
+}
+
+extension MainWindowController {
+    /// Edit > Copy Relative Path from the note: its path under the window's folder.
+    @objc func copyRelativePath(_ sender: Any?) {
+        guard let url = (document as? NSDocument)?.fileURL else { return }
+        copyPath(url, in: folder)
+    }
+
+    /// Go > Reveal in Sidebar.
+    @objc func revealInSidebar(_ sender: Any?) {
+        guard let url = (document as? NSDocument)?.fileURL else { return }
+        sidebar.revealFile(url)
     }
 }

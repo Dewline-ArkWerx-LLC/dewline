@@ -1,9 +1,19 @@
 import AppKit
 import MdCore
 
-/// Git's word for a file in the tree: "modified" and "renamed" in `gitModified`, "new" in `gitAdded`, the rest in
-/// `ink2`.
+/// Git's state of a file in the tree: a letter on the row ("M" and "R" in `gitModified`, "A" in `gitAdded`, the rest in
+/// `ink2`), the word for VoiceOver.
 extension GitFileState {
+    var letter: String {
+        switch self {
+        case .modified: "M"
+        case .new: "A"
+        case .deleted: "D"
+        case .renamed: "R"
+        case .conflicted: "U"
+        }
+    }
+
     var word: String {
         switch self {
         case .modified: "modified"
@@ -227,8 +237,8 @@ final class SidebarRowView: StationRowView {
 }
 
 /// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), the writer badge
-/// right after it, and git's word alone on the trailing edge, at least 12 pt clear of the badge. A ".md" extension
-/// shows in `ink2`. A name too long for the row keeps its head through the first word and whole words from its end.
+/// right after it, and git's letter in SF Mono 11 in a 14 pt column on the trailing edge; a closed folder holding
+/// changed files shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle.
 final class SidebarFileCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("file")
 
@@ -241,6 +251,7 @@ final class SidebarFileCell: NSTableCellView {
     /// A code file that opens, a little dimmer than a note.
     private var isCode = false
     private var word: GitFileState?
+    private var holdsChanges = false
     private var goneTip: String?
     private var editing = false
 
@@ -248,11 +259,12 @@ final class SidebarFileCell: NSTableCellView {
         super.init(frame: .zero)
         identifier = Self.identifier
         name.font = Chrome.label
-        name.lineBreakMode = .byClipping
+        name.lineBreakMode = .byTruncatingMiddle
         name.maximumNumberOfLines = 1
         textField = name
         chevron.imageScaling = .scaleNone
-        git.font = .systemFont(ofSize: 11, weight: .medium)
+        git.font = Chrome.mono(11)
+        git.alignment = .center
         for view in [chevron, name, badge, git] { addSubview(view) }
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
     }
@@ -262,20 +274,22 @@ final class SidebarFileCell: NSTableCellView {
     }
 
     /// A file or folder; one that has `gone` from disk, one .gitignore hides, and any file Dewline doesn't edit show
-    /// dimmed.
-    func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?) {
+    /// dimmed. `holdsChanges` marks a closed folder with changed files under it.
+    func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?, holdsChanges: Bool = false) {
         fullName = entry.url.lastPathComponent
         dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.opens || isAgentFile(entry.url))
         isCode = entry.isCode
         self.word = word
+        self.holdsChanges = word == nil && holdsChanges
         chevron.isHidden = !entry.isFolder
         setExpanded(expanded)
         badge.show(waiting)
-        git.stringValue = word?.word ?? ""
-        git.toolTip = word?.tip
-        git.isHidden = word == nil
+        git.stringValue = word?.letter ?? (self.holdsChanges ? "\u{2022}" : "")
+        git.toolTip = word?.tip ?? (self.holdsChanges ? "Holds files changed since the last commit" : nil)
+        git.isHidden = git.stringValue.isEmpty
         goneTip = gone ? "Moved or deleted" : nil
-        setAccessibilityLabel(([fullName] + waiting.map(\.spoken) + (word.map { [$0.word] } ?? [])).joined(separator: ", "))
+        let state = word.map { [$0.word] } ?? (self.holdsChanges ? ["changed files inside"] : [])
+        setAccessibilityLabel(([fullName] + waiting.map(\.spoken) + state).joined(separator: ", "))
         paint()
         needsLayout = true
     }
@@ -305,7 +319,7 @@ final class SidebarFileCell: NSTableCellView {
 
     private func paint() {
         chevron.contentTintColor = Chrome.color(.ink3)
-        git.textColor = word.map { Chrome.color($0.token) }
+        git.textColor = Chrome.color(word?.token ?? .gitModified)
         badge.needsDisplay = true
     }
 
@@ -321,7 +335,7 @@ final class SidebarFileCell: NSTableCellView {
         let left: CGFloat = 22
         let lineHeight = ceil(Chrome.label.ascender - Chrome.label.descender + Chrome.label.leading) + 1
         badge.isHidden = badge.isEmpty || editing
-        git.isHidden = word == nil || editing
+        git.isHidden = git.stringValue.isEmpty || editing
         if editing {
             name.frame = NSRect(x: left - 2, y: (height - lineHeight) / 2, width: max(bounds.width - left + 2, 0), height: lineHeight)
             return
@@ -329,17 +343,16 @@ final class SidebarFileCell: NSTableCellView {
         var right = bounds.width
         if !git.isHidden {
             let size = git.intrinsicContentSize
-            git.frame = NSRect(x: right - size.width, y: (height - size.height) / 2, width: size.width, height: size.height)
-            right = git.frame.minX - 12
+            git.frame = NSRect(x: right - 14, y: (height - size.height) / 2, width: 14, height: size.height)
+            right = git.frame.minX - 6
         }
         let badgeWidth = badge.isHidden ? 0 : badge.intrinsicContentSize.width + 6
         let room = max(right - left - badgeWidth, 0)
-        let font = Chrome.label
-        let shown = truncatedName(fullName) { ceil(($0 as NSString).size(withAttributes: [.font: font]).width) <= room }
-        name.attributedStringValue = display(shown)
-        let width = min(ceil((shown as NSString).size(withAttributes: [.font: font]).width), room)
+        let full = ceil((fullName as NSString).size(withAttributes: [.font: Chrome.label]).width)
+        name.attributedStringValue = display(fullName)
+        let width = min(full, room)
         name.frame = NSRect(x: left - 2, y: (height - lineHeight) / 2, width: width + 4, height: lineHeight)
-        toolTip = goneTip ?? (shown == fullName ? nil : fullName)
+        toolTip = goneTip ?? (full <= room ? nil : fullName)
         if !badge.isHidden {
             badge.frame = NSRect(x: left + width + 6, y: (height - WaitingBadge.height) / 2, width: badge.intrinsicContentSize.width, height: WaitingBadge.height)
         }
@@ -349,7 +362,9 @@ final class SidebarFileCell: NSTableCellView {
     /// chrome, the selection and the hover.
     private func display(_ text: String) -> NSAttributedString {
         let ink = dimmed ? Chrome.color(.ink2) : isCode ? CodeFile.ink : Chrome.color(.ink)
-        let string = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: ink])
+        let line = NSMutableParagraphStyle()
+        line.lineBreakMode = .byTruncatingMiddle
+        let string = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: ink, .paragraphStyle: line])
         if text.lowercased().hasSuffix(".md"), text.count > 3 {
             string.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: (text as NSString).length - 3, length: 3))
         }
@@ -403,49 +418,4 @@ final class WaitingBadge: NSView {
         let size = (count as NSString).size(withAttributes: attributes)
         (count as NSString).draw(at: NSPoint(x: 11, y: (bounds.height - size.height) / 2), withAttributes: attributes)
     }
-}
-
-/// `name` cut to what `fits`: the head through its first word ("0003-fitter-"), an ellipsis, then as many whole words
-/// from the end as fit, then the start of the next word when 3 letters or more of it fit. An extension stays, after a
-/// thin space when no word does. A name with no word break keeps its start.
-nonisolated func truncatedName(_ name: String, fits: (String) -> Bool) -> String {
-    if fits(name) { return name }
-    let ext = (name as NSString).pathExtension
-    let suffix = ext.isEmpty ? "" : "." + ext
-    let stem = String(name.dropLast(suffix.count))
-    let breaks: Set<Character> = ["-", "_", " "]
-    let head: String
-    if let match = stem.firstMatch(of: /^(\d+[-_ ])?[^-_ ]+[-_ ]?/) {
-        head = String(match.output.0)
-    } else {
-        head = String(stem.prefix(6))
-    }
-    var words: [String] = []
-    for character in stem.dropFirst(head.count) {
-        if words.isEmpty || breaks.contains(words[words.count - 1].last!) { words.append("") }
-        words[words.count - 1].append(character)
-    }
-    func trimmed(_ text: String) -> String {
-        breaks.contains(text.last ?? "x") ? String(text.dropLast()) : text
-    }
-    func make(_ start: String, _ tail: String) -> String {
-        start + "\u{2026}" + tail + suffix
-    }
-    for kept in stride(from: words.count - 1, through: 0, by: -1) {
-        let tail = words.suffix(kept).joined()
-        let start = kept > 0 ? head : trimmed(head)
-        guard fits(make(start, tail)) else { continue }
-        if let next = words.first, next.count > 3 {
-            for length in stride(from: next.count - 1, through: 3, by: -1) {
-                let candidate = make(head + trimmed(String(next.prefix(length))), tail)
-                if fits(candidate) { return candidate }
-            }
-        }
-        return make(start, tail)
-    }
-    for length in stride(from: head.count - 1, to: 3, by: -1) {
-        let candidate = make(String(head.prefix(length)), "")
-        if fits(candidate) { return candidate }
-    }
-    return make(String(name.prefix(4)), "")
 }

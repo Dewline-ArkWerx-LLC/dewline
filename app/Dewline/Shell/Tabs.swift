@@ -110,9 +110,10 @@ final class WindowState {
 /// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
 /// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
-/// window is key. A tab whose note has changes waiting carries a 3 x 10 rule in the ink of the writer with the most of
-/// them after its name. A tab's tooltip says when its note was saved and how many words it has; its context menu
-/// renames or moves the note.
+/// window is key. A tab whose note has changes waiting carries a 6 pt dot in the ink of the writer with the most of
+/// them after its name. Tabs whose notes share a name add the shortest parent path that tells them apart
+/// ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says what is waiting, when its
+/// note was saved and how many words it has; its context menu renames or moves the note, or copies its path.
 final class TabStrip: NSView {
     private static let height: CGFloat = 26
     private static let padding: CGFloat = 16
@@ -130,11 +131,12 @@ final class TabStrip: NSView {
 
     private struct Slot {
         let tab: MainWindowController
+        let title: String
         var frame: NSRect
     }
 
     private var slots: [Slot] = []
-    private var overflow: [MainWindowController] = []
+    private var overflow: [(tab: MainWindowController, title: String)] = []
     private var more: NSRect?
     private var hovered: MainWindowController?
     private var dragging: (tab: MainWindowController, offset: CGFloat)?
@@ -194,14 +196,31 @@ final class TabStrip: NSView {
 
     // MARK: Layout
 
-    private static func name(_ tab: MainWindowController) -> NSAttributedString {
+    /// The tab's file name, then " · " and the fewest trailing folders of its path that no other same-named tab's
+    /// shares.
+    private static func title(_ tab: MainWindowController, among all: [MainWindowController]) -> String {
+        let name = tab.tabFileName
+        guard let url = (tab.document as? NSDocument)?.fileURL else { return name }
+        let parents = url.deletingLastPathComponent().pathComponents
+        let twins = all.compactMap { ($0.document as? NSDocument)?.fileURL }.filter { $0.lastPathComponent == name && $0 != url }
+            .map { $0.deletingLastPathComponent().pathComponents }
+        guard !twins.isEmpty else { return name }
+        for count in 1...max(parents.count, 1) {
+            let tail = parents.suffix(count)
+            if twins.allSatisfy({ $0.suffix(count) != tail }) { return name + " \u{00B7} " + tail.joined(separator: "/") }
+        }
+        return name
+    }
+
+    /// The title, its extension and parent path in `ink2`.
+    private static func name(_ tab: MainWindowController, _ title: String) -> NSAttributedString {
         let file = tab.tabFileName as NSString
-        let ext = file.pathExtension.isEmpty ? "" : "." + file.pathExtension
+        let ext = file.pathExtension.isEmpty ? 0 : file.pathExtension.utf16.count + 1
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byTruncatingMiddle
         let name = NSMutableAttributedString(
-            string: file as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
-        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - (ext as NSString).length, length: (ext as NSString).length))
+            string: title, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
+        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - ext, length: name.length - file.length + ext))
         return name
     }
 
@@ -209,23 +228,23 @@ final class TabStrip: NSView {
         tab.window?.isDocumentEdited == true
     }
 
-    /// The writer with the most changes waiting in the tab's note.
-    private static func waiting(_ tab: MainWindowController) -> MarkWriter? {
+    /// The writer with the most changes waiting in the tab's note, and that writer's count.
+    private static func waiting(_ tab: MainWindowController) -> WaitingCount? {
         var counts: [String: (writer: MarkWriter, count: Int)] = [:]
         for change in (tab.document as? MarkdownDocument)?.live?.changes.values.filter(\.marked) ?? [] {
             let writer = MarkWriter(change.origin)
             counts[writer.name, default: (writer, 0)].count += 1
         }
-        return counts.values.max { $0.count < $1.count }?.writer
+        return counts.values.max { $0.count < $1.count }.map { WaitingCount(writer: $0.writer, count: $0.count) }
     }
 
-    /// Room after the name for the writer rule and the edited dot.
+    /// Room after the name for the writer dot and the edited dot.
     private static func trailing(_ tab: MainWindowController) -> CGFloat {
-        (waiting(tab) == nil ? 0 : 9) + (edited(tab) ? 8 : 0)
+        (waiting(tab) == nil ? 0 : 12) + (edited(tab) ? 8 : 0)
     }
 
-    private static func width(_ tab: MainWindowController) -> CGFloat {
-        min(ceil(name(tab).size().width) + padding * 2 + trailing(tab), widest)
+    private static func width(_ tab: MainWindowController, _ title: String) -> CGFloat {
+        min(ceil(name(tab, title).size().width) + padding * 2 + trailing(tab), widest)
     }
 
     private static func moreWidth(_ count: Int) -> CGFloat {
@@ -235,8 +254,10 @@ final class TabStrip: NSView {
     /// Lays the tabs out from the leading edge. When they overflow, the leading ones that fit stay, the selected tab
     /// takes the last place if it is not among them, and the rest go into "+N".
     private func place() {
-        let all = tabs?.tabs ?? []
-        let widths = all.map(Self.width)
+        var all = tabs?.tabs ?? []
+        if all.count == 1, all[0].document == nil { all = [] }
+        let titles = all.map { Self.title($0, among: all) }
+        let widths = all.indices.map { Self.width(all[$0], titles[$0]) }
         let y = floor((bounds.height - Self.height) / 2)
         var shown = Array(all.indices)
         if widths.reduce(0, +) + Self.gap * CGFloat(max(all.count - 1, 0)) > bounds.width {
@@ -255,9 +276,9 @@ final class TabStrip: NSView {
         slots = shown.map { index in
             let width = min(widths[index], max(bounds.width - x, 0))
             defer { x += width + Self.gap }
-            return Slot(tab: all[index], frame: NSRect(x: x, y: y, width: width, height: Self.height))
+            return Slot(tab: all[index], title: titles[index], frame: NSRect(x: x, y: y, width: width, height: Self.height))
         }
-        overflow = all.indices.filter { !shown.contains($0) }.map { all[$0] }
+        overflow = all.indices.filter { !shown.contains($0) }.map { (all[$0], titles[$0]) }
         more = overflow.isEmpty ? nil : NSRect(x: x, y: y, width: min(Self.moreWidth(overflow.count), max(bounds.width - x, 0)), height: Self.height)
         if let hovered, !slots.contains(where: { $0.tab === hovered }) { self.hovered = nil }
         removeAllToolTips()
@@ -341,11 +362,9 @@ final class TabStrip: NSView {
             Chrome.color(.cursor).setFill()
             NSBezierPath(roundedRect: NSRect(x: frame.minX + 8, y: frame.midY - 6, width: 2, height: 12), xRadius: 1, yRadius: 1).fill()
         }
-        let name = NSMutableAttributedString(attributedString: Self.name(slot.tab))
+        let name = NSMutableAttributedString(attributedString: Self.name(slot.tab, slot.title))
         if !selected, !hovering {
-            let ext = (slot.tab.tabFileName as NSString).pathExtension
-            let stem = name.length - (ext.isEmpty ? 0 : ext.utf16.count + 1)
-            name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: stem))
+            name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: name.length))
         }
         let edited = Self.edited(slot.tab)
         let height = ceil(name.size().height)
@@ -353,9 +372,9 @@ final class TabStrip: NSView {
         name.draw(
             with: NSRect(x: frame.minX + Self.padding, y: frame.midY - height / 2, width: max(room, 0), height: height),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        if let writer = Self.waiting(slot.tab) {
-            writer.color.setFill()
-            NSBezierPath(roundedRect: NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 5, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+        if let waiting = Self.waiting(slot.tab) {
+            waiting.writer.color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 3, width: 6, height: 6)).fill()
         }
         if edited {
             Chrome.color(.ink2).setFill()
@@ -365,12 +384,14 @@ final class TabStrip: NSView {
 
     // MARK: Pointer
 
-    /// Rename and Move To for the tab's note, as the File menu has them.
+    /// Rename and Move To for the tab's note, as the File menu has them, and Copy Relative Path.
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard let document = slot(at: convert(event.locationInWindow, from: nil))?.tab.document as? NSDocument else { return nil }
+        guard let tab = slot(at: convert(event.locationInWindow, from: nil))?.tab, let document = tab.document as? NSDocument else { return nil }
         let menu = NSMenu()
         menu.addItem(withTitle: "Rename\u{2026}", action: #selector(NSDocument.rename(_:)), keyEquivalent: "").target = document
         menu.addItem(withTitle: "Move To\u{2026}", action: #selector(NSDocument.move(_:)), keyEquivalent: "").target = document
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Copy Relative Path", action: #selector(MainWindowController.copyRelativePath(_:)), keyEquivalent: "").target = tab
         return menu
     }
 
@@ -434,8 +455,8 @@ final class TabStrip: NSView {
     private func showMore() {
         guard let more else { return }
         let menu = NSMenu()
-        for tab in overflow {
-            let item = menu.addItem(withTitle: tab.tabFileName, action: #selector(NSWindowController.showWindow(_:)), keyEquivalent: "")
+        for (tab, title) in overflow {
+            let item = menu.addItem(withTitle: title, action: #selector(NSWindowController.showWindow(_:)), keyEquivalent: "")
             item.target = tab
         }
         menu.popUp(positioning: nil, at: NSPoint(x: more.minX, y: more.maxY + 4), in: self)
@@ -451,10 +472,10 @@ final class TabStrip: NSView {
         let all = tabs?.tabs ?? []
         elements = slots.filter { othersAlpha > 0 || $0.tab === tabs?.selected }.flatMap { slot -> [NSAccessibilityElement] in
             let index = (all.firstIndex { $0 === slot.tab } ?? 0) + 1
-            let state = (Self.waiting(slot.tab).map { ", \($0.name) changes waiting" } ?? "") + (slot.tab.savedState.map { ", " + $0 } ?? "")
+            let state = (Self.waiting(slot.tab).map { ", " + $0.spoken } ?? "") + (slot.tab.savedState.map { ", " + $0 } ?? "")
             let tab = TabElement(slot.tab) { $0.showWindow(nil) }
             tab.setAccessibilityRole(.radioButton)
-            tab.setAccessibilityLabel("\(slot.tab.tabFileName), tab \(index) of \(all.count)\(state)")
+            tab.setAccessibilityLabel("\(slot.title), tab \(index) of \(all.count)\(state)")
             tab.setAccessibilityValue(slot.tab === tabs?.selected)
             tab.setAccessibilityFrameInParentSpace(slot.frame)
             tab.setAccessibilityParent(self)
@@ -465,7 +486,7 @@ final class TabStrip: NSView {
             close.setAccessibilityParent(self)
             return [tab, close]
         }
-        if let more, let first = overflow.first, othersAlpha > 0 {
+        if let more, let first = overflow.first?.tab, othersAlpha > 0 {
             let element = TabElement(first) { [weak self] _ in self?.showMore() }
             element.setAccessibilityRole(.popUpButton)
             element.setAccessibilityLabel("\(overflow.count) more \(overflow.count == 1 ? "tab" : "tabs")")
@@ -483,7 +504,8 @@ final class TabStrip: NSView {
 extension TabStrip: NSViewToolTipOwner {
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         guard let tab = slot(at: point)?.tab, othersAlpha > 0 || tab === tabs?.selected else { return "" }
-        return ([tab.tabFileName, tab.savedState, tab.wordCount] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        let title = slots.first { $0.tab === tab }?.title ?? tab.tabFileName
+        return ([title, Self.waiting(tab)?.tip, tab.savedState, tab.wordCount] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }
 

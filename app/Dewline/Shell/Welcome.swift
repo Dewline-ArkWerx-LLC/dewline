@@ -12,14 +12,6 @@ enum Welcome {
     static let replaced = "Try it:"
     static let replacement = "Here it is, written from outside the editor:"
     static let anchor = "Revert puts the old text back.\n"
-    static func replace(_ text: String) -> String? {
-        guard let range = text.range(of: replaced), !text.contains(replacement) else { return nil }
-        return text.replacingCharacters(in: range, with: replacement)
-    }
-    static func insert(_ text: String) -> String? {
-        guard let at = text.range(of: anchor)?.upperBound, !text.contains(inserted) else { return nil }
-        return text.replacingCharacters(in: at..<at, with: inserted)
-    }
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open.\n"
 
     static var bundled: URL {
@@ -67,13 +59,10 @@ final class WelcomeDemo {
         let demo = WelcomeDemo(document, url: url)
         running = demo
         demo.start = Task { [weak demo] in
-            // Long enough to see each change land: the engine marks the one stretch where file and buffer differ, so
-            // each edit is its own write.
-            for edit in [Welcome.replace, Welcome.insert] {
-                try? await Task.sleep(for: .milliseconds(400))
-                guard !Task.isCancelled else { return }
-                demo?.write(edit)
-            }
+            // Long enough to see the paragraph change after the click.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            demo?.write()
             if running === demo { running = nil }
         }
     }
@@ -84,14 +73,18 @@ final class WelcomeDemo {
     }
 
     /// The demo's claimed write: PreToolUse with the bytes it declares, the write, PostToolUse, then the turn's end.
-    private func write(_ edit: (String) -> String?) {
+    private func write() {
         guard let engine = document?.live?.engine, let before = try? Data(contentsOf: url),
             let real = realpath(url.path, nil)
         else { return }
         let path = String(cString: real)
         free(real)
         let text = String(decoding: before, as: UTF8.self)
-        guard let edited = edit(text) else { return }
+        guard let replaced = text.range(of: Welcome.replaced), let anchor = text.range(of: Welcome.anchor), replaced.upperBound <= anchor.lowerBound,
+            !text.contains(Welcome.inserted)
+        else { return }
+        let edited = text[..<replaced.lowerBound] + Welcome.replacement + text[replaced.upperBound..<anchor.upperBound] + Welcome.inserted
+            + text[anchor.upperBound...]
         let after = Data(edited.utf8)
         let id = UUID().uuidString
         func claim(_ event: ControlSocket.Claim.Event) {

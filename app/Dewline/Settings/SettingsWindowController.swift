@@ -87,12 +87,14 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     }
 }
 
-/// One pane's settings on the window's background, as tall as they are up to the window's limit, where they scroll.
-private struct SettingsPaneView: View {
+/// One pane's settings as a grouped form, as tall as they are up to the window's limit, where they scroll.
+struct SettingsPaneView: View {
     let pane: SettingsPane
 
     var body: some View {
         content
+            .formStyle(.grouped)
+            .toggleStyle(.switch)
             .frame(width: SettingsWindowController.width, alignment: .top)
             .frame(maxHeight: SettingsWindowController.maxHeight)
             .fixedSize(horizontal: false, vertical: true)

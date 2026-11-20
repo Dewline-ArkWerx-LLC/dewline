@@ -81,22 +81,22 @@ struct AgentsPane: View {
     @State private var hooks = HookStatus()
 
     var body: some View {
-        SettingsPage {
-            SettingsSection(title: "Hooks") {
-                SettingsNote(
-                    "With its hooks, each agent\u{2019}s change carries its name. Without them, its edits still show, labeled Another app."
-                )
-                .padding(.bottom, 10)
+        SettingsForm {
+            Section {
                 ForEach(hooks.agents) { agent in
                     row(agent)
                 }
-                HStack {
+            } header: {
+                Text("Hooks")
+            } footer: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("With its hooks, each agent\u{2019}s change carries its name. Without them, its edits still show, labeled Another app.")
+                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("Set Up All Hooks\u{2026}") { HookSetup.install(from: NSApp.keyWindow) { _ in Task { await refresh() } } }
                         .fixedSize()
                         .help(hooks.version ?? "")
                 }
-                .padding(.top, 8)
             }
         }
         .task { await refresh() }
@@ -121,38 +121,23 @@ struct AgentsPane: View {
         return "Last named edit " + date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
     }
 
-    /// The agent's name, what its hooks give and when they last named an edit, then its state with a symbol on the
-    /// name's baseline, then Set Up or Remove, and Show File when it has a settings file.
+    /// The agent's name, what its hooks give and when they last named an edit, then its state with a symbol, then Set Up or
+    /// Remove, and Show File when it has a settings file.
     private func row(_ agent: HookStatus.Agent) -> some View {
         let (text, symbol, color): (String, String, Color) =
             switch (agent.installed, agent.needsTrust) {
             case (true, false): ("Active", "checkmark.circle.fill", .green)
             case (true, true): ("Installed, needs trust", "exclamationmark.triangle.fill", .orange)
-            default: ("Not set up", "circle.dashed", Station.color(.ink2))
+            default: ("Not set up", "circle.dashed", .secondary)
             }
-        return HStack(alignment: .firstTextBaseline, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(agent.title)
-                    .font(Station.label)
-                    .foregroundStyle(Station.color(.ink))
-                Text(Self.detail(agent.name))
-                    .font(Station.small)
-                    .foregroundStyle(Station.color(.ink2))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(Self.lastEdit(agent.name))
-                    .font(Station.small)
-                    .foregroundStyle(Station.color(.ink2))
-            }
-            .frame(width: 230, alignment: .leading)
-            Label {
-                Text(text).foregroundStyle(Station.color(agent.installed ? .ink : .ink2))
-            } icon: {
-                Image(systemName: symbol).foregroundStyle(color)
-            }
-            .font(Station.label)
-            .help(agent.needsTrust ? "Type /hooks in Codex to trust them." : "")
-            Spacer(minLength: 0)
-            HStack(spacing: 8) {
+        return LabeledContent {
+            HStack {
+                Label {
+                    Text(text).foregroundStyle(agent.installed ? .primary : .secondary)
+                } icon: {
+                    Image(systemName: symbol).foregroundStyle(color)
+                }
+                .help(agent.needsTrust ? "Type /hooks in Codex to trust them." : "")
                 if agent.installed {
                     Button("Remove") { HookSetup.remove(agent.name) { _ in Task { await refresh() } } }
                         .fixedSize()
@@ -167,8 +152,10 @@ struct AgentsPane: View {
                         .help((file as NSString).abbreviatingWithTildeInPath)
                 }
             }
+        } label: {
+            Text(agent.title)
+            Text(Self.detail(agent.name))
+            Text(Self.lastEdit(agent.name))
         }
-        .accessibilityElement(children: .contain)
-        .padding(.vertical, 6)
     }
 }

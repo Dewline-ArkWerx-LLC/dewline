@@ -15,8 +15,8 @@ private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regul
     return label
 }
 
-/// A button that calls `action` when clicked: the prominent one filled with the accent and set in white, the others
-/// bare text in `ink2`.
+/// A button that calls `action` when clicked: the prominent one filled with the theme's accent and set in paper, the
+/// others bare text in `ink2`.
 @MainActor
 private final class ActionButton: NSButton {
     private var handler: () -> Void = {}
@@ -46,7 +46,7 @@ private final class ActionButton: NSButton {
 
     override func updateLayer() {
         layer?.cornerRadius = 6
-        layer?.backgroundColor = prominent ? NSColor.controlAccentColor.resolved(for: effectiveAppearance).cgColor : nil
+        layer?.backgroundColor = prominent ? ThemeStore.shared.color(.accent).resolved(for: effectiveAppearance).cgColor : nil
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -57,7 +57,7 @@ private final class ActionButton: NSButton {
     @objc private func paint() {
         attributedTitle = NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 13, weight: prominent ? .medium : .regular),
-            .foregroundColor: prominent ? NSColor.white : ThemeStore.shared.color(.ink2),
+            .foregroundColor: ThemeStore.shared.color(prominent ? .paper : .ink2),
         ])
         needsDisplay = true
     }
@@ -214,7 +214,7 @@ final class ConflictCard: NSView, Hanging {
     }
 }
 
-/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 of 3 ⌃⌘↓" sits on the change's first text baseline
+/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · saved · 1 of 3 ⌃⌘↓" sits on the change's first text baseline
 /// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column; a narrower margin takes
 /// the compact stamp, "CLAUDE · 1 of 3" over Revert and Keep as icons. Only where the margin is narrower than the
 /// compact stamp plus that 26 pt and a 24 pt gutter does it fold into a 30 pt bar under the block holding the change,
@@ -231,8 +231,13 @@ final class ChangeStamp: NSView {
     private static let gap: CGFloat = 10
     /// What an unnamed change that landed while Claude Code ran a shell command says (X2).
     static let duringShell = "During Claude Code\u{2019}s shell command"
-    /// What a change says once Revert refuses it for text typed inside it.
-    static let typedInside = "You edited inside it: undo that to revert"
+    /// What a change says once Revert finds text typed inside it; Revert then asks before it puts the old text back.
+    static let typedInside = "You edited inside it"
+    /// Whether a change was ever kept or reverted, after which the stamp shows Next Change's keys.
+    private static var decided: Bool {
+        get { UserDefaults.standard.bool(forKey: "DecidedAChange") }
+        set { if newValue != decided { UserDefaults.standard.set(newValue, forKey: "DecidedAChange") } }
+    }
 
     private let revert: StampButton
     private let keep: StampButton
@@ -243,13 +248,17 @@ final class ChangeStamp: NSView {
     private var count = 0
     private var external = false
     private var shell = false
+    private var refused = false
     private(set) var folded = false
     /// Whether Keep and Revert show without the pointer on the stamp.
     var active = true {
         didSet { showButtons() }
     }
     private var hovering = false {
-        didSet { showButtons() }
+        didSet {
+            showButtons()
+            if !Self.decided { needsDisplay = true }
+        }
     }
     private var flags: Any?
     /// Line 1's baseline and left edge, in this view.
@@ -267,14 +276,24 @@ final class ChangeStamp: NSView {
             "Revert", keys: "\u{2325}\u{2318}\u{232B}", style: .outlined, symbol: "arrow.uturn.backward",
             alternate: ("Revert All", "\u{2325}\u{21E7}\u{2318}\u{232B}", #selector(EditorTextView.revertAllChanges(_:))), revert)
         self.keep = StampButton(
-            "Keep", keys: "\u{2318}", returnKey: true, style: .filled, symbol: "checkmark",
-            alternate: ("Keep All", "\u{21E7}\u{2318}", #selector(EditorTextView.keepAllChanges(_:))), keep)
+            "Keep", keys: "\u{2318}\u{21A9}", style: .filled, symbol: "checkmark",
+            alternate: ("Keep All", "\u{21E7}\u{2318}\u{21A9}", #selector(EditorTextView.keepAllChanges(_:))), keep)
         setUp = StampButton("Set up agent hooks\u{2026}", keys: "", style: .link) {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}); with Option, Revert All."
-        self.keep.toolTip = "Already saved. Keep clears the mark. Keep (\u{2318}\u{21A9}); with Option, Keep All."
+        self.revert.handler = { [weak self] in
+            guard let self else { return }
+            if self.refused { return self.confirmRevert() }
+            Self.decided = true
+            revert()
+        }
+        self.keep.handler = {
+            Self.decided = true
+            keep()
+        }
+        self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All (\u{2325}\u{21E7}\u{2318}\u{232B})"
+        self.keep.toolTip = "Already saved; Keep clears the mark. Keep (\u{2318}\u{21A9}). Option-click: Keep All (\u{21E7}\u{2318}\u{21A9})"
         setUp.toolTip = "Name this writer: set up agent hooks"
         setUp.isHidden = true
         note.font = .systemFont(ofSize: 11)
@@ -345,6 +364,10 @@ final class ChangeStamp: NSView {
     func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool, refused: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || count != self.count
+        if writer == self.writer, count < self.count { Self.decided = true }
+        let asks = refused && !self.refused
+        self.refused = refused
+        if asks { Task { [weak self] in self?.confirmRevert() } }
         self.writer = writer
         self.time = time
         self.count = count
@@ -362,6 +385,36 @@ final class ChangeStamp: NSView {
         if external && !shell { offerHooks() }
     }
 
+    /// Revert found your typing inside the change: asks, showing what reverting does to its lines, then puts the old
+    /// text back over it as one undoable edit.
+    private func confirmRevert() {
+        guard let textView = superview as? EditorTextView, let window = textView.window, let live = textView.marks.live else { return }
+        let refused = live.changes.filter { $0.value.refused && $0.value.marked }.sorted { $0.value.range.location > $1.value.range.location }
+        guard let first = refused.last?.value.range, let last = refused.first?.value.range else { return }
+        let text = textView.string as NSString
+        let lines = text.lineRange(for: NSRange(location: first.location, length: NSMaxRange(last) - first.location))
+        let reverted = NSMutableString(string: text.substring(with: lines))
+        for (_, change) in refused {
+            reverted.replaceCharacters(in: NSRange(location: change.range.location - lines.location, length: change.range.length), with: change.removed)
+        }
+        let alert = NSAlert()
+        alert.messageText = "Revert over your typing?"
+        alert.informativeText = "You edited inside this change. Reverting puts the old text back and drops what you typed there:"
+        alert.accessoryView = readOnlyText(EarlierVersions.difference(from: text.substring(with: lines), to: reverted as String))
+        alert.addButton(withTitle: "Revert")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            Self.decided = true
+            textView.history.perform("Revert Change") {
+                for (id, change) in refused where live.changes[id] != nil {
+                    live.keep(id)
+                    textView.replaceAsOneEdit(change.range, with: change.removed)
+                }
+            }
+        }
+    }
+
     private func offerHooks() {
         guard !Self.offeredHooks, !Self.checkingHooks, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         Self.checkingHooks = true
@@ -377,13 +430,14 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 1 of 3 ⌃⌘↓": the writer in small capitals in its ink, the time with fixed-width digits, the
-    /// count and Next Change's keys; "CLAUDE · 1 of 3" in the compact stamp.
+    /// "CLAUDE 3:25 PM · saved · 1 of 3 ⌃⌘↓": the writer in small capitals in its ink, the time with fixed-width digits,
+    /// that it is on disk, the count and Next Change's keys, which take their room but show only under the pointer or
+    /// once a change was decided; "CLAUDE · 1 of 3" in the compact stamp.
     private var line: NSAttributedString {
         line(compact: keep.compact && !folded)
     }
 
-    private func line(compact: Bool) -> NSAttributedString {
+    private func line(compact: Bool, chord: Bool = true) -> NSAttributedString {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
         let line = NSMutableAttributedString(attributedString: writer.stamp)
@@ -395,9 +449,14 @@ final class ChangeStamp: NSView {
         if !compact {
             line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
         }
-        line.append(NSAttributedString(string: " \u{00B7} 1 of \(count)" + (compact ? "" : "  \u{2303}\u{2318}\u{2193}"), attributes: [
+        line.append(NSAttributedString(string: (compact ? "" : " \u{00B7} saved") + " \u{00B7} 1 of \(count)", attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
         ]))
+        if !compact {
+            line.append(NSAttributedString(string: "  \u{2303}\u{2318}\u{2193}", attributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: chord ? ink2 : .clear,
+            ]))
+        }
         return line
     }
 
@@ -490,13 +549,29 @@ final class ChangeStamp: NSView {
             writer.color.withAlphaComponent(0.08).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
-        line.draw(at: NSPoint(x: textX, y: baseline - ascent))
+        line(compact: keep.compact && !folded, chord: hovering || Self.decided).draw(at: NSPoint(x: textX, y: baseline - ascent))
     }
 }
 
-/// Revert (outlined), Keep (filled with the accent, set in white) and a quiet link, each with its keys drawn as keycaps in
-/// SF Pro: ⌥⌘⌫ for Revert, ⌘ and the SF Symbol `return` for Keep. Its width holds its title and its Option title, so
-/// holding Option moves nothing; `compact` shows its symbol alone.
+/// `text` in a selectable, read-only scroll view 480 x 240, for an alert.
+@MainActor
+func readOnlyText(_ text: NSAttributedString) -> NSScrollView {
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 240))
+    let view = NSTextView(frame: scroll.bounds)
+    view.isEditable = false
+    view.textStorage?.setAttributedString(text)
+    view.textContainerInset = NSSize(width: 6, height: 6)
+    view.isVerticallyResizable = true
+    view.autoresizingMask = [.width]
+    scroll.documentView = view
+    scroll.hasVerticalScroller = true
+    scroll.borderType = .bezelBorder
+    return scroll
+}
+
+/// Revert (outlined), Keep (filled with the theme's accent, set in paper) and a quiet link, each with its keys in one
+/// `Keycap`: ⌥⌘⌫ for Revert, ⌘↩ for Keep. Its width holds its title and its Option title, so holding Option moves
+/// nothing; `compact` shows its symbol alone.
 @MainActor
 final class StampButton: NSButton {
     enum Style { case outlined, filled, link }
@@ -508,11 +583,10 @@ final class StampButton: NSButton {
 
     private let style: Style
     private let keys: String
-    private let returnKey: Bool
     private let symbol: String?
     /// The title, keys and action the button takes while Option is down.
     private let alternate: (title: String, keys: String, action: Selector)?
-    private let handler: () -> Void
+    var handler: () -> Void
     var optionDown = false {
         didSet { if optionDown != oldValue, alternate != nil { needsDisplay = true } }
     }
@@ -521,12 +595,11 @@ final class StampButton: NSButton {
     }
 
     init(
-        _ title: String, keys: String, returnKey: Bool = false, style: Style, symbol: String? = nil,
+        _ title: String, keys: String, style: Style, symbol: String? = nil,
         alternate: (title: String, keys: String, action: Selector)? = nil, _ action: @escaping () -> Void
     ) {
         self.style = style
         self.keys = keys
-        self.returnKey = returnKey
         self.symbol = symbol
         self.alternate = alternate
         handler = action
@@ -559,23 +632,22 @@ final class StampButton: NSButton {
         if style == .link {
             return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
         }
-        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: style == .filled ? NSColor.white : store.color(.ink)])
+        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
     }
 
-    private func keycaps(_ keys: String) -> NSAttributedString {
-        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink2)
-        return NSAttributedString(string: keys, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color])
+    private static func caps(_ keys: String) -> [String] {
+        keys.isEmpty ? [] : [keys]
     }
 
     private var symbolImage: NSImage? {
-        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink)
+        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink)
         let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
         return symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config) }
     }
 
     /// The label and keys' width for `title`.
     private func content(_ title: String, _ keys: String) -> CGFloat {
-        label(title).size().width + 5 + keycaps(keys).size().width + (returnImage.map { $0.size.width + 1 } ?? 0)
+        label(title).size().width + (keys.isEmpty ? 0 : 5 + Keycap.width(Self.caps(keys)))
     }
 
     /// The button's width, as icons when `compact`.
@@ -583,13 +655,6 @@ final class StampButton: NSButton {
         if style == .link { return ceil(label(title).size().width) }
         if compact, symbolImage != nil { return 26 }
         return ceil(8 + max(content(title, keys), alternate.map { content($0.title, $0.keys) } ?? 0) + 7)
-    }
-
-    private var returnImage: NSImage? {
-        guard returnKey else { return nil }
-        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink2)
-        let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        return NSImage(systemSymbolName: "return", accessibilityDescription: nil)?.withSymbolConfiguration(config)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -601,7 +666,7 @@ final class StampButton: NSButton {
         let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5.5, yRadius: 5.5)
         switch style {
         case .filled:
-            NSColor.controlAccentColor.withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
+            store.color(.accent).withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         case .outlined:
             if isHighlighted {
@@ -626,15 +691,8 @@ final class StampButton: NSButton {
         let title = shownTitle
         let shownKeys = optionDown ? alternate?.keys ?? keys : keys
         let text = label(title)
-        let caps = keycaps(shownKeys)
-        var x = ((bounds.width - content(title, shownKeys)) / 2).rounded()
+        let x = ((bounds.width - content(title, shownKeys)) / 2).rounded()
         text.draw(at: NSPoint(x: x, y: baseline - Self.font.ascender))
-        x += text.size().width + 5
-        caps.draw(at: NSPoint(x: x, y: baseline - NSFont.systemFont(ofSize: 12).ascender))
-        x += caps.size().width
-        if let image = returnImage {
-            let rect = NSRect(x: x + 1, y: baseline - image.size.height + 1, width: image.size.width, height: image.size.height)
-            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        }
+        Keycap.draw(Self.caps(shownKeys), x: x + text.size().width + 5, midY: bounds.midY, onFill: style == .filled)
     }
 }

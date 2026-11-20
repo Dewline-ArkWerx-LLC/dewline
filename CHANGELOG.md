@@ -4,6 +4,16 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- The window goes as narrow as 420 pt with the sidebar and Changes pane closed, so it shares a laptop screen with a terminal; below 700 pt the sidebar collapses on its own and comes back when the window widens. The Changes pane can narrow to 260 pt.
+- Changes (⇧⌘R) takes the keyboard on the first change; pressed again it hands the keyboard back to the note. In the list, J and K move, Y or Return keeps, X reverts, O reveals. Vim's ]c and [c are Next and Previous Change, and the command palette finds Changes by "Diff" or "Review".
+- Next Change (⌃⌘↓) past the last change in the open notes opens the next note waiting, changed while closed or since the last commit, at its first change, and the status bar says how many more wait.
+- The folder page lists notes deleted since the last commit; opening one shows its committed text, read-only.
+- With agent hooks on, the folder page offers Copy a Test Prompt to make the first marked change.
+- Keep on the change stamp and Keep Yours on the conflict card fill with the theme's accent instead of the system accent.
+- Changes rows show a change over several lines as "+N / −M lines" and open it in full with → or Space; note headings show the path in the folder, session names are small section labels, and changed words take the writer's ink instead of bold.
+- The change stamp reads "CLAUDE 3:25 PM · saved · 1 of 2", shows Next Change's keys only under the pointer or once you've decided a change, draws its shortcuts as keycaps, and its tooltips read "Option-click: Keep All (⇧⌘↩)".
+- The status bar keeps its line in a folder window so messages no longer move the note, reads results and problems to VoiceOver, and shows a problem ahead of a request.
+- Revert on a change you typed inside asks first, showing what it puts back, instead of refusing.
 - Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
 - Images on a dark page draw at 90% brightness inside their faint rim.
 - Display math is centered in the column.

@@ -48,6 +48,8 @@ import Testing
 
     func vimSave() { saves += 1 }
     func vimClose() { closes += 1 }
+    var steps: [Bool] = []
+    func vimStepChange(forward: Bool) { steps.append(forward) }
 
     /// Each key is one event and one undo step, as in the app; insert mode types the key itself, as the text view does.
     func type(_ keys: String) {
@@ -242,6 +244,13 @@ private let table: [VimCase] = [
         #expect(buffer.vim.status == "NORMAL  2d")
         buffer.type("<Esc>/ab")
         #expect(buffer.vim.status == "/ab")
+    }
+
+    @Test func changeKeysStepThroughChanges() {
+        let buffer = Buffer("|ab")
+        buffer.type("]c2[c]x")
+        #expect(buffer.steps == [true, false, false])
+        #expect(buffer.marked == "|ab")
     }
 
     @Test func clipboardRegister() {

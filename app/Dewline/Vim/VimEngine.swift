@@ -15,6 +15,8 @@ enum VimMode {
     func vimRedo()
     func vimSave()
     func vimClose()
+    /// `]c` and `[c`: Next Change and Previous Change.
+    func vimStepChange(forward: Bool)
 }
 
 /// Vim's keys over a host's text and selection, with no window. A key is one character or one of `<Esc>`, `<CR>`,
@@ -155,6 +157,10 @@ enum VimMode {
             case .motion(let name, let argument): return command(key, total, motion: name, argument: argument)
             }
         }
+        if key == "]" || key == "[", !visual {
+            guard let next = take() else { return .pending }
+            return next == "c" ? command(key + next, first) : .invalid
+        }
         if key == "r", !visual {
             guard let next = take() else { return .pending }
             return next.count == 1 ? command("r", first, argument: next) : .invalid
@@ -288,6 +294,8 @@ enum VimMode {
             }
         case "/", "?", ":":
             commandLine = command.name
+        case "]c", "[c":
+            for _ in 0..<count { host.vimStepChange(forward: command.name == "]c") }
         default:
             if started != .normal {
                 mode = .normal

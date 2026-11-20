@@ -91,8 +91,14 @@ enum Command {
         /// Merge Dewline's hooks into Claude Code's, Codex's and Cursor's settings, asking first
         #[arg(long)]
         install_hooks: bool,
+        /// Take Dewline's hooks out of Claude Code's, Codex's and Cursor's settings, asking first
+        #[arg(long, conflicts_with = "install_hooks")]
+        remove_hooks: bool,
+        /// Check, install or remove only this agent's hooks
+        #[arg(long, value_parser = ["claude", "codex", "cursor"])]
+        agent: Option<String>,
         /// Print the broken relative links and CLAUDE.md @imports of the markdown files under DIR, and nothing else
-        #[arg(long, value_name = "DIR", conflicts_with = "install_hooks")]
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["install_hooks", "remove_hooks", "agent"])]
         links: Option<PathBuf>,
     },
 }
@@ -124,7 +130,19 @@ fn main() -> ExitCode {
         Command::Doctor {
             links: Some(dir), ..
         } => doctor::links(&dir),
-        Command::Doctor { install_hooks, .. } => doctor::run(install_hooks),
+        Command::Doctor {
+            install_hooks,
+            remove_hooks,
+            agent,
+            ..
+        } => doctor::run(
+            match (install_hooks, remove_hooks) {
+                (true, _) => doctor::Hooks::Install,
+                (_, true) => doctor::Hooks::Remove,
+                _ => doctor::Hooks::Check,
+            },
+            agent.as_deref(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -311,9 +329,17 @@ mod tests {
             command(&["dewline", "doctor", "--install-hooks"]),
             Ok(Command::Doctor {
                 install_hooks: true,
+                remove_hooks: false,
+                agent: None,
                 links: None
             })
         ));
+        assert!(matches!(
+            command(&["dewline", "doctor", "--remove-hooks", "--agent", "codex"]),
+            Ok(Command::Doctor { remove_hooks: true, agent: Some(name), .. }) if name == "codex"
+        ));
+        assert!(command(&["dewline", "doctor", "--install-hooks", "--remove-hooks"]).is_err());
+        assert!(command(&["dewline", "doctor", "--agent", "vim"]).is_err());
     }
 
     #[test]

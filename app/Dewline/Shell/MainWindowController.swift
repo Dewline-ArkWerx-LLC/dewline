@@ -128,7 +128,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let folder {
             window.title = FileManager.default.displayName(atPath: folder.url.path)
             window.representedURL = folder.url
-            setPage(Self.emptyPage())
+            setPage(emptyPage(in: folder.url))
         }
         updateTitle()
         updateNavigation()
@@ -172,21 +172,75 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ])
     }
 
-    /// "No note open", with how to pick or make one.
-    private static func emptyPage() -> NSView {
-        let hint = NSTextField(wrappingLabelWithString: "No note open. Pick one in the sidebar, or press ⌘N for a new one.")
-        hint.font = Chrome.label
-        hint.textColor = Chrome.color(.ink2)
-        hint.alignment = .center
-        hint.translatesAutoresizingMaskIntoConstraints = false
+    /// The empty page's agent hooks line, filled in once `dewline doctor` answers.
+    private let hookLine = NSStackView()
+
+    /// The page of a folder with no note open: that Dewline watches the folder and what an agent's edit does, how to
+    /// pick or make a note, CLAUDE.md or README.md in one click, and whether agent hooks are on.
+    private func emptyPage(in folder: URL) -> NSView {
+        func label(_ text: String, _ ink: Token) -> NSTextField {
+            let label = NSTextField(wrappingLabelWithString: text)
+            label.font = Chrome.label
+            label.textColor = Chrome.color(ink)
+            label.alignment = .center
+            label.preferredMaxLayoutWidth = 360
+            return label
+        }
+        let stack = NSStackView(views: [
+            label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path)).", .ink),
+            label("Ask an agent to edit a note here; the change shows marked, ready to keep or revert.", .ink2),
+            label("Pick a note in the sidebar, or press \u{2318}N\u{00A0}for\u{00A0}a\u{00A0}new\u{00A0}one.", .ink2),
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 6
+        if let suggested = ["CLAUDE.md", "README.md"].map({ folder.appending(path: $0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+            let open = NSButton(title: "Open \(suggested.lastPathComponent)", target: self, action: #selector(openSuggested(_:)))
+            open.identifier = NSUserInterfaceItemIdentifier(suggested.path)
+            stack.addView(open, in: .center)
+            stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
+        }
+        hookLine.spacing = 6
+        stack.addView(hookLine, in: .center)
+        stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
+        updateHookLine(in: folder)
+        stack.translatesAutoresizingMaskIntoConstraints = false
         let empty = PaperView()
-        empty.addSubview(hint)
+        empty.addSubview(stack)
         NSLayoutConstraint.activate([
-            hint.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
-            hint.centerYAnchor.constraint(equalTo: empty.centerYAnchor),
-            hint.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+            stack.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: empty.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
         ])
         return empty
+    }
+
+    /// "Agent hooks are on", or Set Up Agent Hooks… while no agent has them. The test host runs no doctor.
+    private func updateHookLine(in folder: URL) {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        Task { [weak self] in
+            let on = await Task.detached { HookStatus.read(in: folder).any }.value
+            guard let self else { return }
+            hookLine.views.forEach { $0.removeFromSuperview() }
+            if on {
+                let text = NSTextField(labelWithString: "Agent hooks are on.")
+                text.font = Chrome.label
+                text.textColor = Chrome.color(.ink2)
+                hookLine.addView(text, in: .center)
+            } else {
+                hookLine.addView(NSButton(title: "Set Up Agent Hooks\u{2026}", target: self, action: #selector(setUpAgentHooks(_:))), in: .center)
+            }
+        }
+    }
+
+    @objc private func openSuggested(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue else { return }
+        open(URL(filePath: path), newTab: false)
+    }
+
+    @objc private func setUpAgentHooks(_ sender: Any?) {
+        guard let folder else { return }
+        HookSetup.install(from: window, in: folder.url) { [weak self] _ in self?.updateHookLine(in: folder.url) }
     }
 
     override func setDocumentEdited(_ dirtyFlag: Bool) {

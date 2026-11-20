@@ -55,7 +55,7 @@ struct AppearancePane: View {
 }
 
 /// A theme as a window in miniature, in its own mode, with its name under it. A 1.5 pt signal ring, 2 pt
-/// out, marks the theme its mode uses.
+/// out, marks the theme its mode uses; the name keeps its weight, so selecting one doesn't shift its line.
 private struct ThemeCard: View {
     let theme: Theme
     let store: ThemeStore
@@ -79,7 +79,7 @@ private struct ThemeCard: View {
                             .strokeBorder(selected ? Station.color(.accent) : .clear, lineWidth: 1.5)
                     )
                 Text(theme.name)
-                    .font(selected ? Station.labelActive : Station.label)
+                    .font(Station.label)
                     .foregroundStyle(Station.color(selected ? .ink : .ink2))
                     .padding(.horizontal, 3.5)
             }

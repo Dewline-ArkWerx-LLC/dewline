@@ -53,7 +53,7 @@ struct SettingsPaneTests {
     @Test func hookStatusReadsEachAgentsSettings() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
-        #expect(HookStatus.read(home: home).agents == [false, false])
+        #expect(HookStatus.read(home: home).pair == [false, false])
 
         try FileManager.default.createDirectory(at: home.appending(path: ".claude"), withIntermediateDirectories: true)
         // Every event `dewline doctor --install-hooks` writes, each calling `dewline notify --hook <agent>`.
@@ -63,13 +63,14 @@ struct SettingsPaneTests {
         }
         try hooks("claude", ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "InstructionsLoaded"])
             .write(to: home.appending(path: ".claude/settings.json"))
-        #expect(HookStatus.read(home: home).agents == [true, false])
+        #expect(HookStatus.read(home: home).pair == [true, false])
+        #expect(HookStatus.read(home: home).agents[0].file == home.appending(path: ".claude/settings.json").path)
 
         try FileManager.default.createDirectory(at: home.appending(path: ".codex"), withIntermediateDirectories: true)
         try Data("model = \"gpt\"\n".utf8).write(to: home.appending(path: ".codex/config.toml"))
         #expect(HookStatus.read(home: home).codex == false)
         try hooks("codex", ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]).write(to: home.appending(path: ".codex/hooks.json"))
-        #expect(HookStatus.read(home: home).agents == [true, true])
+        #expect(HookStatus.read(home: home).pair == [true, true])
         #expect(HookStatus.read(home: home).codexNeedsTrust)
     }
 
@@ -96,5 +97,5 @@ struct SettingsPaneTests {
 
 private extension HookStatus {
     /// Claude Code's and Codex's hooks, as the doctor reports them.
-    var agents: [Bool] { [claude, codex] }
+    var pair: [Bool] { [claude, codex] }
 }

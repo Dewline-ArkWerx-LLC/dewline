@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Dewline > Settings: a standard preferences window, 640 by 480, with one toolbar button per pane. It opens on the
-/// pane last shown.
+/// Dewline > Settings: a standard preferences window, 640 wide, with one toolbar button per pane. Each pane is as tall
+/// as its content, up to 720, and the window resizes to it as panes change. It opens on the pane last shown.
 final class SettingsWindowController: NSWindowController {
     private static var shared: SettingsWindowController?
     static let paneKey = "DewlineSettingsPane"
-    static let size = NSSize(width: 640, height: 480)
+    static let width: CGFloat = 640
+    static let maxHeight: CGFloat = 720
 
     @objc static func showSettings(_ sender: Any?) {
         let controller = shared ?? SettingsWindowController()
@@ -20,10 +21,10 @@ final class SettingsWindowController: NSWindowController {
         tabs.tabStyle = .toolbar
         for pane in SettingsPane.allCases {
             let host = NSHostingController(rootView: SettingsPaneView(pane: pane))
-            host.sizingOptions = []
+            // The tab view controller sizes the window to the selected pane's preferred size.
+            host.sizingOptions = .preferredContentSize
             // The tab view controller titles the window from the selected pane's controller.
             host.title = pane.rawValue
-            host.view.frame.size = Self.size
             let item = NSTabViewItem(viewController: host)
             item.label = pane.rawValue
             item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.rawValue)
@@ -35,19 +36,31 @@ final class SettingsWindowController: NSWindowController {
         window.styleMask = [.titled, .closable]
         window.title = last.rawValue
         window.isRestorable = false
-        window.setContentSize(Self.size)
+        tabs.fit(animate: false)
         window.center()
         self.init(window: window)
     }
 }
 
-/// Remembers the pane each time one is picked.
+/// Remembers the pane each time one is picked, and fits the window to it.
 private final class SettingsTabs: NSTabViewController {
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
         if let name = tabViewItem?.identifier as? String {
             UserDefaults.standard.set(name, forKey: SettingsWindowController.paneKey)
         }
+        fit(animate: true)
+    }
+
+    /// Sizes the window to the selected pane, keeping its top edge where it is.
+    func fit(animate: Bool) {
+        guard let window = view.window, tabViewItems.indices.contains(selectedTabViewItemIndex),
+            let pane = tabViewItems[selectedTabViewItemIndex].viewController
+        else { return }
+        let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.view.fittingSize)).size
+        guard size != window.frame.size else { return }
+        let frame = NSRect(x: window.frame.minX, y: window.frame.maxY - size.height, width: size.width, height: size.height)
+        window.setFrame(frame, display: true, animate: animate && window.isVisible)
     }
 }
 
@@ -72,13 +85,15 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     }
 }
 
-/// One pane's settings on the window's background.
+/// One pane's settings on the window's background, as tall as they are up to the window's limit, where they scroll.
 private struct SettingsPaneView: View {
     let pane: SettingsPane
 
     var body: some View {
         content
-            .frame(width: SettingsWindowController.size.width, height: SettingsWindowController.size.height, alignment: .top)
+            .frame(width: SettingsWindowController.width, alignment: .top)
+            .frame(maxHeight: SettingsWindowController.maxHeight)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder

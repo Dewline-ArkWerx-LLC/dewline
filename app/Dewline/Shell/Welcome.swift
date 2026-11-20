@@ -7,9 +7,12 @@ import MdCore
 enum Welcome {
     /// True once the first launch wrote the guide and opened it.
     static let shownKey = "DewlineWelcomeShown"
-    /// The sentence the demo extends, in the paragraph that holds its link, and what it adds.
-    static let paragraph = "Dewline marks each change so you can keep or revert it."
-    static let addition = " This sentence came from outside the editor, the way an agent\u{2019}s edit arrives."
+    /// The demo's two edits: the words before the link it replaces, and the paragraph it inserts after the one that
+    /// says what Keep and Revert do.
+    static let replaced = "Try it:"
+    static let replacement = "Here it is, written from outside the editor:"
+    static let anchor = "Revert puts the old text back.\n"
+    static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open.\n"
 
     static var bundled: URL {
         Bundle.main.url(forResource: "Welcome", withExtension: "md")!
@@ -35,18 +38,16 @@ enum Welcome {
     }
 }
 
-/// "Show me a change" in Welcome.md: a writer named Demo extends the paragraph that holds the link through the change
-/// engine, claimed as an agent's hooks claim a write, so it lands marked with Keep and Revert where the reader is
-/// looking.
+/// "Show me a change" in Welcome.md: the demo writer rewrites the words before the link and inserts a paragraph below
+/// it through the change engine, claimed as an agent's hooks claim a write, so two changes land marked with Keep and
+/// Revert where the reader is looking.
 @MainActor
 final class WelcomeDemo {
     private static var running: WelcomeDemo?
 
     private weak var document: MarkdownDocument?
     private let url: URL
-    private var observer: (any NSObjectProtocol)?
     private var start: Task<Void, Never>?
-    private var landed = false
 
     private init(_ document: MarkdownDocument, url: URL) {
         self.document = document
@@ -57,61 +58,42 @@ final class WelcomeDemo {
         running?.stop()
         let demo = WelcomeDemo(document, url: url)
         running = demo
-        demo.observer = NotificationCenter.default.addObserver(forName: LiveFile.changesDidChange, object: nil, queue: .main) { [weak demo] note in
-            let live = note.object as? LiveFile
-            MainActor.assumeIsolated {
-                guard let demo, let live, live === demo.document?.live else { return }
-                demo.changed(live)
-            }
-        }
         demo.start = Task { [weak demo] in
             // Long enough to see the paragraph change after the click.
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             demo?.write()
+            if running === demo { running = nil }
         }
     }
 
     private func stop() {
         start?.cancel()
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
         if Self.running === self { Self.running = nil }
     }
 
-    /// Demo's claimed write: PreToolUse with the bytes it declares, the write, PostToolUse, then the turn's end.
+    /// The demo's claimed write: PreToolUse with the bytes it declares, the write, PostToolUse, then the turn's end.
     private func write() {
         guard let engine = document?.live?.engine, let before = try? Data(contentsOf: url),
             let real = realpath(url.path, nil)
-        else { return stop() }
+        else { return }
         let path = String(cString: real)
         free(real)
         let text = String(decoding: before, as: UTF8.self)
-        guard text.contains(Welcome.paragraph), !text.contains(Welcome.paragraph + Welcome.addition) else { return stop() }
-        let after = Data(text.replacingOccurrences(of: Welcome.paragraph, with: Welcome.paragraph + Welcome.addition).utf8)
+        guard let replaced = text.range(of: Welcome.replaced), let anchor = text.range(of: Welcome.anchor), replaced.upperBound <= anchor.lowerBound,
+            !text.contains(Welcome.inserted)
+        else { return }
+        let edited = text[..<replaced.lowerBound] + Welcome.replacement + text[replaced.upperBound..<anchor.upperBound] + Welcome.inserted
+            + text[anchor.upperBound...]
+        let after = Data(edited.utf8)
         let id = UUID().uuidString
         func claim(_ event: ControlSocket.Claim.Event) {
             LiveFile.claim(ControlSocket.Claim(vendor: .demo, session: "welcome", event: event), engine: engine)
         }
         claim(.preToolUse(.init(id: id, tool: .write, path: path, hash: Self.hex(before), declared: Self.hex(after))))
-        do {
-            try after.write(to: url)
-        } catch {
-            return stop()
-        }
+        guard (try? after.write(to: url)) != nil else { return }
         claim(.postToolUse(.init(id: id, tool: .write, path: path, hash: Self.hex(after), declared: nil)))
         claim(.turnEnd)
-    }
-
-    /// Stops listening once Demo's change has landed and been kept or reverted, then offers to set up agent hooks.
-    private func changed(_ live: LiveFile) {
-        let pending = live.changes.values.contains { change in
-            if case .agent(.demo, _) = change.origin { change.marked } else { false }
-        }
-        guard !pending else { return landed = true }
-        guard landed else { return }
-        stop()
-        if let window = document?.windowForSheet { HookSetup.offer(on: window) }
     }
 
     private static func hex(_ data: Data) -> String {

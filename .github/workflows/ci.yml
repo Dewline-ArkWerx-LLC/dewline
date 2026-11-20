@@ -9,11 +9,12 @@ on:
 permissions:
   contents: read
 
-# Pull requests cancel their older runs. Pushes to main queue instead, so every commit on main gets a verdict.
+# Pull requests cancel their older runs. Pushes to main queue instead, so every commit on main gets a verdict. GitHub
+# rejects queue: max beside cancel-in-progress: true, so the queue follows the event too.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-  queue: max
+  queue: ${{ github.event_name == 'pull_request' && 'single' || 'max' }}
 
 jobs:
   # Pull requests that change only site/, docs/, .github/ISSUE_TEMPLATE/ or the Markdown at the root skip the rust and

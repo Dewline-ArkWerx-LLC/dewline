@@ -35,6 +35,8 @@ use baseline::{ClosedWrite, Earlier, Waiting, restore};
 
 const YOU: &str = "You";
 const UNKNOWN: &str = "Unknown app";
+/// A save that holds a reverted change.
+const REVERT: &str = "You (Revert)";
 /// Larger files don't open, and a file that grows past it reads as unreadable.
 const MAX_FILE: u64 = 64 << 20;
 /// How often `collaborate` snapshots a buffer that collaborators edit.
@@ -110,7 +112,7 @@ impl Origin {
             session: session.into(),
         };
         match label.split_once(':') {
-            _ if label == YOU => Origin::User,
+            _ if label == YOU || label == REVERT => Origin::User,
             _ if label == "git" => Origin::Git { action: None },
             Some(("git", action)) => Origin::Git {
                 action: Some(action.into()),
@@ -361,6 +363,11 @@ struct Doc {
     collaborated: Option<Instant>,
     /// Opened over a closed write: the writer of a landing from this base.
     closed: Option<(Hash, Origin)>,
+    /// The ancestor hash and disk time of the unnamed landing that made the
+    /// base, so a late claim names its snapshot.
+    landed: Option<(Hash, Instant)>,
+    /// A revert changed the buffer since the last save.
+    reverted: bool,
     /// Bumped whenever the base or the disk changes.
     generation: u64,
 }
@@ -456,6 +463,13 @@ impl Engine {
         };
         let (gitdir, head) = self.find_repo(&real, now);
         let agent_file = self.agents.matches(path) || self.agents.matches(&real);
+        // A base the history already ends with goes in again only as "Unknown app".
+        let base_kept = base_hash != disk_hash
+            || self.store.list(&real).is_ok_and(|history| {
+                history
+                    .first()
+                    .is_some_and(|newest| newest.hash == base_hash)
+            });
         let mut state = self.state();
         let (changes, marks) = match (&seen, &contents) {
             (Some(seen), text::Opened::Utf8 { text, .. }) if seen.hash == base_hash => {
@@ -474,7 +488,7 @@ impl Engine {
             base,
             base_hash,
             base_origin: Origin::External,
-            base_kept: base_hash != disk_hash,
+            base_kept,
             disk: Disk::Seen {
                 hash: disk_hash,
                 bytes: disk,
@@ -487,6 +501,8 @@ impl Engine {
             drafted: false,
             collaborated: None,
             closed,
+            landed: None,
+            reverted: false,
             generation: 0,
         };
         let id = DocId(state.next());
@@ -701,8 +717,11 @@ impl Engine {
             let (start, end, theirs) = differing(buffer, &theirs);
             let card = Conflict { start, end, theirs };
             (Vec::new(), None, vec![card])
-        } else {
+        } else if dirty {
             (merge.edits, merge.covering, merge.conflicts)
+        } else {
+            let edits = merge::coalesce(buffer, merge.edits);
+            (edits, merge.covering, merge.conflicts)
         };
         let originals = slices(buffer, edits.iter().map(|edit| (edit.start, edit.end)));
 
@@ -865,6 +884,8 @@ impl Engine {
         d.base = bytes.clone();
         d.base_hash = pending.to;
         d.bom = pending.bom;
+        d.landed = matches!(pending.origin, Origin::External | Origin::Git { .. })
+            .then_some((pending.from, pending.seen));
         d.base_origin = pending.origin;
         d.base_kept = true;
         if pending.edits {
@@ -896,7 +917,7 @@ impl Engine {
         let serial = self.serial(doc).ok_or(SaveRefused::Closed)?;
         let _serial = lock(&serial);
         let (now, wall) = (self.clock)();
-        let (path, private, bom, base, base_hash, kept, refused, gone) = {
+        let (path, private, bom, base, base_hash, kept, refused, gone, reverted) = {
             let state = self.state();
             let d = state.docs.get(&doc).ok_or(SaveRefused::Closed)?;
             if d.read_only {
@@ -941,6 +962,7 @@ impl Engine {
                 kept,
                 refused,
                 matches!(d.disk, Disk::Gone),
+                d.reverted,
             )
         };
         let bytes = text::encode(buffer, bom);
@@ -970,6 +992,8 @@ impl Engine {
         }
         self.see(&path, private, &bytes, wall);
         let hash = blake3::hash(&bytes);
+        // A revert is history the decision made, not typing.
+        let reverted = reverted && !private && self.store.put(&path, &bytes, REVERT, wall).is_ok();
         let drafted = {
             let mut state = self.state();
             let d = state.docs.get_mut(&doc).ok_or(SaveRefused::Closed)?;
@@ -981,7 +1005,9 @@ impl Engine {
             d.base = bytes.clone();
             d.base_hash = hash;
             d.base_origin = Origin::User;
-            d.base_kept = false;
+            d.base_kept = reverted;
+            d.landed = None;
+            d.reverted = false;
             d.disk = Disk::Seen {
                 hash,
                 bytes,
@@ -1049,6 +1075,7 @@ impl Engine {
                 _ => None,
             };
             let decided = d.changes.remove(at);
+            d.reverted |= reverted.is_some();
             let kept = !matches!(
                 (&decided.kind, decision),
                 (Kind::Edit { .. }, Decision::Other) | (Kind::Conflict { .. }, Decision::Keep)
@@ -1142,6 +1169,11 @@ impl Engine {
                     .map(|change| (change.from, change.to, change.seen))
                     .collect();
                 links.dedup();
+                if let Some((from, seen)) = d.landed
+                    && !links.contains(&(from, d.base_hash, seen))
+                {
+                    links.push((from, d.base_hash, seen));
+                }
                 for (from, to, seen) in links {
                     let Some(chain) = claims.chain(&d.path, &from, &to, seen) else {
                         continue;
@@ -1151,17 +1183,17 @@ impl Engine {
                         session: chain.session.as_str().to_owned(),
                     };
                     claims.spend(&chain, now);
+                    let mut label = None;
+                    if d.landed == Some((from, seen)) && to == d.base_hash {
+                        label = Some(d.base_origin.label());
+                        d.base_origin = origin.clone();
+                        d.landed = None;
+                    }
                     for change in d.changes.iter_mut().filter(|change| {
                         (change.from, change.to, change.seen) == (from, to, seen)
                             && unnamed(&change.origin)
                     }) {
-                        relabels.push((
-                            d.path.clone(),
-                            to,
-                            change.origin.label(),
-                            origin.label(),
-                            d.private,
-                        ));
+                        label.get_or_insert_with(|| change.origin.label());
                         change.origin = origin.clone();
                         change.marked = true;
                         updates.push(Update::Relabeled {
@@ -1169,6 +1201,9 @@ impl Engine {
                             change: change.id,
                             origin: origin.clone(),
                         });
+                    }
+                    if let Some(label) = label {
+                        relabels.push((d.path.clone(), to, label, origin.label(), d.private));
                     }
                 }
                 if let Some(pending) = d.landing.as_mut()
@@ -2021,6 +2056,12 @@ mod tests {
         );
         assert_eq!(fx.engine.decide(doc, *id, Decision::Other, "cow"), None);
         assert_eq!(fx.engine.decide(DocId(999), *id, Decision::Keep, ""), None);
+        // The revert's save is history under its own name.
+        fx.engine.save(doc, "The cat sat.\n", 2, auto()).unwrap();
+        assert_eq!(
+            fx.origins(&path).last().unwrap(),
+            &("The cat sat.\n".to_owned(), REVERT.to_owned())
+        );
     }
 
     #[test]
@@ -2121,8 +2162,26 @@ mod tests {
                 None,
             ))
             .unwrap();
-        let (inside, _) = fx.land(doc, &buffer, 5);
+        let (inside, buffer) = fx.land(doc, &buffer, 5);
         assert_eq!(inside.origin, Origin::External);
+
+        // Decided before the hooks report: its snapshot is still named.
+        let last = "a\nb\nc\nd\nsomeone\ne\n";
+        fx.replace(&path, last);
+        let (decided, _) = fx.land(doc, &buffer, 7);
+        for (id, _) in &decided.edits {
+            fx.engine.decide(doc, *id, Decision::Keep, "");
+        }
+        fx.tick(4_000);
+        let post = claim("PostToolUse", "s1", "t4", &path, last, None);
+        fx.engine.claim(post).unwrap();
+        let before = "a\nb\nc\nd\nsomeone\n";
+        let pre = claim("PreToolUse", "s1", "t4", &path, before, Some(last));
+        fx.engine.claim(pre).unwrap();
+        assert_eq!(
+            fx.origins(&path).last().unwrap(),
+            &(last.to_owned(), "claude:s1".to_owned())
+        );
     }
 
     #[test]

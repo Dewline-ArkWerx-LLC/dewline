@@ -107,11 +107,12 @@ struct SettingsNote: View {
     }
 }
 
-/// One setting: its name in a 230 pt column and its control after.
+/// One setting: its name in a 230 pt column and its control after. The name dims with a disabled control.
 struct SettingsRow<Control: View>: View {
     let label: String
     var detail: String?
     @ViewBuilder let control: Control
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         VStack(spacing: 0) {
@@ -128,6 +129,7 @@ struct SettingsRow<Control: View>: View {
                     }
                 }
                 .frame(width: 230, alignment: .leading)
+                .opacity(enabled ? 1 : 0.45)
                 control
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -138,22 +140,22 @@ struct SettingsRow<Control: View>: View {
     }
 }
 
-/// One of a few choices: a segmented control for up to three short ones, else a pop-up menu.
+/// One of a few choices: a segmented control for up to three short ones, else a `MenuField`.
 struct TextChoice<Value: Hashable>: View {
     let label: String
     @Binding var selection: Value
     let options: [(String, Value)]
 
     var body: some View {
-        let picker = Picker(label, selection: $selection) {
-            ForEach(options.indices, id: \.self) { Text(options[$0].0).tag(options[$0].1) }
-        }
-        .labelsHidden()
-        .fixedSize()
         if options.count <= 3, options.allSatisfy({ $0.0.count <= 12 }) {
-            picker.pickerStyle(.segmented)
+            Picker(label, selection: $selection) {
+                ForEach(options.indices, id: \.self) { Text(options[$0].0).tag(options[$0].1) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .pickerStyle(.segmented)
         } else {
-            picker.pickerStyle(.menu)
+            MenuField(label, selection: $selection, options: options)
         }
     }
 }
@@ -348,7 +350,7 @@ struct RestoreDefaults: View {
         HStack {
             Spacer()
             Button("Restore Defaults", action: restore)
-                .buttonStyle(.station(.text))
+                .buttonStyle(.station)
         }
     }
 }

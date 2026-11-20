@@ -136,7 +136,7 @@ struct LiveFileTests {
         let ghosts = file.live.changes.compactMap { id, change in
             (marks.hangers[id]?.view as? Ghost).flatMap { ghost in ghost.inlineWidth.map { (ghost, $0, change) } }
         }
-        #expect(ghosts.map { $0.2.removed }.sorted() == ["can", "you"])
+        #expect(ghosts.map { $0.2.removed } == [" you can"])
         // The styler opens each gap, then the marks lay out again.
         await waitForMain {
             ghosts.allSatisfy { storage.attribute(.kern, at: $0.2.range.location - 1, effectiveRange: nil) as? CGFloat == $0.1 }

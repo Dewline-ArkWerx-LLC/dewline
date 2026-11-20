@@ -2,7 +2,7 @@ import AppKit
 import MdCore
 
 /// File > Earlier Versions…: a sheet listing the note's snapshots, newest first ("Today, 9:41 AM · Claude Code"),
-/// with a Pin box on each, and beside the list what restoring the selected one would change in the current text.
+/// with a pin on each, and beside the list what restoring the selected one would change in the current text.
 /// Restore is one undoable edit; Open as Copy writes it to a new note beside this one.
 @MainActor
 final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegate {
@@ -13,6 +13,7 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
     let sheet: NSWindow
     private let table = NSTableView()
     private let diff = NSTextView()
+    private let heading = NSTextField(labelWithString: "")
     private let empty = NSTextField(labelWithString: "No earlier versions yet.")
     private let restore = NSButton(title: "Restore", target: nil, action: nil)
     private let copy = NSButton(title: "Open as Copy", target: nil, action: nil)
@@ -33,6 +34,7 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
         sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 460), styleMask: [.titled, .resizable], backing: .buffered, defer: true)
         super.init()
         sheet.title = "Earlier Versions"
+        heading.stringValue = "Earlier Versions of \(document.fileURL?.lastPathComponent ?? document.displayName ?? "")"
         sheet.minSize = NSSize(width: 560, height: 320)
         build()
         live.reloadSnapshots { [weak self] in self?.reload() }
@@ -51,12 +53,16 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let list = NSScrollView()
         list.documentView = table
         list.hasVerticalScroller = true
+        list.autohidesScrollers = true
+        heading.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        heading.lineBreakMode = .byTruncatingMiddle
         diff.isEditable = false
         diff.textContainerInset = NSSize(width: 12, height: 12)
         diff.setAccessibilityLabel("What restoring changes")
         let pane = NSScrollView()
         pane.documentView = diff
         pane.hasVerticalScroller = true
+        pane.autohidesScrollers = true
         diff.autoresizingMask = [.width]
         diff.isVerticallyResizable = true
         empty.textColor = .secondaryLabelColor
@@ -70,12 +76,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let buttons = NSStackView(views: [copy, NSView(), cancel, restore])
         buttons.spacing = 8
         let root = NSView()
-        for view in [list, pane, buttons, empty] as [NSView] {
+        for view in [heading, list, pane, buttons, empty] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            list.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            heading.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            heading.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            heading.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -16),
+            list.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 12),
             list.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
             list.widthAnchor.constraint(equalToConstant: 300),
             list.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
@@ -90,6 +99,7 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
             empty.centerYAnchor.constraint(equalTo: list.centerYAnchor),
         ])
         sheet.contentView = root
+        sheet.initialFirstResponder = table
     }
 
     var snapshots: [ChangeEngine.Snapshot] {
@@ -112,10 +122,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let snapshot = snapshots[row]
-        let title = NSTextField(labelWithString: Self.title(of: snapshot))
+        let seconds = snapshots.contains { $0.id != snapshot.id && Calendar.current.isDate($0.time, equalTo: snapshot.time, toGranularity: .minute) }
+        let title = NSTextField(labelWithString: Self.title(of: snapshot, seconds: seconds))
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let pin = NSButton(checkboxWithTitle: "Pin", target: self, action: #selector(pinChanged(_:)))
+        let pin = NSButton(image: NSImage(systemSymbolName: "pin", accessibilityDescription: "Pin") ?? NSImage(), target: self, action: #selector(pinChanged(_:)))
+        pin.setButtonType(.toggle)
+        pin.alternateImage = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")
+        pin.isBordered = false
+        pin.contentTintColor = .secondaryLabelColor
         pin.state = snapshot.pinned ? .on : .off
         pin.tag = row
         pin.toolTip = "A pinned version is kept until you unpin it."
@@ -200,13 +215,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
 }
 
 extension EarlierVersions {
-    /// "Today, 9:41 AM · Claude Code".
-    static func title(of snapshot: ChangeEngine.Snapshot) -> String {
+    /// "Today, 9:41 AM · Claude Code", with seconds when another snapshot shares its minute.
+    static func title(of snapshot: ChangeEngine.Snapshot, seconds: Bool = false) -> String {
         let day = DateFormatter()
         day.dateStyle = .medium
         day.timeStyle = .none
         day.doesRelativeDateFormatting = true
-        return "\(day.string(from: snapshot.time)), \(snapshot.time.formatted(date: .omitted, time: .shortened)) \u{00B7} \(writer(snapshot.origin))"
+        let time = snapshot.time.formatted(date: .omitted, time: seconds ? .standard : .shortened)
+        let name = snapshot.label == "You (Revert)" ? snapshot.label : writer(snapshot.origin)
+        return "\(day.string(from: snapshot.time)), \(time) \u{00B7} \(name)"
     }
 
     static func writer(_ origin: ChangeEngine.Origin) -> String {
@@ -223,8 +240,8 @@ extension EarlierVersions {
         }
     }
 
-    /// What restoring `old` over `current` does, line by line: lines it brings back in ink, lines it removes struck
-    /// in ink 2, and two unchanged lines of context around each, the rest elided.
+    /// What restoring `old` over `current` does, line by line, in full: lines it brings back after + on a green tint,
+    /// lines it removes struck after − on a red tint, the rest in ink 2.
     static func difference(from current: String, to old: String) -> NSAttributedString {
         func lines(_ text: String) -> [String] {
             let lines = text.components(separatedBy: "\n")
@@ -256,28 +273,30 @@ extension EarlierVersions {
                 j += 1
             }
         }
-        let near = Set(lines.indices.filter { lines[$0].1 != .same }.flatMap { ($0 - 2)...($0 + 2) })
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let out = NSMutableAttributedString()
-        guard !near.isEmpty else {
+        guard lines.contains(where: { $0.1 != .same }) else {
             return NSAttributedString(string: "Same as the current text.", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor])
         }
-        var elided = false
-        for (index, (line, kind)) in lines.enumerated() {
-            guard near.contains(index) else {
-                if !elided { out.append(NSAttributedString(string: "\u{2026}\n", attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])) }
-                elided = true
-                continue
-            }
-            elided = false
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let out = NSMutableAttributedString()
+        for (line, kind) in lines {
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+            let gutter: String
             switch kind {
-            case .same: attributes[.foregroundColor] = NSColor.secondaryLabelColor
-            case .back: attributes[.font] = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
-            case .gone:
+            case .same:
+                gutter = "  "
                 attributes[.foregroundColor] = NSColor.secondaryLabelColor
+            case .back:
+                gutter = "+ "
+                attributes[.backgroundColor] = NSColor.systemGreen.withAlphaComponent(0.16)
+            case .gone:
+                gutter = "\u{2212} "
+                attributes[.backgroundColor] = NSColor.systemRed.withAlphaComponent(0.14)
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
+            var mark = attributes
+            mark[.strikethroughStyle] = nil
+            mark[.foregroundColor] = NSColor.tertiaryLabelColor
+            out.append(NSAttributedString(string: gutter, attributes: mark))
             out.append(NSAttributedString(string: line + "\n", attributes: attributes))
         }
         return out

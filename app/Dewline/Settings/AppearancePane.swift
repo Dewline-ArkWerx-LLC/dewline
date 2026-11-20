@@ -4,18 +4,11 @@ struct AppearancePane: View {
     @Bindable var store: ThemeStore
 
     var body: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 2)
         SettingsPage {
             SettingsSection(title: "Theme") {
-                SettingsRow(label: "Light") {
-                    LazyVGrid(columns: columns, alignment: .leading) {
-                        ForEach(Theme.light) { ThemeCard(theme: $0, store: store, dark: false) }
-                    }
-                }
-                SettingsRow(label: "Dark") {
-                    LazyVGrid(columns: columns, alignment: .leading) {
-                        ForEach(Theme.dark) { ThemeCard(theme: $0, store: store, dark: true) }
-                    }
+                HStack(alignment: .top, spacing: 16) {
+                    themes("Light", Theme.light, dark: false)
+                    themes("Dark", Theme.dark, dark: true)
                 }
             }
             SettingsSection(note: "Match system follows macOS between the light theme and the dark one.") {
@@ -51,6 +44,20 @@ struct AppearancePane: View {
                 store.columnWidth = factory.columnWidth
             }
         }
+    }
+
+    /// One mode's themes in a row under its name; the two modes side by side put every card in one row.
+    private func themes(_ mode: String, _ themes: [Theme], dark: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(mode)
+                .font(Station.label)
+                .foregroundStyle(Station.color(.ink))
+                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .top, spacing: 16) {
+                ForEach(themes) { ThemeCard(theme: $0, store: store, dark: dark).frame(maxWidth: .infinity) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

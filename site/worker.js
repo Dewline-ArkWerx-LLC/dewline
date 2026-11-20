@@ -16,13 +16,7 @@ export default {
     if (slug === "download") {
       to = dmg;
     } else if (Object.hasOwn(links, slug)) {
-      const link = links[slug];
-      to = new URL(link.to, url);
-      if (to.origin === url.origin) {
-        to.searchParams.set("utm_source", link.source);
-        to.searchParams.set("utm_medium", link.medium);
-        to.searchParams.set("utm_campaign", slug);
-      }
+      to = new URL(links[slug], url);
     } else {
       return redirect(new URL("/", url));
     }

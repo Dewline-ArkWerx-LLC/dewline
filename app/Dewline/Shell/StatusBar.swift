@@ -1,7 +1,7 @@
 import AppKit
 
 /// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: one message at a
-/// time with its buttons. With no message it is hidden and takes no height. Nothing in it blinks.
+/// time with its buttons, a problem's after a red octagon. With no message it is hidden and takes no height. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
@@ -117,6 +117,11 @@ final class StatusBar: NSView {
         isHidden = shown == nil
         heightConstraint.constant = isHidden ? 0 : Self.height
         guard let message = shown else { return }
+        if message.kind == .problem, let symbol = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: "Problem") {
+            let icon = NSImageView(image: symbol.withSymbolConfiguration(.init(pointSize: 11, weight: .regular)) ?? symbol)
+            icon.contentTintColor = .systemRed
+            line.addArrangedSubview(icon)
+        }
         let text = NSTextField(labelWithString: message.text)
         text.font = Chrome.status
         text.textColor = Chrome.color(.ink2)
@@ -124,23 +129,12 @@ final class StatusBar: NSView {
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         line.addArrangedSubview(text)
         for action in message.actions {
-            let button = ActionButton(action)
-            StatusBar.style(button)
-            line.addArrangedSubview(button)
+            line.addArrangedSubview(ActionButton(action))
         }
-    }
-
-    /// A borderless text button in `ink`, SF 11 medium, so it reads as the line's verb.
-    fileprivate static func style(_ button: NSButton) {
-        button.isBordered = false
-        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: Chrome.color(.ink),
-        ])
-        button.setAccessibilityLabel(button.title)
     }
 }
 
-/// A status bar button that runs its action.
+/// A small push button in the status bar that runs its action.
 private final class ActionButton: NSButton {
     private let run: @MainActor (NSView) -> Void
 
@@ -148,6 +142,9 @@ private final class ActionButton: NSButton {
         run = action.run
         super.init(frame: .zero)
         title = action.title
+        bezelStyle = .push
+        controlSize = .small
+        font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         target = self
         self.action = #selector(clicked)
     }

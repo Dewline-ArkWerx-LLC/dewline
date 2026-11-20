@@ -1,7 +1,7 @@
 import AppKit
 import MdCore
 
-/// The Changes tab: the marked changes in a window's open notes, and the notes changed while closed.
+/// The Changes tab: the marked changes in a window's open notes, and the notes changed while closed, by writer session.
 @MainActor
 enum Review {
     /// The window's tabs' files.
@@ -68,8 +68,16 @@ enum Review {
         files(in: window).contains { $0.changes.values.contains(where: \.marked) }
     }
 
-    /// When each writer session's turn last ended, or its last change landed, for "Claude Code · 2:36 PM".
-    private static var times: [String: Date] = [:]
+    /// When each writer session's turn last ended, or its last change landed, for "Claude Code · 2:36 PM"; the 64
+    /// latest outlast a relaunch.
+    private static var times: [String: Date] = (UserDefaults.standard.dictionary(forKey: timesKey) as? [String: Double] ?? [:])
+        .mapValues { Date(timeIntervalSince1970: $0) } {
+        didSet {
+            let kept = times.sorted { $0.value > $1.value }.prefix(64).map { ($0.key, $0.value.timeIntervalSince1970) }
+            UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: kept), forKey: timesKey)
+        }
+    }
+    private static let timesKey = "ReviewSessionTimes"
 
     /// A session's turn ended; the Changes tab dates its notes by it.
     static func finished(vendor: ControlSocket.Claim.Vendor, session: String) {
@@ -83,6 +91,36 @@ enum Review {
 
     /// The notes changed while closed, newest first, which the Changes tab lists.
     static var closedNotes: () -> [ClosedNote] = { [] }
+
+    /// Keep Session and Revert Session: decides every marked change from writer session `key` in `window`'s notes,
+    /// and opens the session's notes changed while closed to decide theirs as they land.
+    static func decideSession(_ key: String, keep: Bool, in window: NSWindow?) {
+        let files = files(in: window)
+        for live in files {
+            let ids = live.changes.filter { $0.value.marked && !$0.value.conflict && Self.key($0.value.origin) == key }.map(\.key)
+            live.decide(ids, keep: keep, named: keep ? "Keep Session" : "Revert Session")
+        }
+        let open = Set(files.map(\.url.standardizedFileURL))
+        for note in closedNotes() where Self.key(note.origin) == key && !open.contains(note.url.standardizedFileURL) {
+            deciding[note.url.standardizedFileURL] = (key, keep)
+            NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { _, _, _ in }
+        }
+        guard !deciding.isEmpty, landing == nil else { return }
+        landing = NotificationCenter.default.addObserver(forName: LiveFile.changesDidChange, object: nil, queue: .main) { notification in
+            guard let live = notification.object as? LiveFile else { return }
+            Task { @MainActor in
+                guard let pending = deciding[live.url.standardizedFileURL] else { return }
+                let ids = live.changes.filter { $0.value.marked && !$0.value.conflict && Self.key($0.value.origin) == pending.key }.map(\.key)
+                guard !ids.isEmpty else { return }
+                deciding[live.url.standardizedFileURL] = nil
+                live.decide(ids, keep: pending.keep, named: pending.keep ? "Keep Session" : "Revert Session")
+            }
+        }
+    }
+
+    /// Closed notes Keep Session or Revert Session opened, waiting for their changes to land.
+    private static var deciding: [URL: (key: String, keep: Bool)] = [:]
+    private static var landing: NSObjectProtocol?
 
     /// "Claude Code · 2:36 PM", or the name alone with no time known.
     static func byline(_ origin: ChangeEngine.Origin, at time: Date?) -> String {
@@ -100,16 +138,17 @@ struct ClosedNote: Equatable {
 }
 
 
-/// The right pane's Changes tab: the window's open notes with undecided changes, then "Changed while closed". A note
-/// heads its changes with "Claude Code · 2:36 PM"; each row is the changed line, its changed words in bold, and
-/// "line 17". Keep and Revert show on the selected or hovered row; with Option they decide the whole note. Up and Down
-/// select rows, Return reveals the selected change and keeps focus here, and Cmd-Return or Option-Cmd-Delete decides it.
+/// The right pane's Changes tab, by writer session, newest first: "Claude Code · 2:36 PM" with Keep Session and Revert
+/// Session, then each open note with its undecided changes from that session, then the session's notes changed while
+/// closed. Each change row is the changed line, its changed words in bold, and "line 17". Keep and Revert show on the
+/// selected or hovered row; with Option they decide the whole note. Up and Down select rows, Return reveals the
+/// selected change and keeps focus here, and Cmd-Return or Option-Cmd-Delete decides it.
 @MainActor
 final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     enum Row {
-        case note(LiveFile, String)
+        case session(String, String)
+        case note(LiveFile)
         case change(LiveFile, UInt64, NSString?)
-        case closedHeading
         case closed(ClosedNote)
     }
 
@@ -210,22 +249,34 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
 
     func reload() {
         let decided = rows.indices.contains(table.selectedRow) && isChange(table.selectedRow) ? table.selectedRow : nil
-        let documents = Review.documents(in: source ?? view.window)
-        let files = documents.compactMap(\.live)
-        rows = []
-        for document in documents {
-            guard let live = document.live else { continue }
-            let text = document.textView?.string as NSString?
+        let files = Review.files(in: source ?? view.window)
+        var sessions: [String: (origin: ChangeEngine.Origin, time: Date?, rows: [Row])] = [:]
+        func add(_ row: Row, from origin: ChangeEngine.Origin, at time: Date?) {
+            let key = Review.key(origin)
+            var session = sessions[key] ?? (origin, nil, [])
+            if let time { session.time = max(session.time ?? time, time) }
+            session.rows.append(row)
+            sessions[key] = session
+        }
+        for live in files {
+            let text = live.text
             let marked = live.changes.filter(\.value.marked).sorted { $0.value.range.location < $1.value.range.location }
-            guard let newest = marked.max(by: { (Review.time(of: $0.value.origin) ?? .distantPast) < (Review.time(of: $1.value.origin) ?? .distantPast) }) else {
-                continue
+            var keys: [String] = []
+            for (_, change) in marked where !keys.contains(Review.key(change.origin)) { keys.append(Review.key(change.origin)) }
+            for key in keys {
+                let mine = marked.filter { Review.key($0.value.origin) == key }
+                let origin = mine[0].value.origin
+                add(.note(live), from: origin, at: Review.time(of: origin))
+                for (id, _) in mine { add(.change(live, id, text), from: origin, at: nil) }
             }
-            rows.append(.note(live, Review.byline(newest.value.origin, at: Review.time(of: newest.value.origin))))
-            rows += marked.map { .change(live, $0.key, text) }
         }
         let open = Set(files.map(\.url.standardizedFileURL))
-        let closed = Review.closedNotes().filter { !open.contains($0.url.standardizedFileURL) }
-        if !closed.isEmpty { rows += [.closedHeading] + closed.map(Row.closed) }
+        for note in Review.closedNotes() where !open.contains(note.url.standardizedFileURL) {
+            add(.closed(note), from: note.origin, at: note.time)
+        }
+        rows = sessions.sorted { ($0.value.time ?? .distantPast, $0.key) > ($1.value.time ?? .distantPast, $1.key) }.flatMap { key, session -> [Row] in
+            [.session(key, Review.byline(session.origin, at: session.time))] + session.rows
+        }
         empty.textColor = ThemeStore.shared.color(.ink2)
         empty.isHidden = !rows.isEmpty
         table.reloadData()
@@ -256,12 +307,28 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         decideSelected(keep: false)
     }
 
+    /// Keep Session and Revert Session from the menu with the list focused: the selected row's session, else the newest.
+    @objc func keepSession(_ sender: Any?) {
+        if let key = selectedSession { Review.decideSession(key, keep: true, in: source ?? view.window) }
+    }
+
+    @objc func revertSession(_ sender: Any?) {
+        if let key = selectedSession { Review.decideSession(key, keep: false, in: source ?? view.window) }
+    }
+
+    private var selectedSession: String? {
+        let end = rows.indices.contains(table.selectedRow) ? table.selectedRow : 0
+        for row in rows.prefix(end + 1).reversed() { if case .session(let key, _) = row { return key } }
+        return nil
+    }
+
     private func decideSelected(keep: Bool) {
         guard rows.indices.contains(table.selectedRow), case .change(let live, let id, _) = rows[table.selectedRow] else { return }
         decide(live, id, keep: keep)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if [#selector(keepSession(_:)), #selector(revertSession(_:))].contains(menuItem.action) { return selectedSession != nil }
         guard [#selector(keepChange(_:)), #selector(revertChange(_:))].contains(menuItem.action) else { return true }
         guard rows.indices.contains(table.selectedRow), case .change = rows[table.selectedRow] else { return false }
         return true
@@ -271,13 +338,13 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         guard rows.indices.contains(table.clickedRow) else { return }
         switch rows[table.clickedRow] {
         case .change(let live, let id, _): live.reveal(id, caret: true)
-        case .note(let live, _):
+        case .note(let live):
             if let first = live.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location }) {
                 live.reveal(first.key, caret: true)
             }
         case .closed(let note):
             NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { _, _, _ in }
-        case .closedHeading: break
+        case .session: break
         }
     }
 
@@ -295,8 +362,9 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         switch rows[row] {
-        case .note, .closedHeading: 36
-        case .change, .closed: 32
+        case .session: 36
+        case .note: 28
+        case .change, .closed: 24
         }
     }
 
@@ -307,15 +375,18 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let store = ThemeStore.shared
         switch rows[row] {
-        case .note(let live, let byline):
-            return HeadingRow(live.url.deletingPathExtension().lastPathComponent, detail: byline)
-        case .closedHeading:
-            return HeadingRow("Changed while closed", detail: nil)
+        case .session(let key, let byline):
+            return SessionRow(byline) { [weak self] keep in
+                guard let self else { return }
+                Review.decideSession(key, keep: keep, in: source ?? view.window)
+            }
+        case .note(let live):
+            return HeadingRow(live.url.deletingPathExtension().lastPathComponent, detail: nil)
         case .closed(let note):
             let title = NSAttributedString(string: note.url.deletingPathExtension().lastPathComponent, attributes: [
                 .font: NSFont.systemFont(ofSize: 13), .foregroundColor: store.color(.ink),
             ])
-            return ChangeRow(title, detail: Review.byline(note.origin, at: note.time), decide: nil)
+            return ChangeRow(title, detail: "closed \u{00B7} \(note.count) \(note.count == 1 ? "change" : "changes")", decide: nil)
         case .change(let live, let id, let text):
             let cell = ChangeRow(Self.line(of: id, in: live, text: text), detail: "line \(live.line(id))") { [weak self, weak live] keep in
                 guard let live else { return }
@@ -368,7 +439,39 @@ private final class ReturnTable: NSTableView {
     }
 }
 
-/// A note's name in 13 pt semibold over its byline, or the "Changed while closed" heading.
+/// A writer session's byline in 13 pt semibold, with Keep Session and Revert Session.
+private final class SessionRow: NSTableCellView {
+    init(_ byline: String, decide: @escaping (Bool) -> Void) {
+        super.init(frame: .zero)
+        let name = NSTextField(labelWithString: byline)
+        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        name.textColor = ThemeStore.shared.color(.ink)
+        name.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        name.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        let revert = FlowButton("Revert Session", style: .plain) { decide(false) }
+        let keep = FlowButton("Keep Session", style: .plain) { decide(true) }
+        revert.toolTip = "Puts back the old text of every change in this session."
+        keep.toolTip = "Clears the marks on every change in this session."
+        let row = NSStackView(views: [name, revert, keep])
+        row.spacing = 4
+        row.setCustomSpacing(8, after: name)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+        setAccessibilityLabel(byline)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("SessionRow is built in code")
+    }
+}
+
+/// A note's name in 13 pt semibold over its byline.
 private final class HeadingRow: NSTableCellView {
     init(_ title: String, detail: String?) {
         super.init(frame: .zero)
@@ -482,5 +585,22 @@ final class ChangeRow: NSTableCellView {
 
     override func mouseExited(with event: NSEvent) {
         hovering = false
+    }
+}
+
+extension EditorTextView {
+    /// Keep Session: keeps every change from the session of the change the stamp shows, in every note it touched.
+    @objc func keepSession(_ sender: Any?) {
+        decideSession(keep: true)
+    }
+
+    /// Revert Session: reverts every change from the session of the change the stamp shows, in every note it touched.
+    @objc func revertSession(_ sender: Any?) {
+        decideSession(keep: false)
+    }
+
+    private func decideSession(keep: Bool) {
+        guard let id = marks.stamped, let origin = marks.live?.changes[id]?.origin else { return NSSound.beep() }
+        Review.decideSession(Review.key(origin), keep: keep, in: window)
     }
 }

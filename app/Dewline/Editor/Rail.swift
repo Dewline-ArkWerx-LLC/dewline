@@ -1,8 +1,8 @@
 import AppKit
 
 /// The dew line: the editor's vertical scroller. Its hairline is the whole note, a tick marks each H1, H2 and H3 (13, 9
-/// and 5 pt long), a bracket spans what is on screen, and each waiting change is a 3 x 10 pt rule in its writer's ink
-/// at its place in the note, hollow for another app.
+/// and 5 pt long), a bracket filled with ink at 7% spans what is on screen, and each waiting change is a 3 x 10 pt rule
+/// in its writer's ink at its place in the note, hollow for another app.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
 final class Rail: NSScroller {
@@ -23,8 +23,11 @@ final class Rail: NSScroller {
     private weak var live: LiveFile?
     private var seen: Set<UInt64> = []
     private var hovering: NSPoint?
-    /// A change that landed off screen, labeled for 4 s.
+    /// A change that landed off screen, or the first change ever to land, labeled for 4 s.
     private var arrival: UInt64?
+    /// The first change to land says the rail shows changes too.
+    private var introducing = false
+    private static let introduced = "RailIntroduced"
     private var arrivalEnds: Task<Void, Never>?
     private var remeasure: Task<Void, Never>?
     private var items: [RailItem] = []
@@ -73,9 +76,12 @@ final class Rail: NSScroller {
         measure()
         let fresh = marks.filter { !seen.contains($0.id) }
         seen = Set(marks.map(\.id))
-        // A change that lands off screen says so once; one on screen has its stamp beside it.
+        // A change that lands off screen says so once; one on screen has its stamp beside it, unless it is the first.
         let visible = textView.visibleRect
-        guard let landed = fresh.last(where: { !(visible.minY...visible.maxY).contains($0.y) }) else { return }
+        let first = !fresh.isEmpty && !UserDefaults.standard.bool(forKey: Self.introduced)
+        guard let landed = fresh.last(where: { !(visible.minY...visible.maxY).contains($0.y) }) ?? (first ? fresh.last : nil) else { return }
+        if first { UserDefaults.standard.set(true, forKey: Self.introduced) }
+        introducing = first
         arrival = landed.id
         labels.alphaValue = 0
         updateLabels()
@@ -87,6 +93,7 @@ final class Rail: NSScroller {
             fade(to: 0)
             try? await Task.sleep(for: .milliseconds(150))
             arrival = nil
+            introducing = false
             updateLabels()
             labels.alphaValue = 1
         }
@@ -205,6 +212,8 @@ final class Rail: NSScroller {
     override func drawKnob() {
         let knob = usableParts == .allScrollerParts ? rect(for: .knob) : rect(for: .knobSlot)
         guard knob.height > 0 else { return }
+        ink(0.07, dark: 0.08).setFill()
+        NSRect(x: 3, y: knob.minY + 1, width: Self.line - 3, height: max(knob.height - 2, 0)).fill()
         let path = NSBezierPath()
         path.lineWidth = 2
         path.lineJoinStyle = .round
@@ -321,6 +330,9 @@ final class Rail: NSScroller {
             let text = NSMutableAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)])
             text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
             text.append(NSAttributedString(string: arrow, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
+            if introducing, hovered == nil {
+                text.append(NSAttributedString(string: "  Changes show here too", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)]))
+            }
             labels.items = [RailLabels.Item(text: text, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)]
         } else if hovering != nil {
             // Where names would overlap, the higher heading keeps its name.

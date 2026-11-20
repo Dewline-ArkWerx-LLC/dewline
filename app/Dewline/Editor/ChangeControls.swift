@@ -242,6 +242,7 @@ final class ChangeStamp: NSView {
     private var external = false
     private var shell = false
     private(set) var folded = false
+    private var flags: Any?
     /// Line 1's baseline and left edge, in this view.
     private var baseline: CGFloat = 0
     private var textX: CGFloat = 0
@@ -253,14 +254,18 @@ final class ChangeStamp: NSView {
     private static var checkingHooks = false
 
     init(revert: @escaping () -> Void, keep: @escaping () -> Void) {
-        self.revert = StampButton("Revert", keys: "\u{2325}\u{2318}\u{232B}", style: .outlined, revert)
-        self.keep = StampButton("Keep", keys: "\u{2318}", returnKey: true, style: .filled, keep)
+        self.revert = StampButton(
+            "Revert", keys: "\u{2325}\u{2318}\u{232B}", style: .outlined, symbol: "arrow.uturn.backward",
+            alternate: ("Revert All", "\u{2325}\u{21E7}\u{2318}\u{232B}", #selector(EditorTextView.revertAllChanges(_:))), revert)
+        self.keep = StampButton(
+            "Keep", keys: "\u{2318}", returnKey: true, style: .filled, symbol: "checkmark",
+            alternate: ("Keep All", "\u{21E7}\u{2318}", #selector(EditorTextView.keepAllChanges(_:))), keep)
         setUp = StampButton("Set up agent hooks\u{2026}", keys: "", style: .link) {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.toolTip = "Revert (\u{2325}\u{2318}\u{232B})"
-        self.keep.toolTip = "Keep (\u{2318}\u{21A9})"
+        self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}); with Option, Revert All."
+        self.keep.toolTip = "Already saved. Keep clears the mark. Keep (\u{2318}\u{21A9}); with Option, Keep All."
         setUp.toolTip = "Name this writer: set up agent hooks"
         setUp.isHidden = true
         note.font = .systemFont(ofSize: 11)
@@ -287,6 +292,24 @@ final class ChangeStamp: NSView {
         addCursorRect(bounds, cursor: .arrow)
     }
 
+    /// While the stamp is in a window, holding Option retitles Keep and Revert to Keep All and Revert All.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let flags { NSEvent.removeMonitor(flags) }
+        flags = nil
+        setOption(false)
+        guard window != nil else { return }
+        flags = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            MainActor.assumeIsolated { self?.setOption(event.modifierFlags.contains(.option)) }
+            return event
+        }
+    }
+
+    func setOption(_ down: Bool) {
+        keep.optionDown = down
+        revert.optionDown = down
+    }
+
     @objc private func themeDidChange() {
         note.textColor = ThemeStore.shared.color(.ink2)
         for view in [self, revert, keep, setUp] { view.needsDisplay = true }
@@ -308,8 +331,6 @@ final class ChangeStamp: NSView {
         note.isHidden = !(shell || refused)
         setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (note.isHidden ? "" : ", \(note.stringValue)"))
         let of = count == 1 ? "" : " 1 of \(count)"
-        revert.title = "Revert" + of
-        keep.title = "Keep" + of
         revert.setAccessibilityLabel("Revert \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
         keep.setAccessibilityLabel("Keep \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
         // Set Up names no shell command's change, so a change during one doesn't offer it.
@@ -333,7 +354,8 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 1 change": the writer in small capitals in its ink, the time with fixed-width digits, the count.
+    /// "CLAUDE 3:25 PM · 1 change", or "· 1 of 3": the writer in small capitals in its ink, the time with fixed-width
+    /// digits, the count.
     private var line: NSAttributedString {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
@@ -344,7 +366,7 @@ final class ChangeStamp: NSView {
             line.addAttribute(.foregroundColor, value: name.mixed(with: ink, by: 0.25).color, range: NSRange(location: 0, length: line.length))
         }
         line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
-        line.append(NSAttributedString(string: " \u{00B7} \(count) \(count == 1 ? "change" : "changes")", attributes: [
+        line.append(NSAttributedString(string: " \u{00B7} " + (count == 1 ? "1 change" : "1 of \(count)"), attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
         ]))
         return line
@@ -354,22 +376,33 @@ final class ChangeStamp: NSView {
         ceil(max(MarkWriter.stampFont.ascender, NSFont.systemFont(ofSize: 11).ascender))
     }
 
-    private var buttonsWidth: CGFloat {
-        revert.intrinsicContentSize.width + Self.gap + keep.intrinsicContentSize.width
+    private func buttonsWidth(compact: Bool) -> CGFloat {
+        revert.width(compact: compact) + Self.gap + keep.width(compact: compact)
     }
 
-    /// The width the stamp takes in the margin.
+    /// The width the stamp takes in the margin with Keep and Revert as icons: the least margin that holds it.
     var marginWidth: CGFloat {
+        width(compact: true)
+    }
+
+    private func width(compact: Bool) -> CGFloat {
         ceil(max(
-            line.size().width, buttonsWidth, setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
+            line.size().width, buttonsWidth(compact: compact), setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
             note.isHidden ? 0 : note.intrinsicContentSize.width))
+    }
+
+    /// Keep and Revert collapse to icons where their titles don't fit.
+    private func setCompact(_ compact: Bool) {
+        keep.compact = compact
+        revert.compact = compact
     }
 
     /// In the margin, its right edge at `right`: line 1 on `first`, the buttons' labels on `second`, both baselines
     /// in the superview.
     func placeInMargin(right: CGFloat, first: CGFloat, second: CGFloat) {
         folded = false
-        let width = marginWidth
+        setCompact(width(compact: false) > right - Self.gutter)
+        let width = width(compact: keep.compact)
         let top = first - ascent
         baseline = ascent
         textX = width - ceil(line.size().width)
@@ -401,6 +434,8 @@ final class ChangeStamp: NSView {
         baseline = ((Self.barHeight + NSFont.systemFont(ofSize: 11).capHeight) / 2).rounded()
         textX = 10
         let y = (Self.barHeight - StampButton.height) / 2
+        let noted = note.isHidden ? 0 : ceil(note.intrinsicContentSize.width) + 8
+        setCompact(textX + ceil(line.size().width) + 8 + noted + buttonsWidth(compact: false) + y > rect.width)
         let keepWidth = keep.intrinsicContentSize.width
         keep.frame = NSRect(x: rect.width - y - keepWidth, y: y, width: keepWidth, height: StampButton.height)
         let revertWidth = revert.intrinsicContentSize.width
@@ -428,7 +463,8 @@ final class ChangeStamp: NSView {
 }
 
 /// Revert (outlined), Keep (filled with the accent, set in white) and a quiet link, each with its keys drawn as keycaps in
-/// SF Pro: ⌥⌘⌫ for Revert, ⌘ and the SF Symbol `return` for Keep.
+/// SF Pro: ⌥⌘⌫ for Revert, ⌘ and the SF Symbol `return` for Keep. Its width holds its title and its Option title, so
+/// holding Option moves nothing; `compact` shows its symbol alone.
 @MainActor
 final class StampButton: NSButton {
     enum Style { case outlined, filled, link }
@@ -441,12 +477,26 @@ final class StampButton: NSButton {
     private let style: Style
     private let keys: String
     private let returnKey: Bool
+    private let symbol: String?
+    /// The title, keys and action the button takes while Option is down.
+    private let alternate: (title: String, keys: String, action: Selector)?
     private let handler: () -> Void
+    var optionDown = false {
+        didSet { if optionDown != oldValue, alternate != nil { needsDisplay = true } }
+    }
+    var compact = false {
+        didSet { if compact != oldValue { needsDisplay = true } }
+    }
 
-    init(_ title: String, keys: String, returnKey: Bool = false, style: Style, _ action: @escaping () -> Void) {
+    init(
+        _ title: String, keys: String, returnKey: Bool = false, style: Style, symbol: String? = nil,
+        alternate: (title: String, keys: String, action: Selector)? = nil, _ action: @escaping () -> Void
+    ) {
         self.style = style
         self.keys = keys
         self.returnKey = returnKey
+        self.symbol = symbol
+        self.alternate = alternate
         handler = action
         super.init(frame: .zero)
         self.title = title
@@ -461,11 +511,18 @@ final class StampButton: NSButton {
 
     override var isFlipped: Bool { true }
 
+    /// With Option down, the alternate action goes to the text view the stamp is in.
     @objc private func clicked() {
-        handler()
+        guard NSEvent.modifierFlags.contains(.option), let alternate else { return handler() }
+        let textView = sequence(first: self as NSView, next: \.superview).first { $0 is EditorTextView }
+        NSApp.sendAction(alternate.action, to: textView, from: self)
     }
 
-    private var label: NSAttributedString {
+    private var shownTitle: String {
+        optionDown ? alternate?.title ?? title : title
+    }
+
+    private func label(_ title: String) -> NSAttributedString {
         let store = ThemeStore.shared
         if style == .link {
             return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
@@ -473,9 +530,27 @@ final class StampButton: NSButton {
         return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: style == .filled ? NSColor.white : store.color(.ink)])
     }
 
-    private var keycaps: NSAttributedString {
+    private func keycaps(_ keys: String) -> NSAttributedString {
         let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink2)
         return NSAttributedString(string: keys, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color])
+    }
+
+    private var symbolImage: NSImage? {
+        let color = style == .filled ? NSColor.white : ThemeStore.shared.color(.ink)
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        return symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config) }
+    }
+
+    /// The label and keys' width for `title`.
+    private func content(_ title: String, _ keys: String) -> CGFloat {
+        label(title).size().width + 5 + keycaps(keys).size().width + (returnImage.map { $0.size.width + 1 } ?? 0)
+    }
+
+    /// The button's width, as icons when `compact`.
+    func width(compact: Bool) -> CGFloat {
+        if style == .link { return ceil(label(title).size().width) }
+        if compact, symbolImage != nil { return 26 }
+        return ceil(8 + max(content(title, keys), alternate.map { content($0.title, $0.keys) } ?? 0) + 7)
     }
 
     private var returnImage: NSImage? {
@@ -486,9 +561,7 @@ final class StampButton: NSButton {
     }
 
     override var intrinsicContentSize: NSSize {
-        if style == .link { return NSSize(width: ceil(label.size().width), height: 18) }
-        let keys = keycaps.size().width + (returnImage.map { $0.size.width + 1 } ?? 0)
-        return NSSize(width: ceil(8 + label.size().width + 5 + keys + 7), height: Self.height)
+        NSSize(width: width(compact: compact), height: style == .link ? 18 : Self.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -507,14 +580,26 @@ final class StampButton: NSButton {
             box.lineWidth = 1
             box.stroke()
         case .link:
-            label.draw(at: .zero)
+            label(title).draw(at: .zero)
+            return
+        }
+        if compact, let image = symbolImage {
+            let rect = NSRect(
+                x: ((bounds.width - image.size.width) / 2).rounded(), y: ((bounds.height - image.size.height) / 2).rounded(),
+                width: image.size.width, height: image.size.height)
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             return
         }
         let baseline = Self.labelBaseline
-        label.draw(at: NSPoint(x: 8, y: baseline - Self.font.ascender))
-        var x = 8 + label.size().width + 5
-        keycaps.draw(at: NSPoint(x: x, y: baseline - NSFont.systemFont(ofSize: 12).ascender))
-        x += keycaps.size().width
+        let title = shownTitle
+        let shownKeys = optionDown ? alternate?.keys ?? keys : keys
+        let text = label(title)
+        let caps = keycaps(shownKeys)
+        var x = ((bounds.width - content(title, shownKeys)) / 2).rounded()
+        text.draw(at: NSPoint(x: x, y: baseline - Self.font.ascender))
+        x += text.size().width + 5
+        caps.draw(at: NSPoint(x: x, y: baseline - NSFont.systemFont(ofSize: 12).ascender))
+        x += caps.size().width
         if let image = returnImage {
             let rect = NSRect(x: x + 1, y: baseline - image.size.height + 1, width: image.size.width, height: image.size.height)
             image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)

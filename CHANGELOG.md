@@ -9,6 +9,10 @@ What changed in each Dewline release, newest first.
 - `dewline doctor` lists `latexmk` and `tectonic`.
 - latexmk runs each LaTeX engine with shell escape off and TeX refusing absolute and parent-folder paths, so a `.tex` file can't run commands or pull outside files into its PDF. A `% !TEX root` outside the folder stops the typeset with an error.
 - typst, tectonic and latexmk run in a sandbox that reads only the folder, system and TeX folders, so a symlink in a cloned repo can't pull a file such as `~/.ssh/id_ed25519` into the PDF; only typst and tectonic reach the network. Inside it they run only toolchain programs and can't open other apps. latexmk refuses file names other than letters, digits, space, dot, dash and underscore, skips bibtex, biber and makeindex, and runs lualatex with `--safer --nosocket`.
+- A change's stamp reads "1 of 3" and its buttons stay Keep and Revert at a fixed width, turning into icons where the margin is narrow. Holding Option turns them into Keep All and Revert All, and their tooltips say what each does.
+- The Changes list groups changes by writer session, closed notes included, under a heading with Keep Session and Revert Session. Its bylines survive a relaunch and its rows are 24 pt.
+- Status bar problems show a red octagon, and their actions are buttons. A typeset error inside a marked change says whose change it is and offers Revert Change.
+- The rail's on-screen bracket has a light fill, and the first change ever to land is labeled on the rail, "Changes show here too".
 
 ## 0.5.1 (19 Nov 2026)
 

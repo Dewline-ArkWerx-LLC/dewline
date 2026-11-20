@@ -153,6 +153,16 @@ struct ShellV4Tests {
         #expect(bar.shown?.id == "update")
         bar.clear("update")
         #expect(bar.shown?.id == "loads")
+        bar.post(.init(id: "held", kind: .problem, text: "Not saved"))
+        bar.post(.init(id: "awaited", kind: .request, text: "A terminal is waiting for this note"))
+        #expect(bar.shown?.id == "held")
+        #expect(bar.isHidden == false)
+        bar.clear("held")
+        bar.clear("awaited")
+        bar.clear("loads")
+        #expect(bar.isHidden)
+        bar.reserved = true
+        #expect(!bar.isHidden)
     }
 
     @Test func quickOpenNamesANewNoteForWhatWasTyped() {

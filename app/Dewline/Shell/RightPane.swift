@@ -16,7 +16,7 @@ final class RightPane: NSViewController {
     }
 
     static let width: CGFloat = 380
-    static let widths: ClosedRange<CGFloat> = 300...560
+    static let widths: ClosedRange<CGFloat> = 260...560
 
     /// The Changes list for a window; nil leaves the Changes segment out.
     static var makeChanges: (@MainActor (NSWindow) -> NSViewController)?
@@ -44,6 +44,10 @@ final class RightPane: NSViewController {
     private let segments = NSSegmentedControl()
     private let content = NSView()
     private var built: [Tab: NSViewController] = [:]
+    /// The Changes list, once built.
+    var changes: NSViewController? {
+        built[.changes]
+    }
 
     init(folder: Folder?) {
         self.folder = folder?.url

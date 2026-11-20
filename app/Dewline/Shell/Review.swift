@@ -40,11 +40,16 @@ enum Review {
     }
 
     /// Next Change and Previous Change: reveals the marked change after or before the caret, or from offset `at` on,
-    /// then the first or last one in each of the window's other tabs in order, wrapping back to `textView`'s file.
+    /// then the first or last one in each of the window's other tabs in order. Past the last one, Next Change opens the
+    /// next note waiting outside the tabs at its first change, saying so in the status bar; else, and after a decision at
+    /// `at`, both wrap back to
+    /// `textView`'s file.
     static func step(from textView: EditorTextView, forward: Bool, at start: Int? = nil) {
         guard let live = textView.marks.live else { return }
         let files = files(in: textView.window)
         let caret = start.map { $0 - 1 } ?? textView.selectedRange().location
+        // A decision moving on stays in the open notes.
+        let crosses = forward && start == nil
         func marked(_ file: LiveFile) -> [UInt64] {
             file.changes.filter(\.value.marked).sorted { $0.value.range.location < $1.value.range.location }.map(\.key)
         }
@@ -60,7 +65,29 @@ enum Review {
             let ids = marked(file)
             if let id = forward ? ids.first : ids.last { return file.reveal(id, caret: true) }
         }
+        let beyond = crosses ? notesBeyond(textView.window) : []
+        if let next = beyond.first, let controller = textView.window?.windowController as? MainWindowController {
+            controller.openAtFirstChange(next, newTab: !here.isEmpty)
+            let name = next.lastPathComponent
+            let more = beyond.count > 1 ? "; \(beyond.count - 1) more waiting \u{2303}\u{2318}\u{2193}" : ""
+            let window = NSDocumentController.shared.document(for: next)?.windowControllers.first?.window
+            return StatusBar.post(.init(id: "step", kind: .result, text: "Last change in open notes. Opened \(name)\(more)", untilTyping: true), in: window)
+        }
         if let id = forward ? here.first : here.last { live.reveal(id, caret: true) }
+    }
+
+    /// The notes in the window's folder waiting outside every open note, in the order Next Change opens them: changed
+    /// while closed, then different from the last commit. Deleted notes have no change to open at.
+    static func notesBeyond(_ window: NSWindow?) -> [URL] {
+        guard let controller = window?.windowController as? MainWindowController, let folder = controller.folder?.url.standardizedFileURL else { return [] }
+        let open = Set(NSDocumentController.shared.documents.compactMap { $0.fileURL?.standardizedFileURL.path })
+        let notes = FolderEntry.markdownExtensions.union(FolderEntry.dialectExtensions)
+        let git = (controller.index?.git.changed ?? []).filter { $0.state != .deleted && notes.contains($0.url.pathExtension.lowercased()) }
+        var seen: Set<String> = []
+        return (closedNotes().map(\.url) + git.map(\.url)).filter { url in
+            let path = url.standardizedFileURL.path
+            return path.hasPrefix(folder.path + "/") && !open.contains(path) && seen.insert(path).inserted
+        }
     }
 
     /// The window's open notes with marked changes, and the notes changed while closed that aren't among them.
@@ -145,9 +172,11 @@ struct ClosedNote: Equatable {
 
 /// The right pane's Changes tab, by writer session, newest first: "Claude Code · 2:36 PM" with Keep Session and Revert
 /// Session, then each open note with its undecided changes from that session, then the session's notes changed while
-/// closed. Each change row is the changed line, its changed words in bold, and "line 17". Keep and Revert show on the
-/// selected or hovered row; with Option they decide the whole note. Up and Down select rows, Return reveals the
-/// selected change and keeps focus here, and Cmd-Return or Option-Cmd-Delete decides it.
+/// closed. Each change row is the changed line, its changed words in the writer's ink, and "line 17", or "+3 / −2
+/// lines" for a change over several lines, which Right Arrow or Space opens in place in full. Keep and Revert show on
+/// the selected or hovered row; with Option they decide the whole note. Up and Down select rows and J and K changes;
+/// Y or Return keeps the selected change, X reverts it and O reveals it, keeping focus here, and Cmd-Return or
+/// Option-Cmd-Delete decides it.
 @MainActor
 final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     enum Row {
@@ -169,6 +198,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
     private var reloading = false
     private var flags: Any?
     private(set) var optionDown = false
+    /// The multi-line changes shown in full.
+    private var expanded: Set<UInt64> = []
 
     /// Lists `window`'s notes, or the notes of the window this tab is in.
     init(for window: NSWindow? = nil) {
@@ -192,7 +223,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         table.delegate = self
         table.target = self
         table.action = #selector(clicked)
-        table.returned = { [weak self] in self?.revealSelected() }
+        table.returned = { [weak self] in self?.decideSelected(keep: true) }
+        table.pressed = { [weak self] event in self?.pressed(event) ?? false }
         table.setAccessibilityLabel("Changes")
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -296,9 +328,75 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         return false
     }
 
+    /// Puts the keyboard in the list, on its selected change or else its first.
+    func focusList() {
+        if !(rows.indices.contains(table.selectedRow) && isChange(table.selectedRow)), let first = rows.indices.first(where: isChange) {
+            select(first)
+        }
+        view.window?.makeFirstResponder(table)
+    }
+
+    /// Whether the keyboard is in the list.
+    var hasFocus: Bool {
+        isViewLoaded && view.window?.firstResponder === table
+    }
+
+    private func select(_ row: Int) {
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+    }
+
+    /// The list's keys without Command, Option or Control; false for a key it leaves to the table.
+    private func pressed(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 124: return expand(true)
+        case 123: return expand(false)
+        case 49: return expand(nil)
+        default: break
+        }
+        switch event.charactersIgnoringModifiers {
+        case "j": move(1)
+        case "k": move(-1)
+        case "y": decideSelected(keep: true)
+        case "x": decideSelected(keep: false)
+        case "o": revealSelected()
+        default: return false
+        }
+        return true
+    }
+
+    /// Selects the next or previous change or note changed while closed.
+    private func move(_ step: Int) {
+        let from = table.selectedRow
+        let ahead = step > 0 ? Array(rows.indices.filter { $0 > from }) : rows.indices.filter { $0 < from }.reversed()
+        let next = ahead.first { index in
+            switch rows[index] {
+            case .change, .closed: true
+            case .session, .note: false
+            }
+        }
+        if let next { select(next) }
+    }
+
+    /// Opens the selected multi-line change in full, or closes it; nil toggles it.
+    private func expand(_ open: Bool?) -> Bool {
+        let row = table.selectedRow
+        guard rows.indices.contains(row), case .change(let live, let id, let text) = rows[row], Self.size(of: id, in: live, text: text) != nil else { return false }
+        let opened = open ?? !expanded.contains(id)
+        guard opened != expanded.contains(id) else { return true }
+        if opened { expanded.insert(id) } else { expanded.remove(id) }
+        table.reloadData(forRowIndexes: [row], columnIndexes: [0])
+        table.noteHeightOfRows(withIndexesChanged: [row])
+        return true
+    }
+
     private func revealSelected() {
-        guard rows.indices.contains(table.selectedRow), case .change(let live, let id, _) = rows[table.selectedRow] else { return }
-        live.reveal(id, caret: true)
+        guard rows.indices.contains(table.selectedRow) else { return }
+        switch rows[table.selectedRow] {
+        case .change(let live, let id, _): live.reveal(id, caret: true)
+        case .closed(let note): NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { _, _, _ in }
+        case .session, .note: return
+        }
         table.window?.makeFirstResponder(table)
     }
 
@@ -367,9 +465,12 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         switch rows[row] {
-        case .session: 36
-        case .note: 28
-        case .change, .closed: 24
+        case .session: return 36
+        case .note: return 28
+        case .closed: return 24
+        case .change(let live, let id, let text):
+            guard expanded.contains(id) else { return 24 }
+            return CGFloat(Self.hunk(of: id, in: live, text: text).string.split(separator: "\n", omittingEmptySubsequences: false).count) * 17 + 8
         }
     }
 
@@ -386,14 +487,18 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
                 Review.decideSession(key, keep: keep, in: source ?? view.window)
             }
         case .note(let live):
-            return HeadingRow(live.url.deletingPathExtension().lastPathComponent, detail: nil)
+            return HeadingRow(relative(live.url), detail: nil)
         case .closed(let note):
-            let title = NSAttributedString(string: note.url.deletingPathExtension().lastPathComponent, attributes: [
+            let title = NSAttributedString(string: relative(note.url), attributes: [
                 .font: NSFont.systemFont(ofSize: 13), .foregroundColor: store.color(.ink),
             ])
             return ChangeRow(title, detail: "closed \u{00B7} \(note.count) \(note.count == 1 ? "change" : "changes")", decide: nil)
         case .change(let live, let id, let text):
-            let cell = ChangeRow(Self.line(of: id, in: live, text: text), detail: "line \(live.line(id))") { [weak self, weak live] keep in
+            let size = Self.size(of: id, in: live, text: text)
+            let open = expanded.contains(id)
+            let title = open ? Self.hunk(of: id, in: live, text: text) : Self.line(of: id, in: live, text: text)
+            let detail = size.map { "+\($0.added) / \u{2212}\($0.removed) lines" } ?? "line \(live.line(id))"
+            let cell = ChangeRow(title, detail: detail, lines: open ? 0 : 1) { [weak self, weak live] keep in
                 guard let live else { return }
                 self?.decide(live, id, keep: keep)
             }
@@ -403,7 +508,53 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
     }
 
-    /// The change's line without its Markdown markers, trimmed, with the changed words in bold after the words they
+    /// The note's path in the window's folder without its extension, or its name outside the folder.
+    private func relative(_ url: URL) -> String {
+        let path = url.standardizedFileURL.deletingPathExtension().path
+        let folder = ((source ?? view.window)?.windowController as? MainWindowController)?.folder?.url.standardizedFileURL.path
+        guard let folder, path.hasPrefix(folder + "/") else { return url.deletingPathExtension().lastPathComponent }
+        return String(path.dropFirst(folder.count + 1))
+    }
+
+    /// The lines a change put in and took out, when either is more than one; nil for a change within one line.
+    static func size(of id: UInt64, in live: LiveFile, text: NSString?) -> (added: Int, removed: Int)? {
+        guard let change = live.changes[id] else { return nil }
+        let added = lines(landed(change, in: text)).count
+        let removed = lines(change.removed).count
+        return added > 1 || removed > 1 ? (added, removed) : nil
+    }
+
+    private static func landed(_ change: LiveFile.Change, in text: NSString?) -> String {
+        guard let text else { return "" }
+        return text.substring(with: NSIntersectionRange(change.range, NSRange(location: 0, length: text.length)))
+    }
+
+    private static func lines(_ text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        return (text.hasSuffix("\n") ? String(text.dropLast()) : text).components(separatedBy: "\n")
+    }
+
+    /// A change in full: the lines it took out struck in `ink2`, then the lines it put in, in the writer's ink; at
+    /// most 40 of each.
+    static func hunk(of id: UInt64, in live: LiveFile, text: NSString?) -> NSAttributedString {
+        guard let change = live.changes[id] else { return NSAttributedString() }
+        let store = ThemeStore.shared
+        let font = NSFont.systemFont(ofSize: 13)
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let struck: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: store.color(.ink2), .strikethroughStyle: NSUnderlineStyle.single.rawValue, .paragraphStyle: style,
+        ]
+        let put: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: MarkWriter(change.origin).color, .paragraphStyle: style]
+        let shown = lines(change.removed).prefix(40).map { ($0, struck) } + lines(landed(change, in: text)).prefix(40).map { ($0, put) }
+        let hunk = NSMutableAttributedString()
+        for (index, (line, attributes)) in shown.enumerated() {
+            hunk.append(NSAttributedString(string: (index > 0 ? "\n" : "") + (line.isEmpty ? " " : line), attributes: attributes))
+        }
+        return hunk
+    }
+
+    /// The change's line without its Markdown markers, trimmed, with the changed words in the writer's ink after the words they
     /// replaced, struck; a change that only removed text shows the line with the removed words struck. A change more
     /// than 24 characters into its line shows from a word just before it, after an ellipsis.
     static func line(of id: UInt64, in live: LiveFile, text: NSString?) -> NSAttributedString {
@@ -417,8 +568,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
         let shown = NSMutableAttributedString(string: text.substring(with: line), attributes: regular)
         let local = NSIntersectionRange(NSRange(location: range.location - line.location, length: range.length), NSRange(location: 0, length: shown.length))
-        let changed = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        if local.length > 0 { shown.addAttribute(.font, value: changed, range: local) }
+        let changed = MarkWriter(change.origin).color
+        if local.length > 0 { shown.addAttribute(.foregroundColor, value: changed, range: local) }
         // A conflict's other version is no removal once the change holds text.
         let removed = change.conflict ? (local.length > 0 ? "" : change.theirs) : change.removed
         if let first = removed.split(whereSeparator: \.isNewline).first {
@@ -436,7 +587,7 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         let excerpt = NSMutableAttributedString(attributedString: shown.attributedSubstring(from: NSRange(location: lead, length: shown.length - lead - tail)))
         var first = excerpt.length
         excerpt.enumerateAttributes(in: NSRange(location: 0, length: excerpt.length)) { attributes, range, stop in
-            if attributes[.font] as? NSFont == changed || attributes[.strikethroughStyle] != nil {
+            if (attributes[.foregroundColor] as? NSColor) === changed || attributes[.strikethroughStyle] != nil {
                 first = range.location
                 stop.pointee = true
             }
@@ -466,24 +617,28 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
     }
 }
 
-/// The Changes list's table: Return calls `returned`.
+/// The Changes list's table: Return calls `returned`; other keys without Command, Option or Control go to `pressed`
+/// first, which says whether it took the key.
 final class ReturnTable: NSTableView {
     var returned: () -> Void = {}
+    var pressed: (NSEvent) -> Bool = { _ in false }
 
     override func keyDown(with event: NSEvent) {
-        guard [36, 76].contains(event.keyCode), event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return super.keyDown(with: event) }
+        let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+        if plain, pressed(event) { return }
+        guard plain, [36, 76].contains(event.keyCode), !event.modifierFlags.contains(.shift) else { return super.keyDown(with: event) }
         returned()
     }
 }
 
-/// A writer session's byline in 13 pt semibold, with Revert Session and Keep Session in the stamp's buttons, Keep
-/// filled.
+/// A writer session's byline as a section label, 11 pt medium in `ink2`, with Revert Session and Keep Session in the
+/// stamp's buttons, Keep filled.
 private final class SessionRow: NSTableCellView {
     init(_ byline: String, decide: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
         let name = NSTextField(labelWithString: byline)
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
-        name.textColor = ThemeStore.shared.color(.ink)
+        name.font = Chrome.section
+        name.textColor = ThemeStore.shared.color(.ink2)
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
@@ -510,7 +665,7 @@ private final class SessionRow: NSTableCellView {
     }
 }
 
-/// A note's name in 13 pt semibold over its byline.
+/// A note's path in the folder in 13 pt semibold, truncated in the middle, over its byline.
 private final class HeadingRow: NSTableCellView {
     init(_ title: String, detail: String?) {
         super.init(frame: .zero)
@@ -563,7 +718,8 @@ final class ChangeRow: NSTableCellView {
         }
     }
 
-    init(_ title: NSAttributedString, detail text: String, decide: ((Bool) -> Void)?) {
+    /// `lines` 0 shows every line of `title`.
+    init(_ title: NSAttributedString, detail text: String, lines: Int = 1, decide: ((Bool) -> Void)?) {
         detail = NSTextField(labelWithString: text)
         keep = FlowButton("Keep", style: .plain) { decide?(true) }
         revert = FlowButton("Revert", style: .plain) { decide?(false) }
@@ -574,7 +730,7 @@ final class ChangeRow: NSTableCellView {
         style.lineBreakMode = .byTruncatingTail
         truncated.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: truncated.length))
         let label = NSTextField(labelWithAttributedString: truncated)
-        label.maximumNumberOfLines = 1
+        label.maximumNumberOfLines = lines
         label.cell?.truncatesLastVisibleLine = true
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -582,8 +738,8 @@ final class ChangeRow: NSTableCellView {
         detail.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         detail.textColor = ThemeStore.shared.color(.ink2)
         detail.setContentHuggingPriority(.required, for: .horizontal)
-        keep.toolTip = "Keep (\u{2318}\u{21A9}). Option: every change in this note."
-        revert.toolTip = "Revert (\u{2325}\u{2318}\u{232B}). Option: every change in this note."
+        keep.toolTip = "Keep (\u{2318}\u{21A9}). Option-click: Keep All in Note (\u{21E7}\u{2318}\u{21A9})"
+        revert.toolTip = "Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All in Note (\u{2325}\u{21E7}\u{2318}\u{232B})"
         let row = NSStackView(views: [label, detail, revert, keep])
         row.spacing = 4
         row.setCustomSpacing(8, after: label)
@@ -628,6 +784,10 @@ final class ChangeRow: NSTableCellView {
 }
 
 extension EditorTextView {
+    func vimStepChange(forward: Bool) {
+        Review.step(from: self, forward: forward)
+    }
+
     /// Keep Session: keeps every change from the session of the change the stamp shows, in every note it touched.
     @objc func keepSession(_ sender: Any?) {
         decideSession(keep: true)

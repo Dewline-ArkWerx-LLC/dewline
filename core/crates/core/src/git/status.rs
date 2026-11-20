@@ -68,8 +68,11 @@ const MAX_RENAME_BYTES: u64 = 256 << 10;
 /// search; past either, nothing pairs.
 const MAX_RENAME_TOTAL: u64 = 8 << 20;
 const MAX_RENAME_LOOKUPS: usize = 1 << 22;
-/// The most commits read counting HEAD's lead on its upstream.
+/// The most commits read counting HEAD's lead on its upstream, the most
+/// parents one has, and the most bytes inflated of one.
 const MAX_AHEAD_WALK: usize = 2000;
+const MAX_PARENTS: usize = 16;
+const MAX_COMMIT: u64 = 64 << 10;
 
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
@@ -270,7 +273,8 @@ pub fn status(folder: &Path) -> Option<Statuses> {
 /// How many commits `head` has that the upstream of HEAD's branch lacks, as
 /// `git rev-list --count @{u}..HEAD` counts them, walking both newest first
 /// by commit time. None when HEAD is detached, its branch has no upstream,
-/// or the walk passes `MAX_AHEAD_WALK` commits or a commit it can't read.
+/// or the walk reads more than `MAX_AHEAD_WALK` commits, meets one with more
+/// than `MAX_PARENTS` parents, or can't read one.
 fn ahead(
     gitdir: &Path,
     common: &Path,
@@ -305,46 +309,78 @@ fn ahead(
 
     // Each commit's sides: 1 reached from HEAD, 2 from the upstream. The
     // walk ends once every queued commit is the upstream's.
-    type Queue = BinaryHeap<(i64, [u8; 20], Vec<Oid>)>;
-    fn reach(
-        objects: &Objects,
-        sides: &mut HashMap<Oid, u8>,
-        queue: &mut Queue,
-        id: Oid,
-        side: u8,
-    ) -> Option<()> {
-        let sides = sides.entry(id).or_default();
-        if *sides & side == 0 {
-            *sides |= side;
-            let (time, parents) = objects.commit_links(id)?;
-            queue.push((time, id.0, parents));
-        }
-        Some(())
-    }
-    let mut sides = HashMap::new();
-    let mut queue = Queue::new();
+    let mut walk = Lead::default();
+    walk.reach(objects, head, 1)?;
+    walk.reach(objects, upstream, 2)?;
     let mut walked = HashSet::new();
     let mut count = 0;
-    reach(objects, &mut sides, &mut queue, head, 1)?;
-    reach(objects, &mut sides, &mut queue, upstream, 2)?;
-    while queue.iter().any(|(_, id, _)| sides[&Oid(*id)] & 2 == 0) {
-        let (_, id, parents) = queue.pop()?;
+    while walk.open > 0 {
+        let (_, id, parents) = walk.queue.pop()?;
         let id = Oid(id);
+        walk.dequeue(id);
         if !walked.insert(id) {
             continue;
         }
-        if walked.len() > MAX_AHEAD_WALK {
-            return None;
-        }
-        let side = sides[&id];
+        let side = walk.sides[&id];
         if side == 1 {
             count += 1;
         }
         for parent in parents {
-            reach(objects, &mut sides, &mut queue, parent, side)?;
+            walk.reach(objects, parent, side)?;
         }
     }
     Some(count)
+}
+
+/// The walk's state: each commit's sides, the commits queued by time, how
+/// many times each is queued, how many queued are not the upstream's, and
+/// how many commits were read.
+#[derive(Default)]
+struct Lead {
+    sides: HashMap<Oid, u8>,
+    queue: BinaryHeap<(i64, [u8; 20], Vec<Oid>)>,
+    queued: HashMap<Oid, u32>,
+    open: usize,
+    reads: usize,
+}
+
+impl Lead {
+    /// Marks `id` as reached from `side`, reading it if that is new. None
+    /// past `MAX_AHEAD_WALK` reads, or on a commit with too many parents.
+    fn reach(&mut self, objects: &Objects, id: Oid, side: u8) -> Option<()> {
+        let sides = self.sides.entry(id).or_default();
+        if *sides & side == 0 {
+            let was_open = *sides & 2 == 0;
+            *sides |= side;
+            if was_open && *sides & 2 != 0 && self.queued.get(&id).is_some_and(|&n| n > 0) {
+                self.open -= 1;
+            }
+            self.reads += 1;
+            if self.reads > MAX_AHEAD_WALK {
+                return None;
+            }
+            let (time, parents) = objects.commit_links(id)?;
+            if parents.len() > MAX_PARENTS {
+                return None;
+            }
+            let queued = self.queued.entry(id).or_default();
+            if *queued == 0 && *sides & 2 == 0 {
+                self.open += 1;
+            }
+            *queued += 1;
+            self.queue.push((time, id.0, parents));
+        }
+        Some(())
+    }
+
+    /// Notes that one of `id`'s queue entries was taken.
+    fn dequeue(&mut self, id: Oid) {
+        let queued = self.queued.entry(id).or_default();
+        *queued -= 1;
+        if *queued == 0 && self.sides[&id] & 2 == 0 {
+            self.open -= 1;
+        }
+    }
 }
 
 /// HEAD's version of the file at `path`, a realpath holding `bytes`, as
@@ -952,7 +988,7 @@ impl Objects {
 
     /// A commit's committer time and parents.
     fn commit_links(&self, commit: Oid) -> Option<(i64, Vec<Oid>)> {
-        let (kind, bytes) = self.read(commit, MAX_INFLATED)?;
+        let (kind, bytes) = self.read(commit, MAX_COMMIT)?;
         if kind != 1 {
             return None;
         }
@@ -1833,6 +1869,83 @@ mod tests {
             found.files,
             [(PathBuf::from("CLAUDE.md"), Status::Modified)]
         );
+    }
+
+    #[test]
+    fn wide_merges_end_the_ahead_walk() {
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+
+        let (_dir, root) = repo(&[("a.md", b"a\n")]);
+        // A stream of root commits :1.. and merges of sixteen of them each.
+        let import = |stream: String| {
+            let mut child = Command::new("git")
+                .current_dir(&root)
+                .args(["fast-import", "--quiet", "--force"])
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(stream.as_bytes())
+                .unwrap();
+            assert!(child.wait().unwrap().success());
+        };
+        let commit = |branch: &str, mark: u32, links: &str| {
+            let message = format!("{mark}\n");
+            format!(
+                "commit refs/heads/{branch}\nmark :{mark}\ncommitter t <t@t> 1700000000 +0000\ndata {}\n{message}{links}\n",
+                message.len()
+            )
+        };
+        let wide = |merges: u32, fan: u32| {
+            let mut stream = commit("base", 1, "");
+            let mut mark = 1;
+            let mut tip = None;
+            for _ in 0..merges {
+                let mut links = tip.map(|tip| format!("from :{tip}\n")).unwrap_or_default();
+                for _ in 1..fan {
+                    mark += 1;
+                    stream += "reset refs/heads/side\n";
+                    stream += &commit("side", mark, "");
+                    links += &format!("merge :{mark}\n");
+                }
+                mark += 1;
+                stream += &commit("main", mark, &links);
+                tip = Some(mark);
+            }
+            stream
+        };
+        let upstream = |root: &Path| {
+            git(root, &["config", "branch.main.remote", "."]);
+            git(root, &["config", "branch.main.merge", "refs/heads/base"]);
+        };
+
+        // Sixteen parents are read, a seventeenth is not. (fast-import can't
+        // write more than sixteen.)
+        import(wide(1, 16));
+        upstream(&root);
+        assert_eq!(status(&root).unwrap().ahead, Some(16));
+        let parents = git(&root, &["rev-list", "--max-count=17", "--all"]);
+        let mut args = vec![
+            "commit-tree",
+            "-m",
+            "wide",
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        ];
+        for parent in parents.split_whitespace() {
+            args.extend(["-p", parent]);
+        }
+        assert_eq!(args.len(), 4 + 2 * 17);
+        let merge = git(&root, &args);
+        git(&root, &["update-ref", "refs/heads/main", merge.trim()]);
+        assert_eq!(status(&root).unwrap().ahead, None);
+
+        // Merges of sixteen unrelated commits, more than the cap in all.
+        import(wide(MAX_AHEAD_WALK as u32 / 15 + 1, 16));
+        assert_eq!(status(&root).unwrap().ahead, None);
     }
 
     #[test]

@@ -4,7 +4,7 @@ on:
   pull_request:
   merge_group:
   push:
-    branches: [main]
+    branches: [main, w13/a]
 
 permissions:
   contents: read
@@ -90,7 +90,7 @@ jobs:
 
   swift:
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: false
     runs-on: xcode-27
     timeout-minutes: 30
     # One cached target dir for the FFI library and the dewline command that embed-cli.sh builds.

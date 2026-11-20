@@ -55,6 +55,43 @@ struct MainMenuTests {
         }
     }
 
+    /// The Edit and Find items a Mac text app has, on the text view's own selectors and their standard keys.
+    @Test func editAndFindCarryTheStandardItems() {
+        let all = shortcuts()
+        func item(_ title: String) -> (path: String, title: String, key: KeyEquivalent)? {
+            all.first { $0.title == title }
+        }
+        #expect(item("Paste and Match Style")?.key.glyphs == "⌥⇧⌘V")
+        #expect(item("Find and Replace…")?.key.glyphs == "⌥⌘F")
+        #expect(item("Use Selection for Find")?.key.glyphs == "⌘E")
+        #expect(item("Jump to Selection")?.key.glyphs == "⌘J")
+        #expect(item("Duplicate")?.key.glyphs == "⇧⌘S")
+        let windows = NSApp.windowsMenu
+        let edit = MainMenu.build().items.first { $0.submenu?.title == "Edit" }?.submenu
+        NSApp.windowsMenu = windows
+        func action(_ title: String, in menu: NSMenu? = edit) -> Selector? {
+            guard let menu else { return nil }
+            for item in menu.items {
+                if item.title == title { return item.action }
+                if let found = action(title, in: item.submenu) { return found }
+            }
+            return nil
+        }
+        let expected: [(String, Selector)] = [
+            ("Paste and Match Style", #selector(NSTextView.pasteAsPlainText(_:))), ("Delete", #selector(NSText.delete(_:))),
+            ("Use Selection for Find", #selector(NSTextView.performFindPanelAction(_:))),
+            ("Jump to Selection", #selector(NSResponder.centerSelectionInVisibleArea(_:))),
+            ("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:))), ("Check Document Now", #selector(NSText.checkSpelling(_:))),
+            ("Show Substitutions", #selector(NSTextView.orderFrontSubstitutionsPanel(_:))),
+            ("Smart Punctuation", #selector(EditorTextView.toggleSmartPunctuation(_:))),
+            ("Make Upper Case", #selector(NSResponder.uppercaseWord(_:))), ("Make Lower Case", #selector(NSResponder.lowercaseWord(_:))),
+            ("Capitalize", #selector(NSResponder.capitalizeWord(_:))),
+        ]
+        for (title, selector) in expected {
+            #expect(action(title) == selector, "\(title)")
+        }
+    }
+
     /// ⌘= and ⌘+ zoom in, ⌘- zooms out and ⌘0 is Actual Size, which Body Text gave up; the size is the one setting.
     @Test func zoomKeysStepTheTextSizeAndActualSizeRestoresIt() throws {
         let windows = NSApp.windowsMenu
@@ -90,7 +127,8 @@ struct MainMenuTests {
     /// DEWLINE_KEYBOARD_DOC (TEST_RUNNER_DEWLINE_KEYBOARD_DOC through xcodebuild) writes both files before comparing.
     @Test func keyboardDocListsTheMenuBar() throws {
         let all = shortcuts()
-        let rows = all.map { "| \($0.title) | \($0.path) | \($0.key.glyphs) |" }
+        // The Window menu's tab items come and go with the tabs.
+        let rows = all.map { "| \($0.title) | \($0.path) | \($0.key.glyphs) |" } + ["| Tabs 1 to 9 | Window | ⌥⌘1 to ⌥⌘9 |"]
         let text = ([
             "# Keyboard shortcuts", "",
             "The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by `MainMenuTests`.", "",

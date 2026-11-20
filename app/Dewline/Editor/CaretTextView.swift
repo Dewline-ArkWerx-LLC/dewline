@@ -173,17 +173,10 @@ class CaretTextView: NSTextView {
         jump(to: NSRange(location: location, length: 0))
     }
 
+    /// Quick Open on its line scope: the ":" goes in as typed, which turns it into the scope chip.
     @objc func goToLine(_ sender: Any?) {
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        let alert = NSAlert()
-        alert.messageText = "Go to Line"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Go")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window!) { [weak self] response in
-            if response == .alertFirstButtonReturn, let line = Int(field.stringValue) { self?.jump(toLine: line) }
-        }
+        QuickOpenPanel.show(commands: false)
+        ((NSApp.keyWindow as? QuickOpenPanel)?.firstResponder as? NSTextView)?.insertText(":", replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
     override func performFindPanelAction(_ sender: Any?) {

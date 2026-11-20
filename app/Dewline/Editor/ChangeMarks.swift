@@ -13,7 +13,7 @@ struct MarkWriter: Equatable {
         case .agent(.claude, _): ("Claude", .claude)
         case .agent(.codex, _): ("Codex", .codex)
         case .agent(.cursor, _): ("Cursor", .cursor)
-        case .agent(.demo, _): ("Demo", .demo)
+        case .agent(.demo, _): ("Example", .demo)
         case .agent(.acp, let session): (String(session.prefix { $0 != "#" }), .demo)
         case .collaborator(_, let name): (name, .collaborator)
         case .git: ("git", .git)
@@ -54,11 +54,10 @@ struct MarkWriter: Equatable {
 }
 
 /// Paints marked changes over the text at render time, never as text edits: a wash in the writer's hue under
-/// inserted text with an underline in the writer's style, a 3 pt rule in the writer's ink beside each changed row in
-/// the left margin, joined by a 1 pt line across the rows between, and the writer's name and time on hover. Each
-/// writer session carries a `ChangeStamp` with Revert and Keep in the margin, on its focused or first change; a narrow
-/// margin folds the focused change's stamp under its block. Short
-/// removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
+/// inserted text with an underline in the writer's style, one 3 pt rule in the writer's ink beside the changed rows in
+/// the left margin, and the writer's name and time on hover. Each writer session carries a `ChangeStamp` with Revert
+/// and Keep in the margin, on its focused or first change; a narrow margin folds the focused change's stamp under its
+/// block. Short removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
 /// change; longer removed text and a conflict's other version hang under the paragraph, in space the styler reserves
 /// below it. The marks sit under the text; ghosts and cards sit over it.
 @MainActor
@@ -176,7 +175,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         // Each hanger's anchor under its paragraph, and for removed text the character before the deletion point when
         // that is on the same line: an inline ghost's gap opens after it.
         var wanted: [UInt64: (hang: Int, inline: Int?)] = [:]
-        for (id, change) in changes where change.conflict || !change.removed.isEmpty {
+        // Removed blanks strike nothing visible, and a gap for them would move the line: a ticked box's space.
+        for (id, change) in changes where change.conflict || !change.removed.allSatisfy(\.isWhitespace) {
             let end = change.range.length > 0 ? NSMaxRange(change.range) - 1 : change.range.location - 1
             let at = change.range.location
             let inline = !change.conflict && at > 0 && at <= length && ![0x0A, 0x0D].contains(text.character(at: at - 1)) ? at - 1 : nil
@@ -330,7 +330,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     group.addSublayer(fill)
                     tips.append((cell, id))
                 }
-                for line in lines where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
+                for line in trimmed(lines) where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
                     let fill = CALayer()
                     fill.frame = line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
@@ -343,21 +343,22 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     underline.path = path
                     underline.strokeColor = color.cgColor
                     underline.lineWidth = rule
-                    if writer.dashed { underline.lineDashPattern = [4, 3] }
+                    // Dotted, so it never reads as a link; dashed for another app.
+                    if writer.dashed {
+                        underline.lineDashPattern = [4, 3]
+                    } else {
+                        underline.lineCap = .round
+                        underline.lineDashPattern = [0, NSNumber(value: Double(rule) * 2)]
+                    }
                     group.addSublayer(underline)
                     tips.append((line.frame, id))
                 }
             }
-            // A rule per row; a 1 pt line at 35% joins the rows across what lies between them.
+            // One rule from the change's first row to its last.
             let x = max(left - Self.ruleInset, 4)
-            let rules = rows.map { NSRect(x: x, y: $0.minY + 2, width: ruleWidth, height: max($0.height - 4, 4)) }
+            let span = rows.dropFirst().reduce(rows[0]) { $0.union($1) }
+            let rules = [NSRect(x: x, y: span.minY + 2, width: ruleWidth, height: max(span.height - 4, 4))]
             if !change.conflict { ruled.append((Review.key(change.origin), rules, color)) }
-            for (above, below) in zip(rules, rules.dropFirst()) where below.minY > above.maxY {
-                let join = CALayer()
-                join.frame = NSRect(x: x + (ruleWidth - 1) / 2, y: above.maxY, width: 1, height: below.minY - above.maxY)
-                join.backgroundColor = color.withAlphaComponent(0.35).cgColor
-                group.addSublayer(join)
-            }
             for frame in rules {
                 if id == lit {
                     let halo = CALayer()
@@ -409,6 +410,23 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let baseline: CGFloat
         /// The segment's first character.
         let location: Int
+        let length: Int
+    }
+
+    /// `segments` without the blanks at either end of each, which a wash or underline would show as a nub.
+    private func trimmed(_ segments: [Segment]) -> [Segment] {
+        guard let text = textView?.textStorage?.mutableString else { return segments }
+        return segments.flatMap { segment -> [Segment] in
+            var (start, end) = (segment.location, min(segment.location + segment.length, text.length))
+            while start < end, Self.isBlank(text.character(at: start)) { start += 1 }
+            while end > start, Self.isBlank(text.character(at: end - 1)) { end -= 1 }
+            if start == segment.location && end == segment.location + segment.length { return [segment] }
+            return start < end ? self.segments(NSRange(location: start, length: end - start)) : []
+        }
+    }
+
+    private static func isBlank(_ character: unichar) -> Bool {
+        [0x20, 0x09, 0x0A, 0x0D, 0xA0].contains(character)
     }
 
     /// The rows a change's segments fill, one per paragraph, from its first line to its last.
@@ -476,7 +494,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         var segments: [Segment] = []
         layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { segment, frame, baseline, _ in
             let location = segment.map { content.offset(from: content.documentRange.location, to: $0.location) } ?? range.location
-            segments.append(Segment(frame: frame.offsetBy(dx: origin.x, dy: origin.y), baseline: baseline, location: location))
+            let length = segment.map { content.offset(from: $0.location, to: $0.endLocation) } ?? range.length
+            segments.append(Segment(frame: frame.offsetBy(dx: origin.x, dy: origin.y), baseline: baseline, location: location, length: length))
             return true
         }
         return segments

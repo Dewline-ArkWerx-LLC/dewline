@@ -278,6 +278,7 @@ final class EditorTextView: CaretTextView {
             convert(window.convertFromScreen(firstRect(forCharacterRange: NSRange(location: index, length: 0), actualRange: nil)), from: nil)
         }
         drawCodeWells(in: visible, line: line(at:))
+        drawCodeChips(in: visible)
         drawCallouts(in: visible, line: line(at:))
         ThemeStore.shared.color(.quoteRule).setFill()
         storage.enumerateAttribute(.dewlineQuote, in: visible) { value, range, _ in
@@ -288,6 +289,27 @@ final class EditorTextView: CaretTextView {
         }
         drawBullets(in: visible, line: line(at:))
         drawInlineMath(in: visible, line: line(at:))
+    }
+
+    /// Fills a rounded chip behind each code span in `visible`, line by line, under the change marks so a change's
+    /// wash and underline run on across it.
+    private func drawCodeChips(in visible: NSRange) {
+        let storage = textStorage!
+        guard let layout = textLayoutManager, let content = layout.textContentManager else { return }
+        ThemeStore.shared.color(.codeBackground).setFill()
+        storage.enumerateAttribute(.dewlineCodeChip, in: visible) { value, range, _ in
+            guard value != nil, let font = storage.attribute(.font, at: NSMaxRange(range) - 1, effectiveRange: nil) as? NSFont,
+                let start = content.location(content.documentRange.location, offsetBy: range.location),
+                let end = content.location(start, offsetBy: range.length), let text = NSTextRange(location: start, end: end)
+            else { return }
+            layout.enumerateTextSegments(in: text, type: .standard, options: []) { _, frame, baseline, _ in
+                guard frame.width >= 0.5 else { return true }
+                let top = frame.minY + baseline - font.ascender - 2
+                let chip = NSRect(x: frame.minX - 1, y: top, width: frame.width + 2, height: font.ascender - font.descender + 4)
+                NSBezierPath(roundedRect: chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), xRadius: 3, yRadius: 3).fill()
+                return true
+            }
+        }
     }
 
     /// Draws a dot over each hidden `-`, `*` or `+` item marker in `visible`.

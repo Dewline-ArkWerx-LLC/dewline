@@ -152,8 +152,8 @@ struct JourneyTests {
         #expect((tab.textView.string as NSString).substring(with: paragraph).contains("dewline://demo"))
         #expect(tab.textView.string.contains(Welcome.paragraph + Welcome.addition))
         let stamp = try #require(Self.stamp(in: tab))
-        #expect(stamp.accessibilityLabel()?.hasPrefix("Demo, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 1 change") == true)
-        try Self.press("Keep Demo's change", on: stamp)
+        #expect(stamp.accessibilityLabel()?.hasPrefix("Example, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 1 change") == true)
+        try Self.press("Keep Example's change", on: stamp)
         #expect(tab.marked.isEmpty)
         #expect(Self.stamp(in: tab) == nil)
     }
@@ -432,11 +432,11 @@ struct JourneyTests {
         await waitForMain { ClosedChanges.all.count == 2 }
         let review = ReviewViewController(for: tab.window)
         _ = review.view
-        // Four changed lines under plan.md, then the two notes changed while closed.
+        // Claude's session, then four changed lines under plan.md, then the session's two notes changed while closed.
         #expect(review.rows.count == 8)
-        guard case .closedHeading = review.rows[5] else { Issue.record("no closed heading"); return }
-        if case .note(_, let byline) = review.rows[0] { #expect(byline.hasPrefix("Claude Code \u{00B7} ")) } else { Issue.record("no note heading") }
-        guard case .change(let live, let first, let text) = review.rows[1] else { Issue.record("no change row"); return }
+        guard case .closed = review.rows[6] else { Issue.record("no closed note"); return }
+        if case .session(_, let byline) = review.rows[0] { #expect(byline.hasPrefix("Claude Code \u{00B7} ")) } else { Issue.record("no session heading") }
+        guard case .change(let live, let first, let text) = review.rows[2] else { Issue.record("no change row"); return }
         let line = ReviewViewController.line(of: first, in: live, text: text)
         #expect(line.string == "Alpha line, revised.")
         func weight(at index: Int) -> CGFloat {

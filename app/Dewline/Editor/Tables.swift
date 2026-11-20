@@ -93,6 +93,20 @@ final class Tables {
         styled.enumerateAttribute(.font, in: header) { value, run, _ in
             styled.addAttribute(.font, value: store.font(value as! NSFont, adding: .bold), range: run)
         }
+        // A column whose body cells all start with a digit sets its figures tabular, so they line up.
+        for column in 0..<count {
+            let cells = lines.dropFirst().compactMap { $0.cells.count > column ? $0.cells[column].content : nil }
+            let numeric = !cells.isEmpty && cells.allSatisfy { cell in
+                let value = text.substring(with: cell).trimmingCharacters(in: .whitespaces)
+                return value.first?.isASCII == true && value.first?.isNumber == true
+            }
+            guard numeric else { continue }
+            for cell in cells {
+                styled.enumerateAttribute(.font, in: cell) { value, run, _ in
+                    styled.addAttribute(.font, value: Self.tabular(value as! NSFont), range: run)
+                }
+            }
+        }
         let measured = lines.map { line in line.cells.prefix(count).map { styled.attributedSubstring(from: $0.content).size().width } }
         var widths = (0..<count).map { column in measured.map { $0.count > column ? $0[column] : 0 }.max() ?? 0 }
         let range = NSRange(location: table.head.range.location - offset, length: NSMaxRange(lines.last!.token) - (table.head.range.location - offset))
@@ -184,6 +198,14 @@ final class Tables {
         }
     }
 
+    /// `font` with tabular figures.
+    private static func tabular(_ font: NSFont) -> NSFont {
+        let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: [[
+            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector,
+        ]]])
+        return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
+    }
+
     /// Column widths that fill `room`: each column keeps its `least` and shares what is left in proportion to how far
     /// its widest cell reaches past that.
     private static func fit(_ widths: [CGFloat], least: [CGFloat], into room: CGFloat) -> [CGFloat] {
@@ -201,10 +223,13 @@ final class Tables {
         return widest.rounded(.up)
     }
 
-    /// A cell's text, aligned for drawing in its column.
+    /// A cell's text, aligned for drawing in its column, its code spans on their background.
     private static func cell(_ text: NSAttributedString, _ alignment: Alignment) -> NSAttributedString {
-        guard alignment != .left else { return text }
         let aligned = NSMutableAttributedString(attributedString: text)
+        aligned.enumerateAttribute(.dewlineCodeChip, in: NSRange(location: 0, length: aligned.length)) { value, run, _ in
+            if value != nil { aligned.addAttribute(.backgroundColor, value: ThemeStore.shared.color(.codeBackground), range: run) }
+        }
+        guard alignment != .left else { return aligned }
         let style = ThemeStore.shared.paragraphStyle(lineHeight: ThemeStore.shared.bodyLineHeight).mutableCopy() as! NSMutableParagraphStyle
         style.alignment = alignment == .center ? .center : .right
         aligned.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: aligned.length))

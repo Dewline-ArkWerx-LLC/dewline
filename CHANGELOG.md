@@ -11,6 +11,13 @@ What changed in each Dewline release, newest first.
 - Find in Files results use the theme's inks.
 - Dragging a tab slides its neighbors aside as it passes; dragging it out of the strip drags the note's file. The unsaved dot sits where the close button appears on hover, Command-click on a tab shows the note's path, and the tab's tooltip names its Option-Command key.
 - Chrome type follows the macOS text styles; chevrons and the tab close button are SF Symbols. Activity and the sidebar's … menu open on mouse down, and Activity dims instead of hiding while you type. Command-Down Arrow opens the selected sidebar row.
+- Set Up Agent Hooks refuses to run from a disk image or a translocated copy, whose path is gone once it ejects, and offers Move to Applications and Relaunch; the first launch offers the move too, and `dewline doctor --install-hooks` refuses the same paths.
+- The hook setup sheet lists every event it adds for each agent and what each group is for, says the hooks apply in every project (your user settings), and that they send paths and hashes, never file content.
+- Welcome.md puts "Show me a change" above the explanation, in the accent with a full underline, a pointing hand and the tip "Click to see a change"; its "Settings > Agents" opens the hook setup sheet.
+- The first agent change in a session says in the status bar: "First change from Claude Code. Keep or Revert it here."
+- The launch window shows the brand lockup, says "Open the folder your agent works in. Its edits show up marked, ready to keep or revert." when it lists nothing, and Return opens the selected recent instead of making a new note (⌘N still does).
+- The demo's writer is "Demo agent" on its stamp and in Earlier Versions, and its paragraph says the stamp reads CLAUDE, CODEX or CURSOR once hooks are set up.
+- Earlier Versions tints restored and removed lines in the theme's colors.
 - The window goes as narrow as 420 pt with the sidebar and Changes pane closed, so it shares a laptop screen with a terminal; below 700 pt the sidebar collapses on its own and comes back when the window widens. The Changes pane can narrow to 260 pt.
 - Changes (⇧⌘R) takes the keyboard on the first change; pressed again it hands the keyboard back to the note. In the list, J and K move, Y or Return keeps, X reverts, O reveals. Vim's ]c and [c are Next and Previous Change, and the command palette finds Changes by "Diff" or "Review".
 - Next Change (⌃⌘↓) past the last change in the open notes opens the next note waiting, changed while closed or since the last commit, at its first change, and the status bar says how many more wait.

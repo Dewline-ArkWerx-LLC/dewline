@@ -26,7 +26,7 @@ struct JourneyTests {
         #expect(!window.isVisible)
         let buttons = Self.views(in: window.contentView!).compactMap { $0 as? NSButton }
         let new = try #require(buttons.first { $0.title == "New Note" })
-        #expect(new.action == #selector(AppDelegate.newDocument(_:)) && new.keyEquivalent == "\r")
+        #expect(new.action == #selector(AppDelegate.newDocument(_:)) && new.keyEquivalent.isEmpty, "Return opens the selected recent; ⌘N makes the note")
         #expect((NSApp.delegate as AnyObject?)?.responds(to: #selector(AppDelegate.newDocument(_:))) == true)
         #expect(buttons.map(\.title).suffix(3) == ["Open Folder…", "Open…", "New Note"])
     }
@@ -119,8 +119,9 @@ struct JourneyTests {
         #expect(try Welcome.write(in: folder))
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
-        #expect(guide.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code, Codex or Cursor edits a note, Dewline marks the change"))
-        #expect(guide.contains(Welcome.replaced + " Try it: [Show me a change](dewline://demo)"))
+        #expect(guide.hasPrefix("# Welcome to Dewline\n\nTry it: [Show me a change](dewline://demo)\n\nWhen Claude Code, Codex or Cursor edits a note"))
+        #expect(guide.contains("[Settings > Agents](dewline://setup-hooks)"))
+        #expect(guide.contains(Welcome.replaced))
         #expect(guide.contains(Welcome.anchor))
         #expect(!guide.contains("'"), "curly quotes throughout")
         #expect(!guide.contains("\u{2014}") && !guide.contains("--"))
@@ -138,9 +139,9 @@ struct JourneyTests {
         #expect(vault.text("Dewline/Welcome.md") == "# Mine\n")
     }
 
-    /// Show me a change: the demo's claimed write lands two marked changes, a replace in the paragraph that holds the
-    /// link and an inserted paragraph below it; the stamp names them, and its Keep decides each in turn.
-    @Test func j1ShowMeAChangeLandsInTheParagraphWithTheLink() async throws {
+    /// Show me a change: the demo's claimed write lands two marked changes, a replace in the paragraph under the link
+    /// and an inserted paragraph below that; the stamp names them, and its Keep decides each in turn.
+    @Test func j1ShowMeAChangeLandsUnderTheLink() async throws {
         let vault = try Vault([:])
         defer { vault.remove() }
         try Welcome.write(in: vault.notes)
@@ -151,8 +152,8 @@ struct JourneyTests {
         let change = try #require(tab.marked.first)
         guard case .agent(.demo, _) = change.change.origin else { Issue.record("Demo didn't write it: \(change.change.origin)"); return }
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
-        #expect((tab.textView.string as NSString).substring(with: paragraph).contains("dewline://demo"))
-        #expect(tab.textView.string.contains(Welcome.replacement + " Try it: [Show me a change](dewline://demo)"))
+        #expect((tab.textView.string as NSString).substring(with: paragraph).hasSuffix(Welcome.replacement + "\n"))
+        #expect(tab.textView.string.contains("(dewline://demo)\n\nWhen Claude Code"))
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         let stamp = try #require(Self.stamp(in: tab))
         #expect(stamp.accessibilityLabel()?.hasSuffix(", 2 changes") == true)
@@ -781,9 +782,17 @@ struct JourneyTests {
     @Test func hookSetupListsTheFilesAndAnswersOnATerminal() async throws {
         let report = "Version: app and command are both 0.1.0\n\nAgent hooks:\n  Claude Code: PreToolUse, Stop missing from /Users/a/.claude/settings.json\n"
             + "    {\"PreToolUse\":{\"hooks\":[]}}\n    {\"Stop\":{\"hooks\":[]}}\n  Codex: installed in /Users/a/.codex/hooks.json\n"
-        #expect(HookSetup.missing(in: report) == [
-            HookSetup.Missing(agent: "Claude Code", file: "/Users/a/.claude/settings.json", entries: ["{\"PreToolUse\":{\"hooks\":[]}}", "{\"Stop\":{\"hooks\":[]}}"])
+        let missing = HookSetup.missing(in: report)
+        #expect(missing == [
+            HookSetup.Missing(
+                agent: "Claude Code", file: "/Users/a/.claude/settings.json", events: ["PreToolUse", "Stop"],
+                entries: ["{\"PreToolUse\":{\"hooks\":[]}}", "{\"Stop\":{\"hooks\":[]}}"]
+            )
         ])
+        #expect(HookSetup.summary(missing) == "Claude Code: PreToolUse to name the agent behind each edit; Stop to mark where each turn ends.")
+        #expect(HookSetup.misplaced(URL(filePath: "/Volumes/Dewline/Dewline.app")))
+        #expect(HookSetup.misplaced(URL(filePath: "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app")))
+        #expect(!HookSetup.misplaced(URL(filePath: "/Applications/Dewline.app")))
         let vault = try Vault([:])
         defer { vault.remove() }
         let script = vault.root.appending(path: "asks.sh")

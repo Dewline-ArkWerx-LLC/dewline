@@ -1,9 +1,10 @@
 import AppKit
 import MdCore
 
-/// `dewline://open?path=…&line=…` and `dewline://demo`, Welcome.md's link. `open` shows only a Markdown file inside the
-/// home folder, never inside ~/Library or a `.ssh` folder. `demo` makes its two edits to Welcome.md in Dewline's
-/// own folder. Nothing else a link names is read or written; `dewline export` reaches the app through the control socket.
+/// `dewline://open?path=…&line=…`, and Welcome.md's `dewline://demo` and `dewline://setup-hooks`. `open` shows only a
+/// Markdown file inside the home folder, never inside ~/Library or a `.ssh` folder. `demo` makes its two edits to
+/// Welcome.md in Dewline's own folder; `setup-hooks` opens the Set Up sheet, which asks before it changes a file.
+/// Nothing else a link names is read or written; `dewline export` reaches the app through the control socket.
 @MainActor
 enum SchemeLinks {
     static func handle(_ url: URL) {
@@ -31,6 +32,8 @@ enum SchemeLinks {
             try delegate.show(file, line: line, column: nil)
         case "demo":
             (NSApp.delegate as? AppDelegate)?.playDemo(at: Welcome.url())
+        case "setup-hooks":
+            (NSApp.delegate as? AppDelegate)?.setUpHooks(nil)
         default:
             throw Refused("Dewline can\u{2019}t open this kind of link.")
         }

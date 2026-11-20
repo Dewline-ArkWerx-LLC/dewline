@@ -13,7 +13,7 @@ struct MarkWriter: Equatable {
         case .agent(.claude, _): ("Claude", .claude)
         case .agent(.codex, _): ("Codex", .codex)
         case .agent(.cursor, _): ("Cursor", .cursor)
-        case .agent(.demo, _): ("Example", .demo)
+        case .agent(.demo, _): ("Demo agent", .demo)
         case .agent(.acp, let session): (String(session.prefix { $0 != "#" }), .demo)
         case .collaborator(_, let name): (name, .collaborator)
         case .git: ("git", .git)

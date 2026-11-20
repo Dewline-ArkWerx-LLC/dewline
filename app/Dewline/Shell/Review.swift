@@ -93,34 +93,26 @@ enum Review {
     static var closedNotes: () -> [ClosedNote] = { [] }
 
     /// Keep Session and Revert Session: decides every marked change from writer session `key` in `window`'s notes,
-    /// and opens the session's notes changed while closed to decide theirs as they land.
+    /// and opens the session's notes changed while closed to decide theirs once they land.
     static func decideSession(_ key: String, keep: Bool, in window: NSWindow?) {
         let files = files(in: window)
-        for live in files {
-            let ids = live.changes.filter { $0.value.marked && !$0.value.conflict && Self.key($0.value.origin) == key }.map(\.key)
-            live.decide(ids, keep: keep, named: keep ? "Keep Session" : "Revert Session")
-        }
+        for live in files { decide(key, keep: keep, in: live) }
         let open = Set(files.map(\.url.standardizedFileURL))
         for note in closedNotes() where Self.key(note.origin) == key && !open.contains(note.url.standardizedFileURL) {
-            deciding[note.url.standardizedFileURL] = (key, keep)
-            NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { _, _, _ in }
-        }
-        guard !deciding.isEmpty, landing == nil else { return }
-        landing = NotificationCenter.default.addObserver(forName: LiveFile.changesDidChange, object: nil, queue: .main) { notification in
-            guard let live = notification.object as? LiveFile else { return }
-            Task { @MainActor in
-                guard let pending = deciding[live.url.standardizedFileURL] else { return }
-                let ids = live.changes.filter { $0.value.marked && !$0.value.conflict && Self.key($0.value.origin) == pending.key }.map(\.key)
-                guard !ids.isEmpty else { return }
-                deciding[live.url.standardizedFileURL] = nil
-                live.decide(ids, keep: pending.keep, named: pending.keep ? "Keep Session" : "Revert Session")
+            NSDocumentController.shared.openDocument(withContentsOf: note.url, display: true) { document, _, _ in
+                guard let live = (document as? MarkdownDocument)?.live else { return }
+                Task {
+                    await live.refresh()
+                    decide(key, keep: keep, in: live)
+                }
             }
         }
     }
 
-    /// Closed notes Keep Session or Revert Session opened, waiting for their changes to land.
-    private static var deciding: [URL: (key: String, keep: Bool)] = [:]
-    private static var landing: NSObjectProtocol?
+    private static func decide(_ key: String, keep: Bool, in live: LiveFile) {
+        let ids = live.changes.filter { $0.value.marked && !$0.value.conflict && Self.key($0.value.origin) == key }.map(\.key)
+        live.decide(ids, keep: keep, named: keep ? "Keep Session" : "Revert Session")
+    }
 
     /// "Claude Code · 2:36 PM", or the name alone with no time known.
     static func byline(_ origin: ChangeEngine.Origin, at time: Date?) -> String {

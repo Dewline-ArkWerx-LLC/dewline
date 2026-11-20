@@ -151,6 +151,22 @@ private func until(_ condition: () -> Bool) async {
         #expect(editor.attribute(.toolTip, at: plain) == nil)
     }
 
+    /// A dewline: link follows on a plain click, so it reads as one: accent ink, an accent underline, and a tip saying
+    /// what the click does.
+    @Test func dewlineLinksReadAsClickable() {
+        let sandbox = Sandbox()
+        let text = "Try it: [Show me a change](dewline://demo) or [set up](dewline://setup-hooks).\n"
+        let editor = Editor(text, caret: (text as NSString).length, previews: sandbox.previews(Pages()))
+        let accent = ThemeStore.shared.color(.accent)
+        for (word, tip) in [("Show me", "Click to see a change"), ("set up", "Click to set up agent hooks")] {
+            let index = (text as NSString).range(of: word).location
+            #expect(editor.attribute(.foregroundColor, at: index) as? NSColor == accent)
+            #expect(editor.attribute(.underlineColor, at: index) as? NSColor == accent)
+            #expect(editor.attribute(.underlineStyle, at: index) as? Int == NSUnderlineStyle.single.rawValue)
+            #expect(editor.attribute(.toolTip, at: index) as? String == tip)
+        }
+    }
+
     /// The card shows the host until the page arrives, then its title and picture; the caret in it shows the address;
     /// the address is fetched once however many cards show it, and the bytes never change.
     @Test func aBareAddressBecomesACardOnceItsPageArrives() async throws {

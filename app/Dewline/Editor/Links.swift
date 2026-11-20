@@ -114,6 +114,23 @@ enum Links {
             .toolTip: "\u{2318}-click to open",
         ]
     }
+
+    /// An inline link's look, `link` being its span in `text`: a `dewline:` link follows on a plain click, so it reads as
+    /// one, in the accent with a full underline and a tip saying what the click does; any other link takes `style`.
+    @MainActor
+    static func style(of link: SyntaxSpan, in text: NSString) -> [NSAttributedString.Key: Any] {
+        let close = text.substring(with: NSRange(location: NSMaxRange(link.content), length: NSMaxRange(link.range) - NSMaxRange(link.content)))
+        guard close.hasPrefix("]("), let url = URL(string: String(close.dropFirst(2).prefix { !$0.isWhitespace && $0 != ")" })),
+            url.scheme?.lowercased() == "dewline"
+        else { return style }
+        let accent = ThemeStore.shared.color(.accent)
+        let tip = switch url.host() {
+        case "demo": "Click to see a change"
+        case "setup-hooks": "Click to set up agent hooks"
+        default: "Click to open"
+        }
+        return [.foregroundColor: accent, .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: accent, .toolTip: tip]
+    }
 }
 
 extension EditorTextView {

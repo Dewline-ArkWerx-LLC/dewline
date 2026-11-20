@@ -1,7 +1,7 @@
 import AppKit
 
-/// The window shown when nothing is open, 560 by 400: the mark and name with the tagline across from them, one list
-/// of recent folders then notes, and New Note, Open and Open Folder along the bottom.
+/// The window shown when nothing is open, 560 by 400: the brand lockup with the tagline across from it, one list of
+/// recent folders then notes, and New Note, Open and Open Folder along the bottom.
 final class LaunchWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     static var showsWhenNothingIsOpen: Bool {
         // The test host stays windowless.
@@ -19,8 +19,9 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
 
     private let list = LaunchList()
     private let filter = NSSearchField()
-    private let empty = NSTextField(labelWithString: "Notes and folders you open show up here.")
-    private let name = NSTextField(labelWithString: "Dewline")
+    private static let emptyText = "Open the folder your agent works in. Its edits show up marked, ready to keep or revert."
+    private let empty = NSTextField(wrappingLabelWithString: emptyText)
+    private let lockup = NSImageView(image: NSImage(named: "Lockup")!)
     private let tagline = NSTextField(labelWithString: "Notes you can grep.")
     private var rows: [Row] = []
     private var filterHeight: NSLayoutConstraint!
@@ -58,7 +59,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
     }
 
     @objc private func applyTheme() {
-        name.textColor = Chrome.color(.ink)
+        lockup.contentTintColor = Chrome.color(.ink)
         tagline.textColor = Chrome.color(.ink2)
         empty.textColor = Chrome.color(.ink2)
         list.reloadData()
@@ -71,12 +72,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
 
     private func content() -> NSView {
         let root = PaperView()
-        let mark = DewMark(size: NSSize(width: 16.5, height: 17))
-        name.font = .systemFont(ofSize: 20, weight: .semibold)
-        let lockup = NSStackView(views: [mark, name])
-        lockup.spacing = 8
-        lockup.alignment = .lastBaseline
-        lockup.setAccessibilityElement(true)
+        lockup.imageScaling = .scaleProportionallyUpOrDown
         lockup.setAccessibilityLabel("Dewline")
         tagline.font = Chrome.label
         filter.placeholderString = "Filter"
@@ -104,7 +100,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
         empty.font = Chrome.label
         empty.alignment = .center
         let new = NSButton(title: "New Note", target: nil, action: #selector(AppDelegate.newDocument(_:)))
-        new.keyEquivalent = "\r"
+        new.toolTip = "New Note (\u{2318}N)"
         let open = NSButton(title: "Open…", target: nil, action: #selector(NSDocumentController.openDocument(_:)))
         let folder = NSButton(title: "Open Folder…", target: nil, action: #selector(AppDelegate.openFolder(_:)))
         let buttons = NSStackView(views: [folder, open, new])
@@ -119,7 +115,10 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
             root.heightAnchor.constraint(equalToConstant: Self.size.height),
             lockup.topAnchor.constraint(equalTo: root.topAnchor, constant: 40),
             lockup.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
-            tagline.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
+            lockup.heightAnchor.constraint(equalToConstant: 24),
+            lockup.widthAnchor.constraint(equalTo: lockup.heightAnchor, multiplier: 941 / 176),
+            // The wordmark's baseline sits 14/176 of the lockup's height above its bottom.
+            tagline.firstBaselineAnchor.constraint(equalTo: lockup.bottomAnchor, constant: -2),
             tagline.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             filter.topAnchor.constraint(equalTo: lockup.bottomAnchor, constant: 20),
             filter.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
@@ -129,6 +128,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             scroll.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
             empty.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            empty.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
             empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
             buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
@@ -152,7 +152,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
         filterHeight.isActive = !filters
         list.reloadData()
         if !rows.isEmpty { list.selectRowIndexes([0], byExtendingSelection: false) }
-        empty.stringValue = query.isEmpty ? "Notes and folders you open show up here." : "Nothing matches \u{201C}\(query)\u{201D}."
+        empty.stringValue = query.isEmpty ? Self.emptyText : "Nothing matches \u{201C}\(query)\u{201D}."
         empty.isHidden = !rows.isEmpty
     }
 

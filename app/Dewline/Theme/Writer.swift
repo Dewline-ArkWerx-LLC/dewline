@@ -21,7 +21,7 @@ enum Writer: String, CaseIterable, Identifiable, Sendable {
         case .unknown: "Another app"
         case .otherMac: "Your other Mac"
         case .collaborator: "Collaborator"
-        case .demo: "Demo"
+        case .demo: "Demo agent"
         }
     }
 }

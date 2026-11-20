@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Synchronization
 
 /// The socket the `dewline` command (core/crates/cli) talks to, in a folder only this user can enter. A connection
@@ -439,10 +439,20 @@ extension ControlSocket.Claim {
         UserDefaults.standard.object(forKey: namedEditKey(vendor)) as? Date
     }
 
-    /// Notes the time of a PostToolUse claim for an edit, which names the agent's write.
+    /// True once this run has said where the first named change landed.
+    @MainActor private static var announced = false
+
+    /// Notes the time of a PostToolUse claim for an edit, which names the agent's write, and the first in this run says
+    /// in the status bar where to decide it.
+    @MainActor
     func recordNamedEdit() {
         guard case .postToolUse(let use) = event, use.tool != .read else { return }
         UserDefaults.standard.set(Date(), forKey: Self.namedEditKey(vendor.rawValue))
+        guard !Self.announced, let writer = Writer(rawValue: vendor.rawValue), writer != .demo,
+            NSApp.mainWindow?.windowController is MainWindowController
+        else { return }
+        Self.announced = true
+        StatusBar.post(.init(id: "first-change", kind: .info, text: "First change from \(writer.name). Keep or Revert it here.", untilTyping: true))
     }
 
     /// Session and tool use ids are 1 to this many printable ASCII characters.

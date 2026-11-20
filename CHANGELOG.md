@@ -14,6 +14,11 @@ What changed in each Dewline release, newest first.
 - The change stamp reads "CLAUDE 3:25 PM · saved · 1 of 2", shows Next Change's keys only under the pointer or once you've decided a change, draws its shortcuts as keycaps, and its tooltips read "Option-click: Keep All (⇧⌘↩)".
 - The status bar keeps its line in a folder window so messages no longer move the note, reads results and problems to VoiceOver, and shows a problem ahead of a request.
 - Revert on a change you typed inside asks first, showing what it puts back, instead of refusing.
+- Code blocks highlight in a fixed band against the paper, keywords in the accent's hue, so tokens read apart from the text in light and dark themes.
+- Headings step by 1.25 from the body: 31, 25, 20 and 16 pt at the default size, so H3 no longer matches body text.
+- Edit has Paste and Match Style (⌥⇧⌘V), Delete, and Spelling and Grammar, Substitutions and Transformations submenus; Find has Find and Replace… (⌥⌘F), Use Selection for Find (⌘E) and Jump to Selection (⌘J); File > Duplicate takes ⇧⌘S. Smart Punctuation moves into Edit > Substitutions.
+- Go to Line… (⌘L) opens Quick Open on its line scope instead of a dialog.
+- Settings > Appearance sets line height on a slider from 1.3 to 1.6.
 - Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
 - Images on a dark page draw at 90% brightness inside their faint rim.
 - Display math is centered in the column.

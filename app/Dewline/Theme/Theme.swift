@@ -215,26 +215,25 @@ struct Theme: Identifiable, Hashable, Sendable {
         return tokens
     }
 
-    /// `tokens` with code highlighting's colors: keywords in the accent's hue, the rest at hues turned from the link's,
-    /// all at the link's lightness, which reads on the paper; comments in ink2, tags and keys in the heading's color,
-    /// insertions green and deletions red. A code color the theme authors, as a dev theme does from its editor's
-    /// palette, stays.
+    /// `tokens` with code highlighting's colors, at one band against the paper so they read apart from the ink: L 0.48
+    /// C 0.12 on a light page, L 0.76 C 0.11 on a dark one. Keywords take the accent's hue, the other roles hues spread
+    /// around it; comments in ink2, tags and keys in the heading's color, insertions green and deletions red. A code
+    /// color the theme authors, as a dev theme does from its editor's palette, stays.
     static func coded(_ authored: [Token: OKLCH]) -> [Token: OKLCH] {
-        let link = authored[.link]!
-        let accent = authored[.accent]!
-        func turned(_ hue: Double) -> OKLCH {
-            OKLCH(l: link.l, c: min(max(link.c, 0.08), 0.14), h: (hue + 360).truncatingRemainder(dividingBy: 360))
+        let dark = authored[.paper]!.l < 0.5
+        func band(_ hue: Double) -> OKLCH {
+            OKLCH(l: dark ? 0.76 : 0.48, c: dark ? 0.11 : 0.12, h: hue)
         }
         let derived: [Token: OKLCH] = [
-            .codeKeyword: OKLCH(l: link.l, c: min(max(accent.c, 0.08), 0.16), h: accent.h),
-            .codeString: turned(link.h + 240),
-            .codeNumber: turned(link.h + 60),
-            .codeType: turned(link.h + 150),
-            .codeFunction: turned(link.h - 35),
+            .codeKeyword: band(authored[.accent]!.h),
+            .codeString: band(75),
+            .codeNumber: band(15),
+            .codeType: band(250),
+            .codeFunction: band(310),
             .codeComment: authored[.ink2]!,
             .codeTag: authored[.heading]!,
-            .codeInserted: turned(150),
-            .codeDeleted: turned(25),
+            .codeInserted: band(150),
+            .codeDeleted: band(25),
         ]
         return authored.merging(derived) { authored, _ in authored }
     }

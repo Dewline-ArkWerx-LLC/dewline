@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let failure = MarkdownDocument.engineFailure { Tracking.report(.noEngine(failure)) }
         Export.publishPreviewStylesheet()
         CodeHighlights.publishForPreview()
-        NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { _ in
+        NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: ThemeStore.shared, queue: .main) { _ in
             MainActor.assumeIsolated { Export.publishPreviewStylesheet() }
         }
         if !defaults.bool(forKey: Welcome.shownKey) {

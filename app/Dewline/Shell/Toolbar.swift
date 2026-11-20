@@ -3,8 +3,8 @@ import MdCore
 
 /// The title row, a `.unifiedCompact` toolbar: the sidebar toggle over the sidebar, then from its divider the tab
 /// strip, Activity, Search and New Note. Each item but the system's sidebar toggle is a borderless button in a plain view, so no glass capsule draws behind it. The tabs outlast the others
-/// when the window narrows. After 1.5 s of typing, everything but the selected tab fades out until the pointer or a
-/// Command chord comes back.
+/// when the window narrows. After 1.5 s of typing, Activity dims and everything else but the selected tab fades out
+/// until the pointer or a Command chord comes back.
 @MainActor
 final class WindowToolbar: NSObject, NSToolbarDelegate {
     static let divider = NSToolbarItem.Identifier("dev.arkwerx.dewline.divider")
@@ -19,7 +19,9 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private let split: NSSplitView
     private let activity = ActivityButton()
     private var activityItem: NSToolbarItem?
-    /// Activity, Search and New Note, which fade out while typing.
+    /// Activity's view, which dims while typing.
+    private var activityView: NSView?
+    /// Search and New Note, which fade out while typing.
     private var fading: [NSView] = []
     /// Whether the title row has faded for typing.
     private var quiet = false
@@ -50,6 +52,12 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             strip.heightAnchor.constraint(equalToConstant: 28),
         ])
         activity.shown = { [weak self] shows in self?.activityItem?.isHidden = !shows }
+        NotificationCenter.default.addObserver(self, selector: #selector(splitResized), name: NSSplitView.didResizeSubviewsNotification, object: split)
+    }
+
+    /// Activity carries the folder's branch and git count while the sidebar that shows them is collapsed.
+    @objc private func splitResized() {
+        activity.sidebarCollapsed = split.arrangedSubviews.first.map(split.isSubviewCollapsed) ?? false
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -67,8 +75,10 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         case Self.tabs:
             return Self.item(identifier, "Tabs", strip, priority: .high)
         case Self.activity:
-            let item = Self.item(identifier, "Activity", fades(ToolbarControl(activity, inset: 7)), priority: .user)
+            let view = ToolbarControl(activity, inset: 7)
+            let item = Self.item(identifier, "Activity", view, priority: .user)
             activityItem = item
+            activityView = view
             item.isHidden = !activity.shows
             return item
         case Self.search:
@@ -132,6 +142,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.15
             for view in fading { view.animator().alphaValue = out ? 0 : 1 }
+            activityView?.animator().alphaValue = out ? 0.4 : 1
             strip.animator().othersAlpha = out ? 0 : 1
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
@@ -225,17 +236,24 @@ final class ToolbarControl: NSView {
     }
 }
 
-/// Activity: a dot in the ink of each writer with changes waiting in the window's notes, then "3 to review". It opens a
-/// menu of those notes. A note changed while closed counts once.
+/// Activity: a dot in the ink of each writer with changes waiting in the window's notes, then "3 to review", after
+/// "main ↑2 · 7 changed" while the sidebar is collapsed. It opens a menu of those notes on mouse down. A note changed
+/// while closed counts once.
 final class ActivityButton: NSButton {
     weak var owner: NSWindow? {
         didSet { update() }
     }
-    /// Called when Activity comes or goes; it shows only while changes wait.
+    /// Called when Activity comes or goes; it shows only while changes wait or it carries the git line.
     var shown: (Bool) -> Void = { _ in }
     private(set) var shows = false
+    /// Whether the window's sidebar is collapsed, so the title carries the folder's branch and git count.
+    var sidebarCollapsed = false {
+        didSet { if sidebarCollapsed != oldValue { update() } }
+    }
     /// The writers and counts the title last showed.
     private var counts: [(writer: MarkWriter, count: Int)] = []
+    /// The git line the title last showed.
+    private var git: String?
     /// The title's width: the toolbar keeps an item at the size it had when it went in, hidden and empty, unless
     /// told otherwise.
     private lazy var width = widthAnchor.constraint(equalToConstant: 0)
@@ -245,8 +263,9 @@ final class ActivityButton: NSButton {
         bezelStyle = .regularSquare
         target = self
         action = #selector(showMenu(_:))
+        sendAction(on: .leftMouseDown)
         setAccessibilityRole(.popUpButton)
-        for name in [LiveFile.changesDidChange, ClosedChanges.changed, TabSet.changed, ThemeStore.didChange] {
+        for name in [LiveFile.changesDidChange, ClosedChanges.changed, TabSet.changed, ThemeStore.didChange, GitStates.changed] {
             NotificationCenter.default.addObserver(self, selector: #selector(changed(_:)), name: name, object: nil)
         }
     }
@@ -272,29 +291,48 @@ final class ActivityButton: NSButton {
         update(force: notification.name == ThemeStore.didChange)
     }
 
-    /// Rebuilds the title when the counts change; each keystroke before a pending change moves it without changing them.
+    /// "main ↑2 · 7 changed" for the window's folder while the sidebar is collapsed; nil when it is in no repository.
+    private var gitLine: String? {
+        guard sidebarCollapsed, let folder = (owner?.windowController as? MainWindowController)?.folder else { return nil }
+        let states = FolderIndex.of(folder).git
+        let branch = [gitBranch(at: folder.url), states.ahead > 0 ? "\u{2191}\(states.ahead)" : nil].compactMap { $0 }
+        let changed = states.changed.count
+        guard !branch.isEmpty || changed > 0 else { return nil }
+        return ([branch.joined(separator: " ")].filter { !$0.isEmpty } + (changed > 0 ? ["\(changed) changed"] : [])).joined(separator: " \u{00B7} ")
+    }
+
+    /// Rebuilds the title when the counts or the git line change; each keystroke before a pending change moves it
+    /// without changing them.
     private func update(force: Bool = false) {
         let (open, closed) = Review.waiting(in: owner)
         let counts = Self.tally(
             open.flatMap { $0.changes.values.filter(\.marked).map(\.origin) } + closed.flatMap { Array(repeating: $0.origin, count: $0.count) })
-        let same = counts.map { "\($0.writer.name) \($0.count)" } == self.counts.map { "\($0.writer.name) \($0.count)" }
+        let git = gitLine
+        let same = counts.map { "\($0.writer.name) \($0.count)" } == self.counts.map { "\($0.writer.name) \($0.count)" } && git == self.git
         guard force || !same else { return }
         self.counts = counts
-        attributedTitle = Self.title(counts)
+        self.git = git
+        attributedTitle = Self.title(counts, git: git)
         width.constant = ceil(attributedTitle.size().width) + 4
         width.isActive = true
         let spoken = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")
-        setAccessibilityLabel("Changes to review: \(spoken)")
+        setAccessibilityLabel(([git].compactMap { $0 } + (counts.isEmpty ? [] : ["Changes to review: \(spoken)"])).joined(separator: ", "))
         toolTip = "Review Changes (\u{21E7}\u{2318}R)"
-        if shows != !counts.isEmpty {
-            shows = !counts.isEmpty
+        let shows = !counts.isEmpty || git != nil
+        if self.shows != shows {
+            self.shows = shows
             shown(shows)
         }
     }
 
-    /// "● ● 4 to review ⌄": a 7 pt dot in each writer's ink, then the total in 13 medium with monospaced digits.
-    private static func title(_ counts: [(writer: MarkWriter, count: Int)]) -> NSAttributedString {
+    /// "main · 7 changed   ● ● 4 to review ⌄": the git line in body `ink2`, a 7 pt dot in each writer's ink, then the
+    /// total in body medium, all with monospaced digits.
+    private static func title(_ counts: [(writer: MarkWriter, count: Int)], git: String?) -> NSAttributedString {
         let title = NSMutableAttributedString()
+        if let git {
+            let font = NSFont.monospacedDigitSystemFont(ofSize: Chrome.size(.body), weight: .regular)
+            title.append(NSAttributedString(string: git + (counts.isEmpty ? " " : "   "), attributes: [.font: font, .foregroundColor: Chrome.color(.ink2)]))
+        }
         for (writer, _) in counts {
             let color = writer.color
             let dot = NSImage(size: NSSize(width: 7, height: 7), flipped: false) { rect in
@@ -306,11 +344,11 @@ final class ActivityButton: NSButton {
             title.append(NSAttributedString(string: " "))
         }
         let total = counts.reduce(0) { $0 + $1.count }
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        title.append(NSAttributedString(string: "\(total) to review ", attributes: [.font: font, .foregroundColor: Chrome.color(.ink)]))
-        if let chevron = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold).applying(.init(paletteColors: [Chrome.color(.ink3)])))
-        {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: Chrome.size(.body), weight: .medium)
+        if !counts.isEmpty {
+            title.append(NSAttributedString(string: "\(total) to review ", attributes: [.font: font, .foregroundColor: Chrome.color(.ink)]))
+        }
+        if let chevron = Chrome.symbol("chevron.down", Chrome.color(.ink3)) {
             title.append(attachment(chevron, size: chevron.size))
         }
         return title

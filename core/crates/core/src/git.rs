@@ -24,7 +24,7 @@ const MAX_LINE_FILE: u64 = 4096;
 const SPANS: usize = 16;
 
 /// A git object id, SHA-1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Oid(pub [u8; 20]);
 
 impl fmt::Display for Oid {

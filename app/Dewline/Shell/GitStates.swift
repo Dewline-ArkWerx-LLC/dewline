@@ -9,6 +9,8 @@ final class GitStates {
     static let changed = Notification.Name("DewlineGitStatesChanged")
     private let folder: URL
     private var files: [String: GitFileState] = [:]
+    /// The commits HEAD's branch has that its upstream lacks; 0 without an upstream.
+    private(set) var ahead = 0
     /// Every folder above a file in `files`, by its path under the folder.
     private var dirtyFolders: Set<String> = []
     /// Watches a gitdir outside the folder.
@@ -73,8 +75,10 @@ final class GitStates {
         // A repository caught mid-write reads as none; the states stand until the next read.
         let kept = status == nil && gitdir.map { FileManager.default.fileExists(atPath: $0.path) } == true
         let files = status?.files ?? [:]
-        if !kept && files != self.files {
+        let ahead = status?.ahead ?? 0
+        if !kept && (files != self.files || ahead != self.ahead) {
             self.files = files
+            self.ahead = ahead
             dirtyFolders = Set(files.keys.flatMap { path in
                 path.indices.filter { path[$0] == "/" }.map { String(path[..<$0]) }
             })

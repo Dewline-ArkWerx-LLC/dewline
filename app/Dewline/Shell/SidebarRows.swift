@@ -63,7 +63,7 @@ struct WaitingCount {
 }
 
 /// The sidebar's header: the folder pop-up "tidepool main ⌄" from x 6, and "…" at the trailing edge, which shows
-/// while the pointer is over the sidebar.
+/// while the pointer is over the sidebar and opens on mouse down.
 final class SidebarHeader: NSView {
     static let height: CGFloat = 32
 
@@ -84,6 +84,7 @@ final class SidebarHeader: NSView {
         more.isBordered = false
         more.target = self
         more.action = #selector(showActions)
+        more.sendAction(on: .leftMouseDown)
         more.toolTip = "Folder actions"
         more.setAccessibilityLabel("Folder actions")
         more.isHidden = true
@@ -118,18 +119,19 @@ final class SidebarHeader: NSView {
     }
 }
 
-/// "tidepool main ⌄": the folder's name in 13 semibold `ink`, its branch in SF Mono 12 `ink2`, a chevron in `ink3`, on a
-/// 22 pt pill that fills on hover. Text sits 6 pt in, in the same inks whether or not the window is key.
+/// "tidepool main ↑2 · 7 changed ⌄": the folder's name in body semibold `ink`, its branch and the commits it is ahead
+/// of its upstream in SF Mono 12 `ink2`, how many files differ from the last commit in `ink2`, all on one baseline,
+/// then a chevron in `ink3`, on a 22 pt pill that fills on hover. Text sits 6 pt in, in the same inks whether or not
+/// the window is key. Under Full Keyboard Access it takes the focus, with the system's ring, and Space or Return opens it.
 final class FolderPicker: NSView {
     var folderMenu: () -> NSMenu = { NSMenu() }
     private var name = ""
     private var branch: String?
+    private var changed = 0
+    private var ahead = 0
     private var hovering = false {
         didSet { needsDisplay = true }
     }
-
-    private static let nameFont = Chrome.labelStrong
-    private static let branchFont = Chrome.mono(12)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -145,22 +147,42 @@ final class FolderPicker: NSView {
 
     override var isFlipped: Bool { true }
 
-    func show(_ name: String, branch: String?, openKey: String) {
+    func show(_ name: String, branch: String?, changed: Int, ahead: Int, openKey: String) {
         self.name = name
         self.branch = branch
+        self.changed = changed
+        self.ahead = ahead
         toolTip = openKey.isEmpty ? "Open Folder, Open Recent" : "Open Folder, Open Recent (\(openKey))"
-        setAccessibilityLabel(branch.map { "Folder \(name) on branch \($0)" } ?? "Folder \(name)")
+        let state = (ahead > 0 ? ["\(ahead) \(ahead == 1 ? "commit" : "commits") ahead"] : [])
+            + (changed > 0 ? ["\(changed) changed \(changed == 1 ? "file" : "files")"] : [])
+        setAccessibilityLabel(([branch.map { "Folder \(name) on branch \($0)" } ?? "Folder \(name)"] + state).joined(separator: ", "))
         invalidateIntrinsicContentSize()
         needsDisplay = true
     }
 
-    private var nameWidth: CGFloat { ceil((name as NSString).size(withAttributes: [.font: Self.nameFont]).width) }
-    private var branchWidth: CGFloat {
-        branch.map { ceil(($0 as NSString).size(withAttributes: [.font: Self.branchFont]).width) + 6 } ?? 0
+    /// The name, branch, lead and count as one line, so they share a baseline.
+    private var text: NSAttributedString {
+        let line = NSMutableParagraphStyle()
+        line.lineBreakMode = .byTruncatingTail
+        let ink2 = Chrome.color(.ink2)
+        let text = NSMutableAttributedString(string: name, attributes: [.font: Chrome.labelStrong, .foregroundColor: Chrome.color(.ink)])
+        let mono = [branch, ahead > 0 ? "\u{2191}\(ahead)" : nil].compactMap { $0 }
+        if !mono.isEmpty {
+            text.append(NSAttributedString(string: " " + mono.joined(separator: " "), attributes: [.font: Chrome.mono(12), .foregroundColor: ink2]))
+        }
+        if changed > 0 {
+            text.append(NSAttributedString(string: " \u{00B7} \(changed) changed", attributes: [.font: Chrome.small, .foregroundColor: ink2]))
+        }
+        text.addAttribute(.paragraphStyle, value: line, range: NSRange(location: 0, length: text.length))
+        return text
+    }
+
+    private var chevron: NSImage? {
+        Chrome.symbol("chevron.down", Chrome.color(.ink3))
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 6 + nameWidth + branchWidth + 4 + 10 + 6, height: 22)
+        NSSize(width: 6 + ceil(text.size().width) + 4 + (chevron?.size.width ?? 10) + 6, height: 22)
     }
 
     @objc private func redraw() {
@@ -168,31 +190,33 @@ final class FolderPicker: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let appearance = effectiveAppearance
         if hovering {
-            Chrome.hover.resolved(for: appearance).setFill()
+            Chrome.hover.setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
-        let text = Chrome.color(.ink2).resolved(for: appearance)
-        var x: CGFloat = 6
-        let nameSize = (name as NSString).size(withAttributes: [.font: Self.nameFont])
-        (name as NSString).draw(at: NSPoint(x: x, y: (bounds.height - nameSize.height) / 2),
-            withAttributes: [.font: Self.nameFont, .foregroundColor: Chrome.color(.ink).resolved(for: appearance)])
-        x += nameWidth
-        if let branch {
-            let size = (branch as NSString).size(withAttributes: [.font: Self.branchFont])
-            (branch as NSString).draw(at: NSPoint(x: x + 6, y: (bounds.height - size.height) / 2), withAttributes: [.font: Self.branchFont, .foregroundColor: text])
-            x += branchWidth
+        let text = text
+        let chevron = chevron
+        let room = max(bounds.width - 6 - 4 - (chevron?.size.width ?? 10) - 6, 0)
+        let size = text.size()
+        let width = min(ceil(size.width), room)
+        text.draw(with: NSRect(x: 6, y: (bounds.height - ceil(size.height)) / 2, width: width, height: ceil(size.height)),
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if let chevron {
+            chevron.draw(in: NSRect(x: 6 + width + 4, y: (bounds.height - chevron.size.height) / 2, width: chevron.size.width, height: chevron.size.height))
         }
-        let chevron = NSBezierPath()
-        chevron.move(to: NSPoint(x: x + 4 + 2, y: bounds.midY - 1.5))
-        chevron.line(to: NSPoint(x: x + 4 + 5, y: bounds.midY + 1.5))
-        chevron.line(to: NSPoint(x: x + 4 + 8, y: bounds.midY - 1.5))
-        chevron.lineWidth = 1.25
-        chevron.lineCapStyle = .round
-        chevron.lineJoinStyle = .round
-        Chrome.color(.ink3).resolved(for: appearance).setStroke()
-        chevron.stroke()
+    }
+
+    override var acceptsFirstResponder: Bool { takesKeyboardFocus }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard pressesOnKey(event) else { return super.keyDown(with: event) }
+        popUp()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -218,14 +242,14 @@ final class FolderPicker: NSView {
     }
 }
 
-/// A sidebar row: a 22 pt pill in its 24 pt pitch, 8 pt in from each side, and under it the indent guides: 1 pt, ink at
+/// A sidebar row: a 22 pt pill in its 24 pt pitch, at the rows' inset, and under it the indent guides: 1 pt, ink at
 /// 10% (30% under Increase Contrast), one per enclosing folder.
 final class SidebarRowView: StationRowView {
     var guides: [CGFloat] = [] {
         didSet { if guides != oldValue { needsDisplay = true } }
     }
 
-    override var pill: NSRect { bounds.insetBy(dx: 8, dy: 1) }
+    override var pill: NSRect { super.pill.insetBy(dx: 0, dy: 1) }
 
     override func drawBackground(in dirtyRect: NSRect) {
         guard !isSelected, !guides.isEmpty else { return }
@@ -238,7 +262,8 @@ final class SidebarRowView: StationRowView {
 
 /// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), and on the trailing
 /// edge the writer badge, then git's letter in SF Mono 11 in a 14 pt column; a closed folder holding changed files
-/// shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle.
+/// shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle. A file gone from
+/// disk is struck through. On the focused list's selection everything is `paper`.
 final class SidebarFileCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("file")
 
@@ -252,6 +277,8 @@ final class SidebarFileCell: NSTableCellView {
     private var isCode = false
     private var word: GitFileState?
     private var holdsChanges = false
+    private var gone = false
+    private var expanded = false
     private var goneTip: String?
     private var editing = false
 
@@ -280,6 +307,7 @@ final class SidebarFileCell: NSTableCellView {
     /// dimmed. `holdsChanges` marks a closed folder with changed files under it.
     func show(_ entry: FolderEntry, gone: Bool, expanded: Bool, waiting: [WaitingCount], git word: GitFileState?, holdsChanges: Bool = false) {
         fullName = entry.url.lastPathComponent
+        self.gone = gone
         dimmed = gone || entry.isIgnored || !(entry.isFolder || entry.opens || isAgentFile(entry.url))
         isCode = entry.isCode
         self.word = word
@@ -298,7 +326,21 @@ final class SidebarFileCell: NSTableCellView {
     }
 
     func setExpanded(_ expanded: Bool) {
-        chevron.image = (expanded ? Glyph.disclosed : Glyph.disclosure).image
+        self.expanded = expanded
+        chevron.image = Chrome.symbol(expanded ? "chevron.down" : "chevron.right", Chrome.color(.ink3))
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            guard backgroundStyle != oldValue else { return }
+            paint()
+            needsLayout = true
+        }
+    }
+
+    /// On the selection of a list that has the keyboard.
+    private var onAccent: Bool {
+        backgroundStyle == .emphasized
     }
 
     /// The whole name, plain, across the row while it is edited.
@@ -327,8 +369,8 @@ final class SidebarFileCell: NSTableCellView {
     }
 
     private func paint() {
-        chevron.contentTintColor = Chrome.color(.ink3)
-        git.textColor = Chrome.color(word?.token ?? .gitModified)
+        setExpanded(expanded)
+        git.textColor = Chrome.color(onAccent ? .paper : word?.token ?? .gitModified)
         badge.needsDisplay = true
     }
 
@@ -369,13 +411,15 @@ final class SidebarFileCell: NSTableCellView {
     }
 
     /// The name in `ink` (`ink2` when dimmed, `CodeFile.ink` for code), its ".md" in `ink2`: 4.5:1 or more on the
-    /// chrome, the selection and the hover.
+    /// chrome, the selection and the hover. All `paper` on the accent.
     private func display(_ text: String) -> NSAttributedString {
-        let ink = dimmed ? Chrome.color(.ink2) : isCode ? CodeFile.ink : Chrome.color(.ink)
+        let ink = onAccent ? Chrome.color(.paper) : dimmed ? Chrome.color(.ink2) : isCode ? CodeFile.ink : Chrome.color(.ink)
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byTruncatingMiddle
-        let string = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: ink, .paragraphStyle: line])
-        if text.lowercased().hasSuffix(".md"), text.count > 3 {
+        var attributes: [NSAttributedString.Key: Any] = [.font: Chrome.label, .foregroundColor: ink, .paragraphStyle: line]
+        if gone { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        let string = NSMutableAttributedString(string: text, attributes: attributes)
+        if !onAccent, text.lowercased().hasSuffix(".md"), text.count > 3 {
             string.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: (text as NSString).length - 3, length: 3))
         }
         return string

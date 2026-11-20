@@ -26,6 +26,9 @@ pub struct GitStatus {
     /// The folder that holds the repository's index and HEAD.
     pub gitdir: String,
     pub files: Vec<GitFile>,
+    /// Commits on HEAD's branch that its upstream lacks; None without an
+    /// upstream.
+    pub ahead: Option<u32>,
 }
 
 /// The files under `folder` that differ from HEAD or the index. An untracked
@@ -52,6 +55,7 @@ pub fn git_status(folder: String) -> Result<Option<GitStatus>, Panicked> {
                     },
                 })
                 .collect(),
+            ahead: found.ahead,
         })
     })
 }

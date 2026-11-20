@@ -4,7 +4,7 @@
 //! repository's files, as the rest of this module reads them; no git runs.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::ffi::{OsStr, c_void};
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -42,6 +42,9 @@ pub enum Status {
 pub struct Statuses {
     pub gitdir: PathBuf,
     pub files: Vec<(PathBuf, Status)>,
+    /// Commits on HEAD's branch that its upstream lacks, when the branch has
+    /// an upstream and both can be walked.
+    pub ahead: Option<u32>,
 }
 
 /// Bounds the work of reading one object: deltas in its chain, and bytes
@@ -65,6 +68,11 @@ const MAX_RENAME_BYTES: u64 = 256 << 10;
 /// search; past either, nothing pairs.
 const MAX_RENAME_TOTAL: u64 = 8 << 20;
 const MAX_RENAME_LOOKUPS: usize = 1 << 22;
+/// The most commits read counting HEAD's lead on its upstream, the most
+/// parents one has, and the most bytes inflated of one.
+const MAX_AHEAD_WALK: usize = 2000;
+const MAX_PARENTS: usize = 16;
+const MAX_COMMIT: u64 = 64 << 10;
 
 /// The state of the files under `folder`, a realpath. An untracked folder
 /// holding no tracked file is one path, as git status lists it. Renames are
@@ -114,10 +122,12 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     // HEAD's files, but those in folders whose tree the index holds as is.
     let objects = Objects::open(&common.join("objects"));
     let checkout = Checkout::new(&configs, &objects);
-    let tree = match head_commit(&repo.gitdir, &common)? {
+    let head = head_commit(&repo.gitdir, &common)?;
+    let tree = match head {
         Some(commit) => Some(objects.commit_tree(commit)?),
         None => None,
     };
+    let ahead = head.and_then(|head| ahead(&repo.gitdir, &common, &configs, &objects, head));
     let mut head = HashMap::new();
     let mut same = HashSet::new();
     if let Some(tree) = tree {
@@ -256,7 +266,121 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     Some(Statuses {
         gitdir: repo.gitdir,
         files,
+        ahead,
     })
+}
+
+/// How many commits `head` has that the upstream of HEAD's branch lacks, as
+/// `git rev-list --count @{u}..HEAD` counts them, walking both newest first
+/// by commit time. None when HEAD is detached, its branch has no upstream,
+/// or the walk reads more than `MAX_AHEAD_WALK` commits, meets one with more
+/// than `MAX_PARENTS` parents, or can't read one.
+fn ahead(
+    gitdir: &Path,
+    common: &Path,
+    configs: &[Vec<u8>],
+    objects: &Objects,
+    head: Oid,
+) -> Option<u32> {
+    let line = read_line(&gitdir.join("HEAD"))?;
+    let branch = line.strip_prefix("ref: refs/heads/")?.trim_end();
+    let section = format!("branch \"{branch}\"");
+    let remote = setting(configs, section.as_bytes(), b"remote")?;
+    let merge = String::from_utf8(setting(configs, section.as_bytes(), b"merge")?).ok()?;
+    let name = if remote == b"." {
+        merge
+    } else {
+        let remote = String::from_utf8(remote).ok()?;
+        format!(
+            "refs/remotes/{remote}/{}",
+            merge.strip_prefix("refs/heads/")?
+        )
+    };
+    if name
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    let upstream = match read_line(&common.join(&name)) {
+        Some(line) => parse_oid(&line)?,
+        None => packed_ref(common, &name)??,
+    };
+
+    // Each commit's sides: 1 reached from HEAD, 2 from the upstream. The
+    // walk ends once every queued commit is the upstream's.
+    let mut walk = Lead::default();
+    walk.reach(objects, head, 1)?;
+    walk.reach(objects, upstream, 2)?;
+    let mut walked = HashSet::new();
+    let mut count = 0;
+    while walk.open > 0 {
+        let (_, id, parents) = walk.queue.pop()?;
+        let id = Oid(id);
+        walk.dequeue(id);
+        if !walked.insert(id) {
+            continue;
+        }
+        let side = walk.sides[&id];
+        if side == 1 {
+            count += 1;
+        }
+        for parent in parents {
+            walk.reach(objects, parent, side)?;
+        }
+    }
+    Some(count)
+}
+
+/// The walk's state: each commit's sides, the commits queued by time, how
+/// many times each is queued, how many queued are not the upstream's, and
+/// how many commits were read.
+#[derive(Default)]
+struct Lead {
+    sides: HashMap<Oid, u8>,
+    queue: BinaryHeap<(i64, [u8; 20], Vec<Oid>)>,
+    queued: HashMap<Oid, u32>,
+    open: usize,
+    reads: usize,
+}
+
+impl Lead {
+    /// Marks `id` as reached from `side`, reading it if that is new. None
+    /// past `MAX_AHEAD_WALK` reads, or on a commit with too many parents.
+    fn reach(&mut self, objects: &Objects, id: Oid, side: u8) -> Option<()> {
+        let sides = self.sides.entry(id).or_default();
+        if *sides & side == 0 {
+            let was_open = *sides & 2 == 0;
+            *sides |= side;
+            if was_open && *sides & 2 != 0 && self.queued.get(&id).is_some_and(|&n| n > 0) {
+                self.open -= 1;
+            }
+            self.reads += 1;
+            if self.reads > MAX_AHEAD_WALK {
+                return None;
+            }
+            let (time, parents) = objects.commit_links(id)?;
+            if parents.len() > MAX_PARENTS {
+                return None;
+            }
+            let queued = self.queued.entry(id).or_default();
+            if *queued == 0 && *sides & 2 == 0 {
+                self.open += 1;
+            }
+            *queued += 1;
+            self.queue.push((time, id.0, parents));
+        }
+        Some(())
+    }
+
+    /// Notes that one of `id`'s queue entries was taken.
+    fn dequeue(&mut self, id: Oid) {
+        let queued = self.queued.entry(id).or_default();
+        *queued -= 1;
+        if *queued == 0 && self.sides[&id] & 2 == 0 {
+            self.open -= 1;
+        }
+    }
 }
 
 /// HEAD's version of the file at `path`, a realpath holding `bytes`, as
@@ -860,6 +984,28 @@ impl Objects {
             bytes = apply(&bytes, delta, limit)?;
         }
         Some((kind, bytes))
+    }
+
+    /// A commit's committer time and parents.
+    fn commit_links(&self, commit: Oid) -> Option<(i64, Vec<Oid>)> {
+        let (kind, bytes) = self.read(commit, MAX_COMMIT)?;
+        if kind != 1 {
+            return None;
+        }
+        let mut parents = Vec::new();
+        let mut time = 0;
+        for line in bytes
+            .split(|&byte| byte == b'\n')
+            .take_while(|line| !line.is_empty())
+        {
+            if let Some(id) = line.strip_prefix(b"parent ") {
+                parents.push(parse_oid(std::str::from_utf8(id).ok()?)?);
+            } else if let Some(who) = line.strip_prefix(b"committer ") {
+                let who = std::str::from_utf8(who).ok()?;
+                time = who.rsplit(' ').nth(1)?.parse().ok()?;
+            }
+        }
+        Some((time, parents))
     }
 
     fn commit_tree(&self, commit: Oid) -> Option<Oid> {
@@ -1694,6 +1840,19 @@ mod tests {
         assert!(tree_deltas > 0, "{verify}");
 
         assert_eq!(statuses(&root), []);
+        assert_eq!(status(&root).unwrap().ahead, None);
+        git(&root, &["branch", "-q", "base", "main~3"]);
+        git(&root, &["branch", "-q", "-u", "base"]);
+        assert_eq!(status(&root).unwrap().ahead, Some(3));
+        git(&root, &["update-ref", "refs/remotes/origin/main", "main~5"]);
+        git(&root, &["remote", "add", "origin", "."]);
+        git(&root, &["config", "branch.main.remote", "origin"]);
+        git(&root, &["config", "branch.main.merge", "refs/heads/main"]);
+        let count = git(&root, &["rev-list", "--count", "@{u}..HEAD"]);
+        assert_eq!(
+            status(&root).unwrap().ahead,
+            Some(count.trim().parse().unwrap())
+        );
         write(&root, "docs/more/7.md", b"edited\n");
         assert_eq!(
             statuses(&root),
@@ -1710,6 +1869,83 @@ mod tests {
             found.files,
             [(PathBuf::from("CLAUDE.md"), Status::Modified)]
         );
+    }
+
+    #[test]
+    fn wide_merges_end_the_ahead_walk() {
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+
+        let (_dir, root) = repo(&[("a.md", b"a\n")]);
+        // A stream of root commits :1.. and merges of sixteen of them each.
+        let import = |stream: String| {
+            let mut child = Command::new("git")
+                .current_dir(&root)
+                .args(["fast-import", "--quiet", "--force"])
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(stream.as_bytes())
+                .unwrap();
+            assert!(child.wait().unwrap().success());
+        };
+        let commit = |branch: &str, mark: u32, links: &str| {
+            let message = format!("{mark}\n");
+            format!(
+                "commit refs/heads/{branch}\nmark :{mark}\ncommitter t <t@t> 1700000000 +0000\ndata {}\n{message}{links}\n",
+                message.len()
+            )
+        };
+        let wide = |merges: u32, fan: u32| {
+            let mut stream = commit("base", 1, "");
+            let mut mark = 1;
+            let mut tip = None;
+            for _ in 0..merges {
+                let mut links = tip.map(|tip| format!("from :{tip}\n")).unwrap_or_default();
+                for _ in 1..fan {
+                    mark += 1;
+                    stream += "reset refs/heads/side\n";
+                    stream += &commit("side", mark, "");
+                    links += &format!("merge :{mark}\n");
+                }
+                mark += 1;
+                stream += &commit("main", mark, &links);
+                tip = Some(mark);
+            }
+            stream
+        };
+        let upstream = |root: &Path| {
+            git(root, &["config", "branch.main.remote", "."]);
+            git(root, &["config", "branch.main.merge", "refs/heads/base"]);
+        };
+
+        // Sixteen parents are read, a seventeenth is not. (fast-import can't
+        // write more than sixteen.)
+        import(wide(1, 16));
+        upstream(&root);
+        assert_eq!(status(&root).unwrap().ahead, Some(16));
+        let parents = git(&root, &["rev-list", "--max-count=17", "--all"]);
+        let mut args = vec![
+            "commit-tree",
+            "-m",
+            "wide",
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        ];
+        for parent in parents.split_whitespace() {
+            args.extend(["-p", parent]);
+        }
+        assert_eq!(args.len(), 4 + 2 * 17);
+        let merge = git(&root, &args);
+        git(&root, &["update-ref", "refs/heads/main", merge.trim()]);
+        assert_eq!(status(&root).unwrap().ahead, None);
+
+        // Merges of sixteen unrelated commits, more than the cap in all.
+        import(wide(MAX_AHEAD_WALK as u32 / 15 + 1, 16));
+        assert_eq!(status(&root).unwrap().ahead, None);
     }
 
     #[test]

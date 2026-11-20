@@ -34,6 +34,7 @@ What changed in each Dewline release, newest first.
 - Find in Files puts its options on a second row so the field spans the sidebar, shows Regular Expression as ".*", adds a close button back to Files, and says what a search with no matches looked in, with a button that turns its options off. Snippets start a few words before a match far along its line, results sit on the sidebar's inset, and Replace All with an empty field asks to delete.
 - Quick Open no longer lists Open Recent's files or the Window menu's windows as commands, sets matched letters in semibold without an underline, gives notes a document symbol, and starts commands at the header's inset.
 - The sidebar puts a note's writer badge and git's letter together at the trailing edge; a closed folder shows a dot per writer.
+- A note git reports modified opens with its changes since the last commit marked, listed in Changes under Uncommitted; clicking its "M" in the sidebar opens that list. Keep only clears the marks: nothing is staged or committed. Changes an agent made while the note was closed, or marks left undecided, still come first.
 - The Export panel's Format menu lines up with the panel's own labels and fields.
 - An agent's write that adds list items no longer drops the bullet of the item after them.
 - Ticking a task box in an agent's change no longer shifts its row to the right.

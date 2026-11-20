@@ -140,7 +140,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
         find?.close = { [weak self] in self?.showFiles() }
         if let index {
-            NotificationCenter.default.addObserver(self, selector: #selector(refreshRows), name: GitStates.changed, object: index.git)
+            NotificationCenter.default.addObserver(self, selector: #selector(gitChanged), name: GitStates.changed, object: index.git)
             NotificationCenter.default.addObserver(self, selector: #selector(folderChanged(_:)), name: FolderIndex.foldersChanged, object: index)
         }
     }
@@ -675,6 +675,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         waitingChanges = waiting
         refreshRows()
+    }
+
+    /// Shows git's words again, and scans again for the notes whose uncommitted changes wait.
+    @objc private func gitChanged() {
+        refreshRows()
+        if filled, let folder { Self.scanClosed(folder.url, in: folder) }
     }
 
     /// Shows the badges and git words again on the rows on screen.

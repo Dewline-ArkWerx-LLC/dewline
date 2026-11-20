@@ -16,7 +16,7 @@ use super::{
     Change, ChangeId, ClosedChange, DocId, Engine, Kind, Mark, Origin, State, UNKNOWN, closed,
     lock, private, read, strip,
 };
-use crate::git::status::Ignores;
+use crate::git::status::{self, Ignores, Status};
 use crate::store::{self, Seen};
 use crate::{merge, text};
 
@@ -56,12 +56,14 @@ pub(super) struct ClosedWrite {
 }
 
 /// A closed file seen to differ from its last seen version `base`: since
-/// when, and the places that changed while it held `disk`.
+/// when, and the places that changed while it held `disk`. `uncommitted`
+/// when the base is HEAD's version.
 pub(super) struct Waiting {
     time: SystemTime,
     base: Hash,
     disk: Hash,
     count: u32,
+    uncommitted: bool,
 }
 
 /// What `Engine::earlier` finds a file opens on.
@@ -100,7 +102,11 @@ impl Engine {
             _ => None,
         }
         .filter(|before| is_text(before) && is_text(bytes));
-        let Some(before) = earlier else {
+        let head = (earlier.is_none() && kept && write.is_none())
+            .then(|| self.uncommitted(real, bytes, seen.as_ref()))
+            .flatten();
+        let uncommitted = head.is_some();
+        let Some(before) = earlier.or(head) else {
             if kept && seen.is_none() {
                 self.see(real, false, bytes, wall);
             }
@@ -110,17 +116,71 @@ impl Engine {
                 seen,
             });
         };
-        self.store.put(real, &before, UNKNOWN, wall)?;
+        let before_label = if uncommitted {
+            uncommitted_origin().label()
+        } else {
+            UNKNOWN.into()
+        };
+        self.store.put(real, &before, &before_label, wall)?;
         self.store.put(real, bytes, UNKNOWN, wall)?;
         let base = blake3::hash(&before);
-        let named = write
-            .filter(|write| write.before == base && write.declared == Some(disk))
-            .map(|write| (base, write.origin));
+        let named = if uncommitted {
+            Some((base, uncommitted_origin()))
+        } else {
+            write
+                .filter(|write| write.before == base && write.declared == Some(disk))
+                .map(|write| (base, write.origin))
+        };
         Ok(Earlier {
             bytes: Some(before),
             writer: named,
             seen,
         })
+    }
+
+    /// HEAD's version of the file at `path`, which holds `bytes`, when git
+    /// reads it as changed and nothing else marks it: no hooked write waits on
+    /// it, its seen version, if any, is `bytes` with no marks, and it never
+    /// opened on that HEAD version before, which its history records.
+    fn uncommitted(&self, path: &Path, bytes: &[u8], seen: Option<&Seen>) -> Option<Vec<u8>> {
+        let disk = blake3::hash(bytes);
+        if seen.is_some_and(|seen| seen.hash != disk || !seen.marks.is_empty())
+            || self.state().closed.contains_key(path)
+            || !is_text(bytes)
+        {
+            return None;
+        }
+        let head = status::head_version(path, bytes).filter(|head| is_text(head))?;
+        let hash = blake3::hash(&head);
+        let label = uncommitted_origin().label();
+        let history = self.store.list(path).ok()?;
+        (!history.iter().any(|s| s.hash == hash && s.origin == label)).then_some(head)
+    }
+
+    /// Lists the file at `path`, which holds `bytes` and was seen as it is,
+    /// as an uncommitted closed change when `uncommitted` finds HEAD's version.
+    fn list_uncommitted(&self, path: &Path, bytes: &[u8], wall: SystemTime) -> io::Result<()> {
+        let seen = self.store.seen(path)?;
+        let Some(head) = self.uncommitted(path, bytes, seen.as_ref()) else {
+            self.state().waiting.remove(path);
+            return Ok(());
+        };
+        let Some(count) = places(&head, bytes) else {
+            return Ok(());
+        };
+        let mut state = self.state();
+        let time = state.waiting.get(path).map_or(wall, |waiting| waiting.time);
+        state.waiting.insert(
+            path.to_owned(),
+            Waiting {
+                time,
+                base: blake3::hash(&head),
+                disk: blake3::hash(bytes),
+                count,
+                uncommitted: true,
+            },
+        );
+        Ok(())
     }
 
     /// Keeps `bytes` as the seen version of the Markdown file at `path`,
@@ -221,7 +281,8 @@ impl Engine {
     /// `deep`, hidden ones other than the agent folders and `node_modules`
     /// aside, what git ignores last. A file no document has open and no seen
     /// version yet is seen as it is; one that differs from its seen version
-    /// is in `closed_changes`.
+    /// is in `closed_changes`, and so, after a deep scan, is one git reads as
+    /// modified that `uncommitted` finds HEAD's version for.
     pub fn scan(&self, folder: &Path, deep: bool) -> io::Result<()> {
         let root = fs::canonicalize(folder)?;
         let (mut ignores, prefix) = Ignores::of(&root);
@@ -271,6 +332,15 @@ impl Engine {
                 .then_with(|| a.2.cmp(&b.2))
         });
         files.truncate(MAX_SCAN);
+        let modified: HashSet<PathBuf> = match deep.then(|| status::status(&root)).flatten() {
+            Some(statuses) => statuses
+                .files
+                .into_iter()
+                .filter(|(_, status)| *status == Status::Modified)
+                .map(|(path, _)| root.join(path))
+                .collect(),
+            None => HashSet::new(),
+        };
         let open: HashSet<PathBuf> = self.state().docs.values().map(|d| d.path.clone()).collect();
         let (_, wall) = (self.clock)();
         for (_, _, path) in files {
@@ -287,8 +357,20 @@ impl Engine {
             if differs {
                 self.closed_change(path, &bytes, wall);
             } else {
-                self.state().waiting.remove(&path);
                 self.store.note(&path, &bytes, wall, REFRESH)?;
+                if modified.contains(&path) {
+                    self.list_uncommitted(&path, &bytes, wall)?;
+                } else {
+                    let mut state = self.state();
+                    if deep
+                        || !state
+                            .waiting
+                            .get(&path)
+                            .is_some_and(|waiting| waiting.uncommitted)
+                    {
+                        state.waiting.remove(&path);
+                    }
+                }
             }
         }
         Ok(())
@@ -330,9 +412,16 @@ impl Engine {
                 .waiting
                 .get(&path)
                 .filter(|waiting| waiting.disk == disk)
-                .map(|waiting| (waiting.base, waiting.count, waiting.time))
+                .map(|waiting| {
+                    (
+                        waiting.base,
+                        waiting.count,
+                        waiting.time,
+                        waiting.uncommitted,
+                    )
+                })
         };
-        let (base, count, time) = match cached {
+        let (base, count, time, uncommitted) = match cached {
             Some(cached) => cached,
             None => {
                 let seen = self.store.seen(&path).ok().flatten();
@@ -356,14 +445,16 @@ impl Engine {
                         base,
                         disk,
                         count,
+                        uncommitted: false,
                     },
                 );
-                (base, count, time)
+                (base, count, time, false)
             }
         };
         let state = self.state();
         let write = state.closed.get(&path);
         let origin = match write {
+            _ if uncommitted => uncommitted_origin(),
             Some(write) if write.before == base && write.declared == Some(disk) => {
                 write.origin.clone()
             }
@@ -400,6 +491,13 @@ impl Engine {
             (d.path.clone(), d.base.clone(), marks)
         };
         self.keep_seen(&path, &base, &marks, (self.clock)().1)
+    }
+}
+
+/// The writer of the changes from HEAD's version of a file to the file.
+fn uncommitted_origin() -> Origin {
+    Origin::Git {
+        action: Some("Uncommitted".into()),
     }
 }
 
@@ -547,7 +645,7 @@ pub(super) fn restore(
 mod tests {
     use super::*;
     use crate::claims::{Claim, Fields, Vendor};
-    use crate::engine::Landing;
+    use crate::engine::{Decision, Landing};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::time::UNIX_EPOCH;
@@ -801,8 +899,8 @@ mod tests {
         assert_eq!(engine.closed_changes()[0].origin, Origin::External);
     }
 
-    fn git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git")
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
             .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -817,9 +915,52 @@ mod tests {
             ])
             .args(["-c", "init.defaultBranch=main"])
             .args(args)
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success(), "git {args:?}");
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// A note git reads as modified is listed and opens on HEAD's version
+    /// with the difference marked as uncommitted. Keep clears the marks and
+    /// stages nothing, and the note then opens as it is.
+    #[test]
+    fn uncommitted_edits_open_marked_against_head_and_keep_stages_nothing() {
+        let f = fixture();
+        let path = f.file("plan.md", OLD);
+        git(&f.notes, &["init", "-q"]);
+        git(&f.notes, &["add", "-A"]);
+        git(&f.notes, &["commit", "-q", "-m", "old"]);
+        fs::write(&path, NEW).unwrap();
+        let engine = f.engine();
+        engine.scan(&f.notes, true).unwrap();
+        engine.scan(&f.notes, false).unwrap();
+        let listed = engine.closed_changes();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].origin, uncommitted_origin());
+
+        let opened = engine.open(&path).unwrap();
+        assert!(opened.closed);
+        assert_eq!(text(&opened), OLD);
+        let (landing, landed) = land(&engine, opened.doc, OLD);
+        assert_eq!(
+            (landing.origin, landed.as_str()),
+            (uncommitted_origin(), NEW)
+        );
+        assert_eq!(landing.edits.len() as u32, listed[0].count);
+        for (change, _) in &landing.edits {
+            engine.decide(opened.doc, *change, Decision::Keep, "");
+        }
+        engine.keep_marks(opened.doc, NEW, &[]).unwrap();
+        engine.close(opened.doc);
+        assert_eq!(git(&f.notes, &["diff", "--cached"]), "");
+        assert_eq!(git(&f.notes, &["status", "--porcelain"]), " M plan.md\n");
+
+        engine.scan(&f.notes, true).unwrap();
+        assert!(engine.closed_changes().is_empty(), "kept");
+        let again = engine.open(&path).unwrap();
+        assert!(!again.closed);
+        assert_eq!(text(&again), NEW);
     }
 
     /// AG-1: a Read records nothing, so a later pull is not Claude's.

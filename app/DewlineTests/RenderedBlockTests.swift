@@ -136,7 +136,7 @@ struct RenderedBlockTests {
         let editor = BlockEditor(text, caret: 0)
         let store = ThemeStore.shared
         let increased = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        var drawn: [ObjectIdentifier] = []
+        var drawn: [BlockPicture] = []
         for (name, tokens) in [
             (NSAppearance.Name.aqua, increased ? store.lightTheme.increasedLightColors : store.lightTheme.lightColors),
             (.darkAqua, increased ? store.darkTheme.increasedDarkColors : store.darkTheme.darkColors),
@@ -160,9 +160,9 @@ struct RenderedBlockTests {
             editor.window.appearance = NSAppearance(named: name)
             await editor.wait(until: taken)
             #expect(taken(), "\(name.rawValue): paper \(rgb(.paper)) and ink \(rgb(.ink)), drawn \(String(describing: colors()))")
-            drawn += [diagram, formula].compactMap { editor.picture(at: $0)?.identity }
+            drawn += [diagram, formula].compactMap { editor.picture(at: $0) }
         }
-        #expect(drawn.count == 4 && drawn[0] != drawn[2] && drawn[1] != drawn[3], "the light pictures are replaced")
+        #expect(drawn.count == 4 && drawn[0].identity != drawn[2].identity && drawn[1].identity != drawn[3].identity, "the light pictures are replaced")
         editor.expectTextKitUnchanged()
     }
 

@@ -187,4 +187,47 @@ struct EditRestyleTests {
             }
         }
     }
+
+    /// An agent's write that adds a list item before another moves that item's line down: the view draws again, so the
+    /// item's bullet is drawn where its line now sits.
+    @Test func aWriteThatMovesItemsRedrawsTheirBullets() {
+        let editor = Editor("- Ask first.\n- Delivery is at-least-once.\n", caret: 0)
+        defer { editor.close() }
+        editor.view.styler.restyleDocument()
+        editor.view.displayIfNeeded()
+        editor.view.textStorage!.replaceCharacters(in: NSRange(location: 12, length: 0), with: " Name the crate.\n- Retry timing lives in the queue.")
+        #expect(editor.view.needsDisplay)
+    }
+
+    /// A wrapped line of fenced code hangs one indent past its own leading blanks, never at column 0.
+    @Test func wrappedCodeHangsPastItsIndent() throws {
+        let editor = Editor("Above\n\n```\n    let x = 1\n```\n\nBelow\n", caret: 0)
+        defer { editor.close() }
+        editor.view.styler.restyleDocument()
+        let storage = editor.view.textStorage!
+        let style = try #require(storage.attribute(.paragraphStyle, at: 11, effectiveRange: nil) as? NSParagraphStyle)
+        let font = try #require(storage.attribute(.font, at: 11, effectiveRange: nil) as? NSFont)
+        let space = NSAttributedString(string: " ", attributes: [.font: font]).size().width
+        #expect(abs(style.headIndent - style.firstLineHeadIndent - 8 * space) < 0.01)
+    }
+
+    /// A code span's chip is drawn under the change marks rather than set as a background the text draws over them.
+    @Test func codeSpansDrawTheirChipUnderTheMarks() {
+        let editor = Editor("Run `cargo test` now\n", caret: 0)
+        defer { editor.close() }
+        editor.view.styler.restyleDocument()
+        #expect(editor.view.textStorage!.attribute(.dewlineCodeChip, at: 6, effectiveRange: nil) != nil)
+        #expect(editor.view.textStorage!.attribute(.backgroundColor, at: 6, effectiveRange: nil) == nil)
+    }
+
+    /// Spelling leaves hyphenated words and inline math alone: a mark on math's hidden source drew a dot after it.
+    @Test func spellingSkipsHyphenatedWordsAndMath() {
+        let editor = Editor("Delivery is at-least-once after $t_n$ here\n", caret: 0)
+        defer { editor.close() }
+        let text = editor.view.string as NSString
+        let styler = editor.view.styler
+        #expect(styler.textView(editor.view, shouldSetSpellingState: 1, range: text.range(of: "least")) == 0)
+        #expect(styler.textView(editor.view, shouldSetSpellingState: 1, range: text.range(of: "t_n")) == 0)
+        #expect(styler.textView(editor.view, shouldSetSpellingState: 1, range: text.range(of: "Delivery")) == 1)
+    }
 }

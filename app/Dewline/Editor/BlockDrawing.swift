@@ -125,7 +125,14 @@ final class BlockFragment: NSTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         switch line.role {
         case .picture(let picture, _):
-            picture.draw(in: CGRect(origin: point, size: picture.size), of: context)
+            let frame = CGRect(origin: point, size: picture.size)
+            picture.draw(in: frame, of: context)
+            // On a dark page an image takes a faint 1 pt rim, so a light one reads as placed.
+            if case .image = picture.art, NSAppearance.currentDrawing().isDark {
+                context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
+                context.setLineWidth(1)
+                context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
+            }
         case .collapsed:
             break
         case .summary(let line):

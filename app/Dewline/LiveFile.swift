@@ -649,6 +649,11 @@ final class LiveFile {
             .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
     }
 
+    /// The editor's text.
+    var text: NSString? {
+        document?.textView?.string as NSString?
+    }
+
     /// The change's line, counting from 1.
     func line(_ change: UInt64) -> Int {
         guard let pending = changes[change], let text = document?.textView?.string as NSString? else { return 1 }

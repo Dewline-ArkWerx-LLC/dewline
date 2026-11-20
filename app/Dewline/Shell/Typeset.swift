@@ -103,8 +103,14 @@ enum Typeset {
             let errors = diagnostics.filter(\.error)
             numbers?.errors = Set(errors.filter { $0.file == url }.map(\.line))
             let last = log.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
-            let text = errors.first.map { "\(count(errors.count, "error")) \u{00B7} \($0.place) \($0.message)" } ?? "Typesetting failed: \(last)"
-            StatusBar.post(.init(id: message, kind: .problem, text: text, actions: actions(errors, from: window)), in: window)
+            var text = errors.first.map { "\(count(errors.count, "error")) \u{00B7} \($0.place) \($0.message)" } ?? "Typesetting failed: \(last)"
+            var actions = actions(errors, from: window)
+            // The first error on a line inside a marked change names its writer, and Revert Change takes the change out.
+            if let first = errors.first, first.file == url, let live = document.live, let marked = change(at: first.line, in: live) {
+                text += " in \(EarlierVersions.writer(marked.1.origin))\u{2019}s change"
+                actions.insert(.init(title: "Revert Change") { [weak live] _ in live?.revert(marked.0) }, at: 0)
+            }
+            StatusBar.post(.init(id: message, kind: .problem, text: text, actions: actions), in: window)
         case .done(let pdf, let warnings):
             clean[url] = pdf
             numbers?.errors = []
@@ -116,6 +122,18 @@ enum Typeset {
                 StatusBar.post(.init(id: message, kind: .result, text: "Typeset \u{201C}\(pdf.lastPathComponent)\u{201D}", actions: [open], untilTyping: true), in: window)
             }
         }
+    }
+
+    /// The marked change whose lines hold `line`, counting from 1.
+    private static func change(at line: Int, in live: LiveFile) -> (UInt64, LiveFile.Change)? {
+        guard let text = live.text else { return nil }
+        return live.changes.first { id, change in
+            guard change.marked, !change.conflict else { return false }
+            let range = NSIntersectionRange(change.range, NSRange(location: 0, length: text.length))
+            let start = live.line(id)
+            let end = start + text.substring(with: range).trimmingCharacters(in: .newlines).count { $0.isNewline }
+            return (start...end).contains(line)
+        }.map { ($0.key, $0.value) }
     }
 
     private static func count(_ count: Int, _ noun: String) -> String {

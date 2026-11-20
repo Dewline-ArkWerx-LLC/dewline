@@ -5,6 +5,8 @@ import AppKit
 /// in its writer's ink at its place in the note, hollow for another app.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
+/// It follows the system's scroller style: legacy keeps it on screen, overlay shows it while the note scrolls, the pointer
+/// is on it or a change's label is up, and fades it 1 s after.
 final class Rail: NSScroller {
     static let width: CGFloat = 22
     /// The hairline's left edge; the ticks, marks and bracket caps center on it.
@@ -31,17 +33,23 @@ final class Rail: NSScroller {
     private var arrivalEnds: Task<Void, Never>?
     private var remeasure: Task<Void, Never>?
     private var items: [RailItem] = []
+    private var scrolling = false
+    private var settle: Timer?
+    private var showing = true
 
     override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat {
         width
     }
 
-    override class var isCompatibleWithOverlayScrollers: Bool { false }
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+
+    override var scrollerStyle: NSScroller.Style {
+        didSet { updateShown() }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         let center = NotificationCenter.default
-        center.addObserver(self, selector: #selector(styleChanged), name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
         center.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.didChange, object: nil)
         center.addObserver(self, selector: #selector(changesChanged(_:)), name: LiveFile.changesDidChange, object: nil)
     }
@@ -57,12 +65,33 @@ final class Rail: NSScroller {
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(measureSoon), name: NSView.frameDidChangeNotification, object: textView)
         center.addObserver(self, selector: #selector(measureSoon), name: BlockMap.didParse, object: textView.styler.map)
+        if let clip = (superview as? NSScrollView)?.contentView {
+            center.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: clip)
+        }
+        updateShown()
     }
 
-    /// The scroll view goes back to overlay scrollers when the system setting changes; the rail stays a legacy one.
-    @objc private func styleChanged() {
-        DispatchQueue.main.async { [weak self] in
-            (self?.superview as? NSScrollView)?.scrollerStyle = .legacy
+    @objc private func scrolled() {
+        guard scrollerStyle == .overlay else { return }
+        scrolling = true
+        updateShown()
+        settle?.invalidate()
+        settle = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.scrolling = false
+                self?.updateShown()
+            }
+        }
+    }
+
+    /// Fades the overlay rail in or out in 200 ms; under Reduce Motion it comes and goes at once.
+    private func updateShown() {
+        let shown = scrollerStyle == .legacy || scrolling || hovering != nil || arrival != nil
+        guard shown != showing else { return }
+        showing = shown
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
+            animator().alphaValue = shown ? 1 : 0
         }
     }
 
@@ -349,7 +378,10 @@ final class Rail: NSScroller {
     /// A label at the hovered mark (or the change that just landed off screen, while the Changes pane is closed), in the
     /// margin right of the text column, else every tick's name while the pointer is on a rail that draws.
     private func updateLabels() {
-        defer { needsDisplay = true }
+        defer {
+            needsDisplay = true
+            updateShown()
+        }
         guard labels.superview != nil, let textView else { return labels.items = [] }
         let right = convert(NSPoint(x: bounds.minX - 8, y: 0), to: labels).x
         func center(_ y: CGFloat) -> CGFloat {

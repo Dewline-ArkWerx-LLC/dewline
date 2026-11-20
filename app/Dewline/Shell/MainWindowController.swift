@@ -53,7 +53,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         index = folder.map(FolderIndex.of)
         sidebar = SidebarViewController(folder: folder)
         pane = RightPane(folder: folder)
-        // A plain item, so no system sidebar glass draws under it; it keeps its width as the window resizes.
+        // A plain item, which keeps its width as the window resizes; the sidebar draws the system's sidebar material.
         let sidebarItem = NSSplitViewItem(viewController: sidebar)
         sidebarItem.canCollapse = true
         sidebarItem.minimumThickness = 200

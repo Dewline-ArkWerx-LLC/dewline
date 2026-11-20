@@ -195,7 +195,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         scrollView.autohidesScrollers = true
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: header == nil ? 6 : 0, left: 0, bottom: 8, right: 0)
-        let root = ChromeFill(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
+        let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
+        root.material = .sidebar
+        root.blendingMode = .behindWindow
         var top = root.topAnchor
         if let header {
             header.picker.folderMenu = { [weak self] in self?.folderMenu() ?? NSMenu() }

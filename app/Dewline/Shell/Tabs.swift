@@ -110,8 +110,8 @@ final class WindowState {
 /// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
 /// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
-/// window is key. A tab whose note has changes waiting carries a 6 pt dot in the ink of the writer with the most of
-/// them after its name. Tabs whose notes share a name add the shortest parent path that tells them apart
+/// window is key. A tab whose note has changes waiting carries the sidebar's writer badge after its name: a 3 x 10
+/// rule in the ink of the writer with the most of them and the count of all of them, on that ink at 14%. Tabs whose notes share a name add the shortest parent path that tells them apart
 /// ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says what is waiting, when its
 /// note was saved and how many words it has; its context menu renames or moves the note, or copies its path.
 final class TabStrip: NSView {
@@ -228,19 +228,27 @@ final class TabStrip: NSView {
         tab.window?.isDocumentEdited == true
     }
 
-    /// The writer with the most changes waiting in the tab's note, and that writer's count.
+    /// The writer with the most changes waiting in the tab's note, and the count of all of them.
     private static func waiting(_ tab: MainWindowController) -> WaitingCount? {
         var counts: [String: (writer: MarkWriter, count: Int)] = [:]
         for change in (tab.document as? MarkdownDocument)?.live?.changes.values.filter(\.marked) ?? [] {
             let writer = MarkWriter(change.origin)
             counts[writer.name, default: (writer, 0)].count += 1
         }
-        return counts.values.max { $0.count < $1.count }.map { WaitingCount(writer: $0.writer, count: $0.count) }
+        let total = counts.values.reduce(0) { $0 + $1.count }
+        return counts.values.max { $0.count < $1.count }.map { WaitingCount(writer: $0.writer, count: total) }
     }
 
-    /// Room after the name for the writer dot and the edited dot.
+    private static let badgeFont = Chrome.mono(11, weight: .medium)
+
+    /// The badge's width: 4 pt, the rule, 4 pt, the count, 5 pt.
+    private static func badgeWidth(_ waiting: WaitingCount) -> CGFloat {
+        11 + ceil(("\(waiting.count ?? 0)" as NSString).size(withAttributes: [.font: badgeFont]).width) + 5
+    }
+
+    /// Room after the name for the writer badge and the edited dot.
     private static func trailing(_ tab: MainWindowController) -> CGFloat {
-        (waiting(tab) == nil ? 0 : 12) + (edited(tab) ? 8 : 0)
+        (waiting(tab).map { badgeWidth($0) + 6 } ?? 0) + (edited(tab) ? 8 : 0)
     }
 
     private static func width(_ tab: MainWindowController, _ title: String) -> CGFloat {
@@ -373,8 +381,14 @@ final class TabStrip: NSView {
             with: NSRect(x: frame.minX + Self.padding, y: frame.midY - height / 2, width: max(room, 0), height: height),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         if let waiting = Self.waiting(slot.tab) {
-            waiting.writer.color.setFill()
-            NSBezierPath(ovalIn: NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 3, width: 6, height: 6)).fill()
+            let badge = NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 8, width: Self.badgeWidth(waiting), height: 16)
+            let ink = waiting.writer.color
+            ink.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: badge, xRadius: 4, yRadius: 4).fill()
+            ink.setFill()
+            NSBezierPath(roundedRect: NSRect(x: badge.minX + 4, y: badge.midY - 5, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+            let count = NSAttributedString(string: "\(waiting.count ?? 0)", attributes: [.font: Self.badgeFont, .foregroundColor: Chrome.color(.ink)])
+            count.draw(at: NSPoint(x: badge.minX + 11, y: badge.midY - count.size().height / 2))
         }
         if edited {
             Chrome.color(.ink2).setFill()

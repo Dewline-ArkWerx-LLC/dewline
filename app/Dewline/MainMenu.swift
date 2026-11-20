@@ -1,10 +1,11 @@
 import AppKit
 
 /// What the window answers through the responder chain: the right pane's tabs, Share, reopening a closed tab, and
-/// keeping every change of the selected change's session.
+/// keeping or reverting every change of the selected change's session.
 @MainActor @objc protocol ShellActions {
     func toggleChanges(_ sender: Any?)
     @objc optional func keepSession(_ sender: Any?)
+    @objc optional func revertSession(_ sender: Any?)
     #if COLLAB
     func shareNote(_ sender: Any?)
     #endif
@@ -74,7 +75,8 @@ enum MainMenu {
         menu.addItem(withTitle: "Rename\u{2026}", action: #selector(NSDocument.rename(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Duplicate", action: #selector(AppDelegate.duplicateNote(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Move to Trash", action: #selector(AppDelegate.trashNote(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Earlier Versions\u{2026}", action: #selector(AppDelegate.showEarlierVersions(_:)), keyEquivalent: "")
+        let versions = menu.addItem(withTitle: "Earlier Versions\u{2026}", action: #selector(AppDelegate.showEarlierVersions(_:)), keyEquivalent: "y")
+        versions.keyEquivalentModifierMask = [.command, .option]
         #if COLLAB
         menu.addItem(.separator())
         menu.addItem(withTitle: "Share\u{2026}", action: #selector(ShellActions.shareNote(_:)), keyEquivalent: "")
@@ -113,6 +115,8 @@ enum MainMenu {
         revertAll.keyEquivalentModifierMask = [.command, .option, .shift]
         let keepSession = menu.addItem(withTitle: "Keep Session", action: #selector(ShellActions.keepSession(_:)), keyEquivalent: "\r")
         keepSession.keyEquivalentModifierMask = [.command, .option, .shift]
+        let revertSession = menu.addItem(withTitle: "Revert Session", action: #selector(ShellActions.revertSession(_:)), keyEquivalent: "\u{8}")
+        revertSession.keyEquivalentModifierMask = [.command, .control]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")

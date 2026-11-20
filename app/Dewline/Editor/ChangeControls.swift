@@ -214,10 +214,12 @@ final class ConflictCard: NSView, Hanging {
     }
 }
 
-/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 change" sits on the change's first text baseline
-/// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column. Where the margin is
-/// narrower than the stamp plus that 26 pt and a 24 pt gutter, it folds into a 30 pt bar under the block holding the
-/// change, on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. No cursor
+/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 1 of 3 ⌃⌘↓" sits on the change's first text baseline
+/// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column; a narrower margin takes
+/// the compact stamp, "CLAUDE · 1 of 3" over Revert and Keep as icons. Only where the margin is narrower than the
+/// compact stamp plus that 26 pt and a 24 pt gutter does it fold into a 30 pt bar under the block holding the change,
+/// on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. Revert and Keep share
+/// one width. Keep and Revert show on the stamp of the change at the caret and on a stamp under the pointer. No cursor
 /// bar: no dark orange reaches 3:1 on Keep's cream fill, and in the gap it read as a separator.
 @MainActor
 final class ChangeStamp: NSView {
@@ -242,6 +244,13 @@ final class ChangeStamp: NSView {
     private var external = false
     private var shell = false
     private(set) var folded = false
+    /// Whether Keep and Revert show without the pointer on the stamp.
+    var active = true {
+        didSet { showButtons() }
+    }
+    private var hovering = false {
+        didSet { showButtons() }
+    }
     private var flags: Any?
     /// Line 1's baseline and left edge, in this view.
     private var baseline: CGFloat = 0
@@ -275,11 +284,25 @@ final class ChangeStamp: NSView {
         for view in [self.revert, self.keep, setUp, note] { addSubview(view) }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
     }
 
     required init?(coder: NSCoder) {
         fatalError("ChangeStamp is built in code")
+    }
+
+    private func showButtons() {
+        revert.isHidden = !(active || hovering)
+        keep.isHidden = revert.isHidden
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
     }
 
     override func accessibilityChildren() -> [Any]? {
@@ -354,9 +377,13 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 1 change", or "· 1 of 3": the writer in small capitals in its ink, the time with fixed-width
-    /// digits, the count.
+    /// "CLAUDE 3:25 PM · 1 of 3 ⌃⌘↓": the writer in small capitals in its ink, the time with fixed-width digits, the
+    /// count and Next Change's keys; "CLAUDE · 1 of 3" in the compact stamp.
     private var line: NSAttributedString {
+        line(compact: keep.compact && !folded)
+    }
+
+    private func line(compact: Bool) -> NSAttributedString {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
         let line = NSMutableAttributedString(attributedString: writer.stamp)
@@ -365,8 +392,10 @@ final class ChangeStamp: NSView {
             let ink = OKLCH(ThemeStore.shared.color(.ink).resolved(for: effectiveAppearance)) {
             line.addAttribute(.foregroundColor, value: name.mixed(with: ink, by: 0.25).color, range: NSRange(location: 0, length: line.length))
         }
-        line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
-        line.append(NSAttributedString(string: " \u{00B7} " + (count == 1 ? "1 change" : "1 of \(count)"), attributes: [
+        if !compact {
+            line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
+        }
+        line.append(NSAttributedString(string: " \u{00B7} 1 of \(count)" + (compact ? "" : "  \u{2303}\u{2318}\u{2193}"), attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
         ]))
         return line
@@ -377,7 +406,12 @@ final class ChangeStamp: NSView {
     }
 
     private func buttonsWidth(compact: Bool) -> CGFloat {
-        revert.width(compact: compact) + Self.gap + keep.width(compact: compact)
+        2 * buttonWidth(compact: compact) + Self.gap
+    }
+
+    /// Revert's and Keep's one width.
+    private func buttonWidth(compact: Bool) -> CGFloat {
+        max(revert.width(compact: compact), keep.width(compact: compact))
     }
 
     /// The width the stamp takes in the margin with Keep and Revert as icons: the least margin that holds it.
@@ -387,7 +421,7 @@ final class ChangeStamp: NSView {
 
     private func width(compact: Bool) -> CGFloat {
         ceil(max(
-            line.size().width, buttonsWidth(compact: compact), setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
+            line(compact: compact).size().width, buttonsWidth(compact: compact), setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
             note.isHidden ? 0 : note.intrinsicContentSize.width))
     }
 
@@ -408,10 +442,9 @@ final class ChangeStamp: NSView {
         textX = width - ceil(line.size().width)
         // The buttons clear line 1's descent even when the second baseline sits close under the first.
         let buttons = max(second - StampButton.labelBaseline, first + 4) - top
-        let keepWidth = keep.intrinsicContentSize.width
-        keep.frame = NSRect(x: width - keepWidth, y: buttons, width: keepWidth, height: StampButton.height)
-        let revertWidth = revert.intrinsicContentSize.width
-        revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: buttons, width: revertWidth, height: StampButton.height)
+        let buttonWidth = buttonWidth(compact: keep.compact)
+        keep.frame = NSRect(x: width - buttonWidth, y: buttons, width: buttonWidth, height: StampButton.height)
+        revert.frame = NSRect(x: keep.frame.minX - Self.gap - buttonWidth, y: buttons, width: buttonWidth, height: StampButton.height)
         var bottom = keep.frame.maxY
         if !note.isHidden {
             let size = note.intrinsicContentSize
@@ -436,10 +469,9 @@ final class ChangeStamp: NSView {
         let y = (Self.barHeight - StampButton.height) / 2
         let noted = note.isHidden ? 0 : ceil(note.intrinsicContentSize.width) + 8
         setCompact(textX + ceil(line.size().width) + 8 + noted + buttonsWidth(compact: false) + y > rect.width)
-        let keepWidth = keep.intrinsicContentSize.width
-        keep.frame = NSRect(x: rect.width - y - keepWidth, y: y, width: keepWidth, height: StampButton.height)
-        let revertWidth = revert.intrinsicContentSize.width
-        revert.frame = NSRect(x: keep.frame.minX - Self.gap - revertWidth, y: y, width: revertWidth, height: StampButton.height)
+        let buttonWidth = buttonWidth(compact: keep.compact)
+        keep.frame = NSRect(x: rect.width - y - buttonWidth, y: y, width: buttonWidth, height: StampButton.height)
+        revert.frame = NSRect(x: keep.frame.minX - Self.gap - buttonWidth, y: y, width: buttonWidth, height: StampButton.height)
         if !note.isHidden {
             let size = note.intrinsicContentSize
             let x = textX + ceil(line.size().width) + 8

@@ -190,7 +190,16 @@ final class Rail: NSScroller {
         return ThemeStore.shared.color(.ink).resolved(for: appearance).withAlphaComponent(appearance.isDark ? dark : alpha)
     }
 
+    /// A note with no waiting changes that fits on screen draws no track.
+    private var blank: Bool {
+        marks.isEmpty && (!isEnabled || knobProportion >= 1)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        guard !blank else {
+            ThemeStore.shared.color(.paper).setFill()
+            return bounds.fill()
+        }
         drawKnobSlot(in: rect(for: .knobSlot), highlight: false)
         drawKnob()
         drawMarks()
@@ -301,17 +310,44 @@ final class Rail: NSScroller {
 
     // MARK: Labels
 
-    /// "Claude changed Error codes", or the line when no heading comes before the change.
-    private func spoken(_ mark: (id: UInt64, change: LiveFile.Change, y: CGFloat)) -> (name: String, time: String) {
+    /// "Claude" and "Error codes", or the line when no heading comes before the change.
+    private func spoken(_ mark: (id: UInt64, change: LiveFile.Change, y: CGFloat)) -> (writer: String, place: String, time: String) {
         let writer = MarkWriter(mark.change.origin).name
         let place = headings.last { $0.location <= mark.change.range.location }?.title
             ?? textView?.marks.live.map { "line \($0.line(mark.id))" } ?? "the note"
         let time = (textView?.marks.landed[mark.id] ?? .now).formatted(date: .omitted, time: .shortened)
-        return ("\(writer) changed \(place)", time)
+        return (writer, place, time)
     }
 
-    /// A label at the hovered mark (or the change that just landed off screen), else every tick's name while the
-    /// pointer is on the rail.
+    /// The label for a change: "Claude changed Steps  16:09  ⌃⌘↓", with Next or Previous Change's keys when the change
+    /// is below or above the view, and "Changes show here too" when `intro`. It fits `width`: the introduction goes
+    /// first, then the heading loses its middle; nil when even a short heading is wider.
+    private static func label(writer: String, place: String, time: String, keys: String, intro: Bool, width: CGFloat) -> NSAttributedString? {
+        let store = ThemeStore.shared
+        func text(_ place: String, intro: Bool) -> NSAttributedString {
+            let text = NSMutableAttributedString(
+                string: "\(writer) changed \(place)", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)])
+            text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
+            if !keys.isEmpty {
+                text.append(NSAttributedString(string: "  " + keys, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
+            }
+            if intro {
+                text.append(NSAttributedString(string: "  Changes show here too", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)]))
+            }
+            return text
+        }
+        if intro, text(place, intro: true).size().width <= width { return text(place, intro: true) }
+        let characters = Array(place)
+        for kept in stride(from: characters.count, through: min(characters.count, 6), by: -1) {
+            let cut = kept == characters.count ? place : String(characters.prefix((kept + 1) / 2)) + "\u{2026}" + String(characters.suffix(kept / 2))
+            let shown = text(cut, intro: false)
+            if shown.size().width <= width { return shown }
+        }
+        return nil
+    }
+
+    /// A label at the hovered mark (or the change that just landed off screen, while the Changes pane is closed), in the
+    /// margin right of the text column, else every tick's name while the pointer is on a rail that draws.
     private func updateLabels() {
         defer { needsDisplay = true }
         guard labels.superview != nil, let textView else { return labels.items = [] }
@@ -322,19 +358,17 @@ final class Rail: NSScroller {
         let hovered = hovering.flatMap { mark(at: $0) }
         // The hovered mark lights its change in the page: a halo on its margin rules, its wash from 15% to 28%.
         textView.marks.lit = hovered?.id
-        if let mark = hovered ?? marks.first(where: { $0.id == arrival }) {
-            let (name, time) = spoken(mark)
+        let reviewing = (textView.window?.windowController as? MainWindowController)?.showsChanges == true
+        if let mark = hovered ?? (reviewing ? nil : marks.first(where: { $0.id == arrival })) {
+            let (writer, place, time) = spoken(mark)
             let visible = textView.visibleRect
-            let arrow = mark.y < visible.minY ? " \u{2191}" : mark.y > visible.maxY ? " \u{2193}" : ""
-            let store = ThemeStore.shared
-            let text = NSMutableAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)])
-            text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
-            text.append(NSAttributedString(string: arrow, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
-            if introducing, hovered == nil {
-                text.append(NSAttributedString(string: "  Changes show here too", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)]))
-            }
-            labels.items = [RailLabels.Item(text: text, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)]
-        } else if hovering != nil {
+            let keys = mark.y < visible.minY ? "\u{2303}\u{2318}\u{2191}" : mark.y > visible.maxY ? "\u{2303}\u{2318}\u{2193}" : ""
+            // The pill's 8 pt sides, its 9 pt rule and 8 pt clear of the text column.
+            let column = textView.textContainerOrigin.x + (textView.textContainer.map { $0.size.width - $0.lineFragmentPadding } ?? 0)
+            let width = right - textView.convert(NSPoint(x: column, y: 0), to: labels).x - 8 - 25
+            let text = Self.label(writer: writer, place: place, time: time, keys: keys, intro: introducing && hovered == nil, width: width)
+            labels.items = text.map { [RailLabels.Item(text: $0, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)] } ?? []
+        } else if hovering != nil, !blank {
             // Where names would overlap, the higher heading keeps its name.
             var taken: [CGFloat] = []
             labels.items = ticks.sorted { $0.heading.level < $1.heading.level }.compactMap { tick in
@@ -375,8 +409,8 @@ final class Rail: NSScroller {
             RailItem(self, "Heading: \(tick.heading.title)", tickRect(tick).insetBy(dx: 0, dy: -4)) { [weak self] in self?.jump(to: tick.heading) }
         }
         let changes = marks.map { mark in
-            let (name, time) = spoken(mark)
-            return RailItem(self, "\(name), \(time)", markRect(mark.y)) { [weak self] in self?.reveal(mark.change) }
+            let (writer, place, time) = spoken(mark)
+            return RailItem(self, "\(writer) changed \(place), \(time)", markRect(mark.y)) { [weak self] in self?.reveal(mark.change) }
         }
         items = headings + changes
     }

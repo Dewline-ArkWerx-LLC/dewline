@@ -10,6 +10,15 @@ What changed in each Dewline release, newest first.
 - A table column of numbers aligns right unless its delimiter row sets an alignment. The head sits one row above the first row with a single rule under it, and columns have no rules between them.
 - Typst and TeX sources always show in the code face.
 - A change that lies wholly inside hidden markup, such as a link's new target, shows that markup, so its mark no longer sits on nothing.
+- The Changes segment counts what the toolbar counts: every change waiting in the window's notes and in notes changed while closed.
+- The change stamp stays in the margin when the Changes pane opens, compact ("CLAUDE · 1 of 3" over icon buttons) where the full stamp won't fit, so toggling the pane no longer reflows the note. Revert and Keep share one width, the counter always reads "1 of N", and the full stamp shows Next Change's keys (⌃⌘↓). Only the stamp at the caret, or under the pointer, shows its buttons.
+- Changes list rows show the text around the change, with Markdown markers taken out; Revert Session and Keep Session are buttons, Keep filled.
+- The rail's change label stays in the right margin, shortening the heading or dropping "Changes show here too" to fit, shows Next or Previous Change's keys, and stays hidden while the Changes pane is open. A note with no changes that fits on screen shows no rail track.
+- A folder window with no note open lists the notes waiting for review: marked changes, changes made while closed and notes git reports changed, each opening on Return or a click. Open CLAUDE.md is the default button, beside Set Up Agent Hooks… at the same width.
+- A tab with changes waiting shows the sidebar's writer badge with the count, in place of the dot.
+- Edit > Revert Session (⌃⌘⌫) and File > Earlier Versions… (⌥⌘Y) have shortcuts, and the title bar has a sidebar toggle.
+- A window opening on its own takes at least 1200 x 760 pt, or the whole screen when it is smaller.
+
 - An agent's edit marks one change per stretch of a line: word edits a few characters apart join, and a line more than 40% rewritten shows struck whole with the new line under it.
 - Earlier Versions names a hooked write's snapshot after its agent even when the hook reports after you decide the change, keeps a reverted change's save as "You (Revert)", and no longer adds an "Another app" copy of the version a reopened note already ends with.
 - Earlier Versions names the note in its heading, shows seconds when two versions share a minute, pins with a pin symbol, previews the whole difference with tinted lines and a +/− gutter, moves between versions with ↑ and ↓, and hides scroll bars with nothing to scroll.

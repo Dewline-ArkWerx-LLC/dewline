@@ -1,8 +1,8 @@
 import AppKit
 import MdCore
 
-/// The title row, a `.unifiedCompact` toolbar: from the sidebar's divider the tab strip, Activity, Search and New Note.
-/// Each item is a borderless button in a plain view, so no glass capsule draws behind it. The tabs outlast the others
+/// The title row, a `.unifiedCompact` toolbar: the sidebar toggle over the sidebar, then from its divider the tab
+/// strip, Activity, Search and New Note. Each item but the system's sidebar toggle is a borderless button in a plain view, so no glass capsule draws behind it. The tabs outlast the others
 /// when the window narrows. After 1.5 s of typing, everything but the selected tab fades out until the pointer or a
 /// Command chord comes back.
 @MainActor
@@ -53,7 +53,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.divider, Self.tabs, Self.activity, Self.search, Self.newNote]
+        [.toggleSidebar, Self.divider, Self.tabs, Self.activity, Self.search, Self.newNote]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -255,13 +255,6 @@ final class ActivityButton: NSButton {
         fatalError("ActivityButton is built in code")
     }
 
-    /// The window's open notes with marked changes, and the notes changed while closed that aren't among them.
-    private var waiting: (open: [LiveFile], closed: [ClosedNote]) {
-        let open = Review.files(in: owner).filter { $0.changes.values.contains(where: \.marked) }
-        let paths = Set(open.map(\.url.standardizedFileURL.path))
-        return (open, Review.closedNotes().filter { !paths.contains($0.url.standardizedFileURL.path) })
-    }
-
     private static func tally(_ origins: [ChangeEngine.Origin]) -> [(writer: MarkWriter, count: Int)] {
         var counts: [(writer: MarkWriter, count: Int)] = []
         for origin in origins {
@@ -281,7 +274,7 @@ final class ActivityButton: NSButton {
 
     /// Rebuilds the title when the counts change; each keystroke before a pending change moves it without changing them.
     private func update(force: Bool = false) {
-        let (open, closed) = waiting
+        let (open, closed) = Review.waiting(in: owner)
         let counts = Self.tally(
             open.flatMap { $0.changes.values.filter(\.marked).map(\.origin) } + closed.flatMap { Array(repeating: $0.origin, count: $0.count) })
         let same = counts.map { "\($0.writer.name) \($0.count)" } == self.counts.map { "\($0.writer.name) \($0.count)" }
@@ -333,7 +326,7 @@ final class ActivityButton: NSButton {
     /// Each note with changes waiting and who made them; choosing one opens it at its first change.
     @objc private func showMenu(_ sender: Any?) {
         let menu = NSMenu()
-        let (open, closed) = waiting
+        let (open, closed) = Review.waiting(in: owner)
         for live in open {
             let counts = Self.tally(live.changes.values.filter(\.marked).map(\.origin))
             let detail = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")

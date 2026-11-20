@@ -51,7 +51,7 @@ hits=$(
         helpers(); file = FILENAME; braces = 0; top = 0
         kind = (FILENAME ~ /\.(swift|rs)$/) ? "test" : "ci"
         inside = (FILENAME !~ /\.rs$/ || FILENAME ~ /\/tests\// || FILENAME ~ /\/tests\.rs$/)
-        armed = 0; depth = 0; buffer = ""; timers = ""
+        armed = 0; depth = 0; buffer = ""; timers = ""; retry = 0
     }
     kind == "ci" {
         if ($0 !~ /^[ \t]*#/ && $0 ~ /retry-tests-on-failure|test-iterations|--retries/) report("no-flake-masking", FNR, $0)
@@ -87,10 +87,23 @@ hits=$(
             calls++; called[calls] = callee; caller[calls] = top ? fns[top] : ""; at[calls] = FNR
             said[calls] = $0; sub(/^[ \t]+/, "", said[calls])
         }
+        # A retry: a counted loop that launches a process or sends a request and can leave once one gets through.
+        if (!retry && $0 ~ /for _ in [0-9]+\.\.[.<]?[A-Za-z0-9_]+/) {
+            retry = FNR; retried = $0; retried_at = braces; retry_opened = 0; launches = 0; leaves = $0 ~ / where /
+        }
+        if (retry) {
+            if ($0 ~ /Process\(\)|\.run\(\)|URLSession|\.data\((for|from):|\.send\(|Command::new|\.spawn\(\)|\.output\(\)|\.status\(\)|connect\(/) launches = 1
+            if ($0 ~ /(^|[^A-Za-z0-9_])(break|return)([^A-Za-z0-9_]|$)/) leaves = 1
+        }
         braces += opens - closes
         if (top && braces > base[top]) opened[top] = 1
         while (top && braces <= base[top] && (opened[top] || opens)) top--
-        if ($0 ~ /\.timeLimit\(|executionTimeAllowance|for (attempt|retry|tries|rerun)[A-Za-z]* in /)
+        if (retry && braces > retried_at) retry_opened = 1
+        if (retry && braces <= retried_at && (retry_opened || opens)) {
+            if (launches && leaves) report("no-flake-masking", retry, retried)
+            retry = 0
+        }
+        if ($0 ~ /\.timeLimit\(|executionTimeAllowance|withKnownIssue|for (attempt|retry|tries|rerun)[A-Za-z]* in /)
             report("no-flake-masking", FNR, $0)
         if (match($0, /(let|var) (mut )?[A-Za-z_][A-Za-z0-9_]* = /) && $0 ~ /\.elapsed\(\)|\.measure \{|ContinuousClock\.now - |clock\.now - /) {
             name = substr($0, RSTART, RLENGTH)
@@ -113,7 +126,7 @@ hits=$(
 printf '%s\n' "$hits" | awk -F '\t' -v allow="$allow" -v actions="${GITHUB_ACTIONS:-}" '
 BEGIN {
     advice["no-fixed-sleep"] = "Replace this fixed sleep with a signal: await the operation itself, or the notification, continuation, callback or confirmation it ends with. To move time, inject a clock and advance it. A poll loop is the same sleep. A sleep guesses how long real work takes and fails under CI load."
-    advice["no-flake-masking"] = "Do not retry tests or raise their time limits. A test that passes on rerun is a flake: wait on the event it depends on and fix the cause."
+    advice["no-flake-masking"] = "Do not retry tests, raise their time limits or mark their failures as known issues. A test that passes on rerun is a flake: wait on the event it depends on and fix the cause."
     advice["no-wall-clock-asserts"] = "Do not assert measured wall-clock time outside the measurement suites: a CI runner is slower and noisier than any budget. Assert the outcome, or inject a clock and assert on its readings. Budgets belong in PerfTests and perf/."
     while ((getline entry < allow) > 0) {
         if (entry ~ /^[ \t]*(#|$)/) continue

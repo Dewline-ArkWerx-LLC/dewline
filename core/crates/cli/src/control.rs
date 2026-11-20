@@ -12,7 +12,6 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -196,16 +195,11 @@ pub fn enclosing_app(exe: &Path) -> Option<&Path> {
         .then_some(app)
 }
 
-/// Connects within CONNECT_TIMEOUT to a socket whose server runs as `uid`.
+/// Connects to a socket whose server runs as `uid`. macOS never holds a Unix
+/// socket connect for the app to accept it: with nobody listening, or the
+/// app's backlog full, the connect is refused at once.
 fn connect(path: &Path, uid: u32) -> io::Result<UnixStream> {
-    let (sender, receiver) = mpsc::channel();
-    let path = path.to_owned();
-    // std has no connect timeout for Unix sockets. A connect that outlasts the
-    // wait ends with its thread, dropping the stream.
-    thread::spawn(move || sender.send(UnixStream::connect(path)));
-    let stream = receiver
-        .recv_timeout(CONNECT_TIMEOUT)
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+    let stream = UnixStream::connect(path)?;
     let peer = peer_uid(&stream)?;
     if peer != uid {
         return Err(io::Error::new(
@@ -234,7 +228,7 @@ pub fn set_timeout(stream: &UnixStream, timeout: Option<Duration>) -> io::Result
 fn nobody_listens(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
     )
 }
 

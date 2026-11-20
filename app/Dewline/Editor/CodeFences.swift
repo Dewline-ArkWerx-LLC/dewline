@@ -60,6 +60,7 @@ final class CodeFences {
                 styled.enumerateAttribute(.paragraphStyle, in: well) { value, run, _ in
                     styled.addAttribute(.paragraphStyle, value: indent(value as? NSParagraphStyle ?? .default), range: run)
                 }
+                Self.hang(local.content, in: styled)
                 let lines = Self.lines(local, in: text)
                 if lines.contains(where: { Self.touches($0, selection) }) || folds.contains(where: { NSIntersectionRange($0, fence.range).length > 0 }) {
                     revealed.insert(fence.range)
@@ -73,6 +74,28 @@ final class CodeFences {
                     ], range: paragraph)
                 }
             }
+        }
+    }
+
+    /// Each line of `code` wraps one indent past its own leading blanks, so wrapped code keeps its shape.
+    private static func hang(_ code: NSRange, in styled: NSMutableAttributedString) {
+        let text = styled.mutableString
+        guard code.length > 0, let font = styled.attribute(.font, at: code.location, effectiveRange: nil) as? NSFont else { return }
+        let space = NSAttributedString(string: " ", attributes: [.font: font]).size().width
+        var at = code.location
+        while at < NSMaxRange(code) {
+            let line = text.paragraphRange(for: NSRange(location: at, length: 0))
+            at = NSMaxRange(line)
+            var columns = 0
+            for index in line.location..<NSMaxRange(line) {
+                let character = text.character(at: index)
+                guard character == 0x20 || character == 0x09 else { break }
+                columns += character == 0x09 ? 4 : 1
+            }
+            guard let style = styled.attribute(.paragraphStyle, at: line.location, effectiveRange: nil) as? NSParagraphStyle else { continue }
+            let hanging = style.mutableCopy() as! NSMutableParagraphStyle
+            hanging.headIndent = style.firstLineHeadIndent + CGFloat(columns + 4) * space
+            styled.addAttribute(.paragraphStyle, value: hanging, range: line)
         }
     }
 

@@ -152,8 +152,8 @@ struct JourneyTests {
         #expect((tab.textView.string as NSString).substring(with: paragraph).contains("dewline://demo"))
         #expect(tab.textView.string.contains(Welcome.paragraph + Welcome.addition))
         let stamp = try #require(Self.stamp(in: tab))
-        #expect(stamp.accessibilityLabel()?.hasPrefix("Demo, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 1 change") == true)
-        try Self.press("Keep Demo's change", on: stamp)
+        #expect(stamp.accessibilityLabel()?.hasPrefix("Example, ") == true && stamp.accessibilityLabel()?.hasSuffix(", 1 change") == true)
+        try Self.press("Keep Example's change", on: stamp)
         #expect(tab.marked.isEmpty)
         #expect(Self.stamp(in: tab) == nil)
     }

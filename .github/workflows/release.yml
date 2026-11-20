@@ -330,7 +330,7 @@ jobs:
           cp updates/appcast.xml "$archives/appcast.xml"
           awk -v v="$VERSION" '$1 == "##" { if (on) exit; on = ($2 == v) } on' CHANGELOG.md | tail -n +2 > "$archives/Dewline-$VERSION.md"
           flags=(--download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/"
-            --full-release-notes-url https://github.com/ark-232/dewline/releases --embed-release-notes
+            --full-release-notes-url "https://github.com/$GITHUB_REPOSITORY/releases" --embed-release-notes
             --maximum-deltas 0 --maximum-versions 26 --phased-rollout-interval 43200)
           if [[ $CHANNEL == beta ]]; then flags+=(--channel beta); fi
           if [[ $CRITICAL == true ]]; then flags+=(--critical-update-version "$BUILD"); fi

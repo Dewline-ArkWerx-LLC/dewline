@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class Help: NSObject {
     static let docs = URL(string: "https://dewline.arkwerx.com/docs/")!
-    static let releases = URL(string: "https://github.com/ark-232/dewline/releases")!
+    static let releases = URL(string: "https://github.com/Dewline-ArkWerx-LLC/dewline/releases")!
     static let cliSetup = URL(string: "https://dewline.arkwerx.com/docs/cli/")!
     private static var shortcuts: NSWindowController?
 
@@ -27,7 +27,7 @@ final class Help: NSObject {
         let version = info["CFBundleShortVersionString"] as? String ?? "?"
         let build = info["CFBundleVersion"] as? String ?? "?"
         let os = ProcessInfo.processInfo.operatingSystemVersion
-        var issue = URLComponents(string: "https://github.com/ark-232/dewline/issues/new")!
+        var issue = URLComponents(string: "https://github.com/Dewline-ArkWerx-LLC/dewline/issues/new")!
         issue.queryItems = [
             URLQueryItem(name: "title", value: ""),
             URLQueryItem(name: "body", value: "\n\n---\nDewline \(version) (\(build))\nmacOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)\n"),

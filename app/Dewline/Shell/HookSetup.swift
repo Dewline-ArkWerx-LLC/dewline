@@ -75,32 +75,61 @@ enum HookSetup {
         alert.addButton(withTitle: "Move to Applications and Relaunch")
         alert.addButton(withTitle: "Not Now")
         present(alert, on: window) { response in
-            if response == .alertFirstButtonReturn { moveToApplications() }
+            if response == .alertFirstButtonReturn { moveToApplications(on: window) }
         }
     }
 
-    private static func moveToApplications() {
+    /// Asks first when Applications already has a Dewline, and stops when that one is open.
+    private static func moveToApplications(on window: NSWindow?) {
         let source = Bundle.main.bundleURL
         let target = URL(filePath: "/Applications", directoryHint: .isDirectory).appending(path: source.lastPathComponent)
-        do {
-            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
-            try FileManager.default.copyItem(at: source, to: target)
-            // The copy keeps the download's quarantine, which would translocate it again.
-            let clear = Process()
-            clear.executableURL = URL(filePath: "/usr/bin/xattr")
-            clear.arguments = ["-dr", "com.apple.quarantine", target.path]
-            try clear.run()
-            clear.waitUntilExit()
-            // Opens the copy once this app has quit, so the two never hold the control socket at once.
-            let relaunch = Process()
-            relaunch.executableURL = URL(filePath: "/bin/sh")
-            relaunch.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"", "sh", String(getpid()), target.path]
-            try relaunch.run()
-        } catch {
-            NSApp.presentError(error)
-            return
+        guard FileManager.default.fileExists(atPath: target.path) else { return copy(source, to: target) }
+        let alert = NSAlert()
+        if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.standardizedFileURL == target.standardizedFileURL }) {
+            alert.messageText = "Dewline is open from Applications"
+            alert.informativeText = "Quit it, then move this copy."
+            return present(alert, on: window) { _ in }
         }
-        NSApp.terminate(nil)
+        let installed = Updates.versionOnDisk(at: target)?.version ?? "another version"
+        let this = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "another version"
+        alert.messageText = "Replace the Dewline in Applications?"
+        alert.informativeText = "Applications has Dewline \(installed); this copy is \(this). The one in Applications moves to the Trash."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        present(alert, on: window) { response in
+            if response == .alertFirstButtonReturn { copy(source, to: target, replacing: true) }
+        }
+    }
+
+    /// Copies the app off the main thread, quits, and opens the copy.
+    private static func copy(_ source: URL, to target: URL, replacing: Bool = false) {
+        Task {
+            do {
+                try await Task.detached {
+                    if replacing { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
+                    try FileManager.default.copyItem(at: source, to: target)
+                    // The copy keeps the download's quarantine, which would translocate it again.
+                    let clear = Process()
+                    clear.executableURL = URL(filePath: "/usr/bin/xattr")
+                    clear.arguments = ["-dr", "com.apple.quarantine", target.path]
+                    try clear.run()
+                    clear.waitUntilExit()
+                }.value
+                // Opens the copy once this app has quit, so the two never hold the control socket at once. Gives up after
+                // a minute, so a canceled quit doesn't open it later.
+                let relaunch = Process()
+                relaunch.executableURL = URL(filePath: "/bin/sh")
+                relaunch.arguments = [
+                    "-c", "i=0; while /bin/kill -0 \"$1\" 2>/dev/null; do [ $i -lt 300 ] || exit 0; /bin/sleep 0.2; i=$((i+1)); done; /usr/bin/open \"$2\"",
+                    "sh", String(getpid()), target.path,
+                ]
+                try relaunch.run()
+            } catch {
+                NSApp.presentError(error)
+                return
+            }
+            NSApp.terminate(nil)
+        }
     }
 
     /// Names in a folder that say an agent works there.

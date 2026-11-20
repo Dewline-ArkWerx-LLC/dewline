@@ -70,6 +70,10 @@ struct ThemeTests {
                     }
                 }
                 #expect(tokens[.accent] == (dark ? Brand.accent.dark : Brand.accent.light), "\(label)")
+                // On a dark page the writers' inks keep their hue and read as text.
+                for writer in [Token.writerClaude, .writerCodex, .writerCursor, .writerGemini, .writerCopilot] where dark {
+                    #expect(tokens[writer]!.contrast(with: tokens[.paper]!) >= 4.5 && tokens[writer]!.c >= 0.12, "\(label) \(writer)")
+                }
             }
         }
     }

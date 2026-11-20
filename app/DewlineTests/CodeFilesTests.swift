@@ -20,6 +20,9 @@ struct CodeFilesTests {
             let refusal = try #require(CodeFile.refusal(folder.url.appending(path: "main.py")))
             #expect(refusal.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String == "Turn on Open code files in Settings to open py files.")
             #expect(CodeFile.refusal(folder.url.appending(path: "notes.md")) == nil)
+            // A Typst or TeX source that opens shows as code.
+            #expect(CodeFile.opened(folder.url.appending(path: "main.py")) == nil)
+            #expect(CodeFile.opened(folder.url.appending(path: "brief.typ")) == "typ")
         }
         await Self.setting(false) {
             let (document, error) = await Self.openDocument(folder.url.appending(path: "main.py"))

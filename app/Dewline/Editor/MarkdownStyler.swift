@@ -468,7 +468,7 @@ extension MarkdownStyler {
                 for marker in span.markers {
                     styled.addAttribute(.dewlineMarkerFont, value: styled.attribute(.font, at: marker.location, effectiveRange: nil)!, range: marker)
                 }
-                let reveal = Self.touches(span, revealing)
+                let reveal = Self.touches(span, revealing) || Self.hides(span, changed)
                 if reveal { revealed.insert(span.shifted(by: paragraphs.location)) }
                 mark(span, revealed: reveal || source, in: styled)
             }
@@ -586,7 +586,8 @@ extension MarkdownStyler {
         }
     }
 
-    private func updateReveal() {
+    /// Shows or hides markers for the selection and the marked changes, on either one's move.
+    func updateReveal() {
         LatencyProbe.begin(.reveal)
         defer { LatencyProbe.end(.reveal) }
         guard !showsSource else { return }
@@ -598,6 +599,12 @@ extension MarkdownStyler {
             // Unstyled text takes the selection's reveal state when it is styled.
             for block in map.blocks(touching: range) where !unstyled.intersects(integersIn: Range(block.range)!) {
                 now.formUnion(Self.styled(block).map { $0.shifted(by: block.range.location) }.filter { Self.touches($0, selection) })
+            }
+        }
+        // A marked change wholly inside hidden markers, such as a link's new target, shows them, or its mark sits on nothing.
+        for change in textView.marks.painted.values {
+            for block in map.blocks(touching: change) where !unstyled.intersects(integersIn: Range(block.range)!) {
+                now.formUnion(Self.styled(block).map { $0.shifted(by: block.range.location) }.filter { Self.hides($0, [change]) })
             }
         }
         let hide = revealed.subtracting(now)
@@ -657,6 +664,11 @@ extension MarkdownStyler {
     /// Whether the item marker at `index` is a `-`, `*` or `+`.
     static func isBullet(at index: Int, in text: NSString) -> Bool {
         [0x2D, 0x2A, 0x2B].contains(text.character(at: index))
+    }
+
+    /// Whether one of `changes` lies wholly inside one of `span`'s markers.
+    private static func hides(_ span: SyntaxSpan, _ changes: [NSRange]) -> Bool {
+        changes.contains { change in change.length > 0 && span.markers.contains { $0.location <= change.location && NSMaxRange(change) <= NSMaxRange($0) } }
     }
 
     private static func touches(_ span: SyntaxSpan, _ selection: [NSRange]) -> Bool {

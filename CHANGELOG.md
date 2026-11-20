@@ -4,6 +4,12 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
+- Images on a dark page draw at 90% brightness inside their faint rim.
+- Display math is centered in the column.
+- A table column of numbers aligns right unless its delimiter row sets an alignment. The head sits one row above the first row with a single rule under it, and columns have no rules between them.
+- Typst and TeX sources always show in the code face.
+- A change that lies wholly inside hidden markup, such as a link's new target, shows that markup, so its mark no longer sits on nothing.
 - An agent's write that adds list items no longer drops the bullet of the item after them.
 - Ticking a task box in an agent's change no longer shifts its row to the right.
 - A change's highlight leaves out the blanks at its ends and runs unbroken across inline code; code spans get rounded chips.

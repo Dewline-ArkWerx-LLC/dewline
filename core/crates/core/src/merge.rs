@@ -15,6 +15,12 @@ use imara_diff::{Algorithm, Diff, Hunk, Interner, NoSliderHeuristic, Token};
 /// this or changes more than `COVERING_PERCENT` of the lines.
 const COVERING_HUNKS: usize = 50;
 const COVERING_PERCENT: usize = 30;
+/// `coalesce` joins edits with fewer tokens than this, or fewer characters
+/// than `JOIN_CHARS`, between them, and replaces a line whole once edits
+/// replace more than `LINE_PERCENT` of it.
+const JOIN_TOKENS: usize = 3;
+const JOIN_CHARS: usize = 4;
+const LINE_PERCENT: usize = 40;
 
 /// Replaces the UTF-16 range `start..end` with `text`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,6 +218,83 @@ fn merge_words<'a>(
         }
     }
     Some(edits)
+}
+
+/// Edits of `text`, as `merge3` makes them against an unchanged buffer,
+/// as the changes a reader reviews: a line whose edits replace more than
+/// 40% of it is replaced whole, and edits with under 3 tokens or 4 characters between
+/// them join, unless a blank line stands between. Makes the same text.
+pub fn coalesce(text: &str, edits: Vec<Edit>) -> Vec<Edit> {
+    let ending = |c: char| c == '\n' || c == '\r';
+    let mut cursor = Cursor::new(text);
+    let spans: Vec<(Range<usize>, String)> = edits
+        .into_iter()
+        .map(|edit| (cursor.byte(edit.start)..cursor.byte(edit.end), edit.text))
+        .collect();
+    let mut lined: Vec<(Range<usize>, String)> = Vec::new();
+    let mut k = 0;
+    while k < spans.len() {
+        let (first, _) = &spans[k];
+        let start = text[..first.start].rfind(ending).map_or(0, |i| i + 1);
+        let end = text[first.end..]
+            .find(ending)
+            .map_or(text.len(), |i| first.end + i);
+        let len = spans[k..]
+            .iter()
+            .take_while(|(range, _)| range.start <= end)
+            .count();
+        let line = &spans[k..k + len];
+        k += len;
+        let single = line
+            .iter()
+            .all(|(range, new)| !text[range.clone()].contains(ending) && !new.contains(ending));
+        let removed: usize = line
+            .iter()
+            .map(|(range, _)| text[range.clone()].chars().count())
+            .sum();
+        let added = line.iter().any(|(_, new)| !new.is_empty());
+        let length = text[start..end].chars().count();
+        if !single || !added || removed * 100 <= length * LINE_PERCENT {
+            lined.extend_from_slice(line);
+            continue;
+        }
+        let mut whole = String::new();
+        let mut done = start;
+        for (range, new) in line {
+            whole.push_str(&text[done..range.start]);
+            whole.push_str(new);
+            done = range.end;
+        }
+        whole.push_str(&text[done..end]);
+        lined.push((start..end, whole));
+    }
+    let mut joined: Vec<(Range<usize>, String)> = Vec::new();
+    for (range, new) in lined {
+        if let Some((last, last_text)) = joined.last_mut() {
+            let gap = &text[last.end..range.start];
+            let near = words(gap).len() < JOIN_TOKENS || gap.chars().count() < JOIN_CHARS;
+            let endings = lines(gap)
+                .iter()
+                .filter(|line| line.ends_with(ending))
+                .count();
+            if near && endings < 2 {
+                last_text.push_str(gap);
+                last_text.push_str(&new);
+                last.end = range.end;
+                continue;
+            }
+        }
+        joined.push((range, new));
+    }
+    let mut cursor = Cursor::new(text);
+    joined
+        .into_iter()
+        .map(|(range, text)| Edit {
+            start: cursor.unit(range.start),
+            end: cursor.unit(range.end),
+            text,
+        })
+        .collect()
 }
 
 /// `text` with `edits` made. Offsets must fall between characters.
@@ -788,6 +871,36 @@ mod tests {
     }
 
     /// The covering replace, after checking it makes the same text as the edits.
+    #[test]
+    fn a_rewritten_formula_is_one_change() {
+        let head = "#set text(size: 11pt)\n\n#table(\n  [1], [2 s], [2 s],\n)\n\n";
+        let base = format!(
+            "{head}Total before an event parks: $sum_(n=0)^(11) min(3600, 2^(n+1)) = 7694$ s.\n"
+        );
+        let theirs = format!("{head}Total before an event parks: #waits.sum() s, about 2.1 h.\n");
+        let edits = merge3(&base, &base, &theirs).edits;
+        assert!(edits.len() > 1);
+        let changes = coalesce(&base, edits);
+        assert_eq!(apply(&base, &changes), theirs);
+        let start = head.encode_utf16().count() as u32;
+        let end = start + base[head.len()..].trim_end().encode_utf16().count() as u32;
+        assert_eq!(changes, [edit(start, end, theirs[head.len()..].trim_end())]);
+    }
+
+    #[test]
+    fn word_edits_far_apart_stay_apart_and_close_ones_join() {
+        let base = "the quick brown fox - lazy dog naps under the old oak tree\n";
+        let changes = |theirs: &str| coalesce(base, merge3(base, base, theirs).edits);
+        assert_eq!(
+            changes("the slow brown fox - lazy dog naps under the old elm tree\n").len(),
+            2
+        );
+        assert_eq!(
+            changes("the quick brown cat - sleepy dog naps under the old oak tree\n"),
+            [edit(16, 26, "cat - sleepy")]
+        );
+    }
+
     fn covering(ours: &str, merge: &Merge) -> Option<Edit> {
         let covering = merge.covering.clone()?;
         assert_eq!(covering.start, merge.edits[0].start);
@@ -1199,6 +1312,15 @@ mod tests {
             let old = &states[states.len() - 1 - kept];
             let rest = |text: &str, out: &str| text.chars().filter(|c| !out.contains(*c)).collect::<String>();
             prop_assert_eq!(rest(&text, &written), rest(old, &replaced));
+        }
+
+        #[test]
+        fn coalesced_changes_make_the_same_text((base, _, theirs) in versions()) {
+            let edits = merge3(&base, &base, &theirs).edits;
+            let changes = coalesce(&base, edits.clone());
+            prop_assert_eq!(apply(&base, &changes), theirs);
+            prop_assert!(changes.len() <= edits.len());
+            prop_assert!(changes.windows(2).all(|pair| pair[0].end < pair[1].start));
         }
 
         #[test]

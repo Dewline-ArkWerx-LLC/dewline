@@ -18,6 +18,10 @@ What changed in each Dewline release, newest first.
 - A tab with changes waiting shows the sidebar's writer badge with the count, in place of the dot.
 - Edit > Revert Session (⌃⌘⌫) and File > Earlier Versions… (⌥⌘Y) have shortcuts, and the title bar has a sidebar toggle.
 - A window opening on its own takes at least 1200 x 760 pt, or the whole screen when it is smaller.
+- The rail follows the system's scroll bar setting: when scroll bars show only while scrolling, it shows while the note scrolls or the pointer is on it.
+- The sidebar uses the system's sidebar material.
+- The selected tab no longer carries an orange bar; every tab shows its close button under the pointer.
+- Quick Open no longer dims the window behind it.
 
 - An agent's edit marks one change per stretch of a line: word edits a few characters apart join, and a line more than 40% rewritten shows struck whole with the new line under it.
 - Earlier Versions names a hooked write's snapshot after its agent even when the hook reports after you decide the change, keeps a reverted change's save as "You (Revert)", and no longer adds an "Another app" copy of the version a reopened note already ends with.

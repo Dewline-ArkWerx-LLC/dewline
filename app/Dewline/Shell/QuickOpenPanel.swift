@@ -1,6 +1,6 @@
 import AppKit
 
-/// The palette: one opaque Station panel over the window in front, which dims behind it. Shift-Cmd-P opens it on ">",
+/// The palette: one opaque Station panel over the window in front. Shift-Cmd-P opens it on ">",
 /// the menu bar's enabled commands and the settings; Shift-Cmd-O opens it empty, which finds Markdown files by name in
 /// the window's folder, Recents and Pinned. "@" lists the open file's headings, ":" goes to a line, "#" finds headings
 /// across the folder and "?" lists these prefixes; "notes@intro" and "notes:42" reach into a file. A typed prefix
@@ -82,7 +82,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private let fade = TopFade()
     private let empty = NSTextField(labelWithString: "")
     private let background = PanelBackground()
-    private let backdrop = Backdrop()
     private var listHeight: NSLayoutConstraint?
     /// The prefix typed first, shown as the chip and kept out of the field.
     private var scope: Character?
@@ -267,18 +266,9 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         if let indexed = index?.files { merge(indexed) }
         recolor()
         refresh()
-        dim(target)
         makeKeyAndOrderFront(nil)
         makeFirstResponder(field)
         placeCaret()
-    }
-
-    /// Dims the window the palette belongs to, under the panel; a click there passes through and closes the panel.
-    private func dim(_ window: NSWindow?) {
-        guard let content = window?.contentView else { return backdrop.removeFromSuperview() }
-        backdrop.frame = content.bounds
-        backdrop.autoresizingMask = [.width, .height]
-        content.addSubview(backdrop, positioned: .above, relativeTo: nil)
     }
 
     /// Open files carrying an agent's undecided changes, each with the writer of its latest one.
@@ -304,7 +294,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     /// The theme's colors on the panel's own views; rows take them as they draw.
     private func recolor() {
         let theme = ThemeStore.shared
-        for view in [background, horizon, chip, fade, backdrop, mark] as [NSView] {
+        for view in [background, horizon, chip, fade, mark] as [NSView] {
             view.needsDisplay = true
         }
         field.textColor = theme.color(.ink)
@@ -643,7 +633,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         headingScan?.cancel()
         headingScan = nil
         if isKeyWindow { returnTo?.makeKeyAndOrderFront(nil) }
-        backdrop.removeFromSuperview()
         orderOut(nil)
         files = []
         touched = [:]
@@ -1491,29 +1480,5 @@ private final class TopFade: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let raised = Chrome.color(.raised)
         NSGradient(starting: raised, ending: raised.withAlphaComponent(0))?.draw(in: bounds, angle: -90)
-    }
-}
-
-/// The dim over the window behind the palette: `rgba(4,9,15,0.6)` in dark, `rgba(17,27,40,0.5)` in light. Clicks pass
-/// through it.
-private final class Backdrop: NSView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("Backdrop is built in code")
-    }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func updateLayer() {
-        let dim = effectiveAppearance.isDark
-            ? NSColor(srgbRed: 4 / 255, green: 9 / 255, blue: 15 / 255, alpha: 0.6)
-            : NSColor(srgbRed: 17 / 255, green: 27 / 255, blue: 40 / 255, alpha: 0.5)
-        layer?.backgroundColor = dim.cgColor
     }
 }

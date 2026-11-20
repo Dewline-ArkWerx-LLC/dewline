@@ -135,7 +135,6 @@ final class EditorTextView: CaretTextView {
         scrollView.hasVerticalScroller = true
         let rail = Rail()
         scrollView.verticalScroller = rail
-        scrollView.scrollerStyle = .legacy
         scrollView.backgroundColor = textView.backgroundColor
         scrollView.documentView = textView
         rail.labels.translatesAutoresizingMaskIntoConstraints = false

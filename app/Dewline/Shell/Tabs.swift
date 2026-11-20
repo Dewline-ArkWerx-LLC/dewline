@@ -106,11 +106,10 @@ final class WindowState {
 }
 
 /// The tab strip in the title row: one 26 pt pill per tab, SF Pro 13, radius 6, at most 200 pt, its file name with the
-/// extension in `ink2`. The selected tab is the brightest pill with the 2 x 12 cursor bar 8 pt into it; under the
-/// pointer the bar becomes the close x. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
+/// extension in `ink2`. The selected tab is the brightest pill; any tab under the pointer shows the close x 3 pt into
+/// it. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at 10%,
 /// hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N" pop-up,
-/// and the selected tab always shows. Dragging a tab along the strip moves it. The cursor bar shows only while the
-/// window is key. A tab whose note has changes waiting carries the sidebar's writer badge after its name: a 3 x 10
+/// and the selected tab always shows. Dragging a tab along the strip moves it. A tab whose note has changes waiting carries the sidebar's writer badge after its name: a 3 x 10
 /// rule in the ink of the writer with the most of them and the count of all of them, on that ink at 14%. Tabs whose notes share a name add the shortest parent path that tells them apart
 /// ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says what is waiting, when its
 /// note was saved and how many words it has; its context menu renames or moves the note, or copies its path.
@@ -164,18 +163,10 @@ final class TabStrip: NSView {
         for name in [ThemeStore.didChange, LiveFile.changesDidChange] {
             NotificationCenter.default.addObserver(self, selector: #selector(reload), name: name, object: nil)
         }
-        // A full-screen title row sits in a window of its own, so the strip hears every window's key state.
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: nil)
-        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("TabStrip is built in code")
-    }
-
-    @objc private func keyChanged() {
-        needsDisplay = true
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
@@ -366,9 +357,6 @@ final class TabStrip: NSView {
             cross.move(to: NSPoint(x: glyph.minX, y: glyph.maxY))
             cross.line(to: NSPoint(x: glyph.maxX, y: glyph.minY))
             cross.stroke()
-        } else if selected, tabs?.selected?.window?.isKeyWindow == true {
-            Chrome.color(.cursor).setFill()
-            NSBezierPath(roundedRect: NSRect(x: frame.minX + 8, y: frame.midY - 6, width: 2, height: 12), xRadius: 1, yRadius: 1).fill()
         }
         let name = NSMutableAttributedString(attributedString: Self.name(slot.tab, slot.title))
         if !selected, !hovering {

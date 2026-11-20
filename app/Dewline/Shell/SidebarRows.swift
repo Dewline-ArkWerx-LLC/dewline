@@ -26,7 +26,7 @@ extension GitFileState {
 
     var tip: String {
         switch self {
-        case .modified: "Modified since the last commit"
+        case .modified: "Modified since the last commit. Click to review the changes."
         case .new: "New, not yet committed"
         case .deleted: "Deleted since the last commit"
         case .renamed: "Renamed since the last commit"
@@ -266,6 +266,9 @@ final class SidebarFileCell: NSTableCellView {
         git.font = Chrome.mono(11)
         git.alignment = .center
         for view in [chevron, name, badge, git] { addSubview(view) }
+        let click = NSClickGestureRecognizer(target: self, action: #selector(reviewUncommitted))
+        click.delaysPrimaryMouseButtonEvents = false
+        git.addGestureRecognizer(click)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
     }
 
@@ -310,6 +313,12 @@ final class SidebarFileCell: NSTableCellView {
     func endEditing() {
         editing = false
         needsLayout = true
+    }
+
+    /// Clicking "M" opens the note, as clicking the row does, and the Changes pane, which lists its uncommitted changes.
+    @objc private func reviewUncommitted() {
+        guard word == .modified, let controller = window?.windowController as? MainWindowController, !controller.showsChanges else { return }
+        controller.toggleChanges(nil)
     }
 
     @objc private func themeDidChange() {

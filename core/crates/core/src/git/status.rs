@@ -113,14 +113,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
 
     // HEAD's files, but those in folders whose tree the index holds as is.
     let objects = Objects::open(&common.join("objects"));
-    let checkout = Checkout {
-        file_mode: setting(&configs, b"core", b"filemode")
-            .is_none_or(|value| config_bool(&value) != Some(false)),
-        crlf: setting(&configs, b"core", b"autocrlf").is_some_and(|value| {
-            value.eq_ignore_ascii_case(b"input") || config_bool(&value) == Some(true)
-        }),
-        objects: &objects,
-    };
+    let checkout = Checkout::new(&configs, &objects);
     let tree = match head_commit(&repo.gitdir, &common)? {
         Some(commit) => Some(objects.commit_tree(commit)?),
         None => None,
@@ -264,6 +257,37 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         gitdir: repo.gitdir,
         files,
     })
+}
+
+/// HEAD's version of the file at `path`, a realpath holding `bytes`, as
+/// `git show HEAD:<path>` prints it, when git reads `bytes` as a change to
+/// it. None when HEAD holds no such file, or it or HEAD can't be read.
+pub fn head_version(path: &Path, bytes: &[u8]) -> Option<Vec<u8>> {
+    let repo = Repo::find(path)?;
+    let relative = path.strip_prefix(&repo.top).ok()?.as_os_str().as_bytes();
+    let common = common(&repo.gitdir);
+    let objects = Objects::open(&common.join("objects"));
+    let tree = objects.commit_tree(head_commit(&repo.gitdir, &common)??)?;
+    let mut files = HashMap::new();
+    objects.flatten(
+        tree,
+        relative,
+        &HashMap::new(),
+        &mut files,
+        &mut HashSet::new(),
+    )?;
+    let &(mode, id) = files.get(relative)?;
+    let checkout = Checkout::new(&configs(&common), &objects);
+    if canonical(mode) & 0o170000 != 0o100000
+        || blob_id(bytes) == id
+        || checkout.cleans_to(bytes, id)
+    {
+        return None;
+    }
+    match objects.read(id, MAX_INFLATED)? {
+        (3, blob) => Some(blob),
+        _ => None,
+    }
 }
 
 /// The folder that holds a worktree's objects, refs and config.
@@ -511,7 +535,18 @@ const LFS_VERSION: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
 /// Git LFS reads no larger pointer.
 const MAX_LFS_POINTER: u64 = 1024;
 
-impl Checkout<'_> {
+impl<'a> Checkout<'a> {
+    fn new(configs: &[Vec<u8>], objects: &'a Objects) -> Checkout<'a> {
+        Checkout {
+            file_mode: setting(configs, b"core", b"filemode")
+                .is_none_or(|value| config_bool(&value) != Some(false)),
+            crlf: setting(configs, b"core", b"autocrlf").is_some_and(|value| {
+                value.eq_ignore_ascii_case(b"input") || config_bool(&value) == Some(true)
+            }),
+            objects,
+        }
+    }
+
     /// Whether git cleans `bytes`, which are not the blob `id` as they are,
     /// to that blob.
     fn cleans_to(&self, bytes: &[u8], id: Oid) -> bool {

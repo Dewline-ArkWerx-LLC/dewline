@@ -1163,7 +1163,10 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             let marked = live.changes.values.filter(\.marked)
             if let first = marked.first { add(live.url, "\(MarkWriter(first.origin).name) \u{00B7} \(marked.count) to review") }
         }
-        for note in Review.closedNotes() { add(note.url, "\(MarkWriter(note.origin).name) \u{00B7} changed while closed") }
+        for note in Review.closedNotes() {
+            if case .git = note.origin { continue }
+            add(note.url, "\(MarkWriter(note.origin).name) \u{00B7} changed while closed")
+        }
         let notes = FolderEntry.markdownExtensions.union(FolderEntry.dialectExtensions)
         for (url, state) in git?.changed ?? [] where notes.contains(url.pathExtension.lowercased()) {
             switch state {

@@ -26,7 +26,7 @@ struct JourneyTests {
         #expect(!window.isVisible)
         let buttons = Self.views(in: window.contentView!).compactMap { $0 as? NSButton }
         let new = try #require(buttons.first { $0.title == "New Note" })
-        #expect(new.action == #selector(AppDelegate.newDocument(_:)) && new.keyEquivalent == "\r")
+        #expect(new.action == #selector(AppDelegate.newDocument(_:)) && new.keyEquivalent.isEmpty, "Return opens the selected recent; ⌘N makes the note")
         #expect((NSApp.delegate as AnyObject?)?.responds(to: #selector(AppDelegate.newDocument(_:))) == true)
         #expect(buttons.map(\.title).suffix(3) == ["Open Folder…", "Open…", "New Note"])
     }

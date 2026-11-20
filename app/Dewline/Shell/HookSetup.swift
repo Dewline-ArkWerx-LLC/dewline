@@ -1,47 +1,59 @@
 import AppKit
 
-/// Set Up for agent hooks: lists the settings files `dewline doctor --install-hooks` would change, and on Set Up runs
-/// it from the app's bundle, answering its questions yes. The command asks only on a terminal, so it runs on a
-/// pseudo-terminal of its own.
+/// Set Up and Remove for agent hooks. Set Up shows the settings files `dewline doctor --install-hooks` would change and
+/// the entries it would add, and on Add Hooks runs it from the app's bundle, answering its questions yes. The command
+/// asks only on a terminal, so it runs on a pseudo-terminal of its own.
 @MainActor
 enum HookSetup {
-    /// Agent settings missing a hook, from `dewline doctor`: "Claude Code" and the file it would change.
+    /// Agent settings missing a hook, from `dewline doctor`: "Claude Code", the file it would change, and each entry it
+    /// would add there as JSON.
     struct Missing: Equatable {
         let agent: String
         let file: String
+        var entries: [String] = []
     }
 
     static func command(bundle: URL = Bundle.main.bundleURL) -> URL {
         bundle.appending(path: "Contents/Helpers/dewline")
     }
 
-    /// Reads the doctor's "  Claude Code: PreToolUse, Stop missing from /Users/a/.claude/settings.json" lines.
+    /// Reads the doctor's "  Claude Code: PreToolUse, Stop missing from /Users/a/.claude/settings.json" lines and the
+    /// "    {"Stop": …}" entries under each.
     static func missing(in report: String) -> [Missing] {
-        report.split(separator: "\n").compactMap { line in
-            guard line.hasPrefix("  "), let colon = line.firstIndex(of: ":"), let from = line.range(of: " missing from ") else { return nil }
+        var found: [Missing] = []
+        var last: Int?
+        for line in report.split(separator: "\n") {
+            if line.hasPrefix("    "), let index = last {
+                found[index].entries.append(line.trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            last = nil
+            guard line.hasPrefix("  "), let colon = line.firstIndex(of: ":"), let from = line.range(of: " missing from ") else { continue }
             let agent = line[line.index(line.startIndex, offsetBy: 2)..<colon]
-            return Missing(agent: String(agent), file: String(line[from.upperBound...]))
+            found.append(Missing(agent: String(agent), file: String(line[from.upperBound...])))
+            last = found.count - 1
         }
+        return found
     }
 
     /// Names in a folder that say an agent works there.
     private static let agentNames = [".claude", ".cursor", ".codex", "CLAUDE.md", "AGENTS.md"]
-    /// The folders already checked, "" for the demo's.
+    /// The folders already checked.
     private static let offeredKey = "DewlineOfferedHookSetup"
-    /// True once the user has said Not Now to Set Up anywhere; no offer shows after that.
+    /// True once the user has ticked Don't Offer Again; no offer shows after that.
     private static let declinedKey = "DewlineDeclinedHookSetup"
     /// The folders doctor is checking now.
     private static var checking: Set<String> = []
 
-    /// Offers Set Up on `window` if an agent's hooks are missing, checking once after the demo and once for each
-    /// folder that holds an agent's files; doctor reads `folder`'s project settings too. A folder counts as checked
-    /// once doctor has run and found nothing missing or the sheet has shown. One Not Now ends every offer.
-    static func offer(on window: NSWindow, in folder: URL? = nil) {
-        let key = folder?.path ?? ""
+    /// Offers Set Up on `window` if an agent's hooks are missing, once for each folder that holds an agent's files;
+    /// doctor reads `folder`'s project settings too. A folder counts as checked once doctor has run and found nothing
+    /// missing or the sheet has shown, so Not Now holds for that folder only.
+    static func offer(on window: NSWindow, in folder: URL) {
+        let key = folder.path
         guard !checking.contains(key), !UserDefaults.standard.bool(forKey: declinedKey),
             !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-            folder.map({ folder in agentNames.contains { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) } }) ?? true
+            agentNames.contains(where: { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) })
         else { return }
         checking.insert(key)
         Task {
@@ -50,16 +62,19 @@ enum HookSetup {
             let hooksMissing = !missing(in: report.output).isEmpty
             guard report.ran, !hooksMissing || window.isVisible else { return }
             UserDefaults.standard.set((UserDefaults.standard.stringArray(forKey: offeredKey) ?? []) + [key], forKey: offeredKey)
-            if hooksMissing { install(from: window, in: folder) }
+            if hooksMissing { install(from: window, in: folder, offered: true) }
         }
     }
 
-    /// Settings > Agents > Set Up…, and the offers: a sheet on `window` naming each file, then the run.
+    /// Settings > Agents > Set Up…, and the offers: a sheet on `window` naming each file and what it gains, then the
+    /// run; `agent` ("claude", "codex" or "cursor") sets up that agent alone. An offer's sheet can stop every offer.
     static func install(
-        from window: NSWindow?, in folder: URL? = nil, command: URL = command(), done: @escaping @MainActor (Bool) -> Void = { _ in }
+        from window: NSWindow?, in folder: URL? = nil, agent: String? = nil, offered: Bool = false, command: URL = command(),
+        done: @escaping @MainActor (Bool) -> Void = { _ in }
     ) {
+        let only = agent.map { ["--agent", $0] } ?? []
         Task {
-            let report = await run(command, ["doctor"], answers: 0, in: folder)
+            let report = await run(command, ["doctor"] + only, answers: 0, in: folder)
             let missing = Self.missing(in: report.output)
             let alert = NSAlert()
             guard report.ran else {
@@ -76,23 +91,30 @@ enum HookSetup {
                 return present(alert, on: window) { _ in done(true) }
             }
             alert.messageText = "Name your agents\u{2019} edits"
-            alert.informativeText = "Dewline adds a hook to each file below, so a change shows which agent wrote it. The hook runs \u{201C}"
-                + command.path + " notify\u{201D}, which sends Dewline a file\u{2019}s path and hash, never its content. "
-                + "A backup of each file stays beside it.\n\n"
-                + missing.map { "\($0.agent): \(($0.file as NSString).abbreviatingWithTildeInPath)" }.joined(separator: "\n")
+            alert.informativeText = "Hooks let each change name the agent that wrote it; without them, agent edits still show, labeled Another app."
+            alert.accessoryView = HookDetails(missing, command: command, alert: alert)
             alert.addButton(withTitle: "Add Hooks")
             alert.addButton(withTitle: "Not Now")
+            if offered {
+                alert.showsSuppressionButton = true
+                alert.suppressionButton?.title = "Don\u{2019}t offer again"
+            }
             present(alert, on: window) { response in
-                guard response == .alertFirstButtonReturn else {
-                    UserDefaults.standard.set(true, forKey: declinedKey)
-                    return done(false)
-                }
+                if alert.suppressionButton?.state == .on { UserDefaults.standard.set(true, forKey: declinedKey) }
+                guard response == .alertFirstButtonReturn else { return done(false) }
                 Task {
-                    let result = await run(command, ["doctor", "--install-hooks"], answers: missing.count, in: folder)
-                    let after = await run(command, ["doctor"], answers: 0, in: folder)
+                    let result = await run(command, ["doctor", "--install-hooks"] + only, answers: missing.count, in: folder)
+                    let after = await run(command, ["doctor"] + only, answers: 0, in: folder)
                     done(result.ran && Self.missing(in: after.output).isEmpty)
                 }
             }
+        }
+    }
+
+    /// Settings > Agents > Remove: takes `agent`'s Dewline hooks out of its settings file, keeping a backup beside it.
+    static func remove(_ agent: String, command: URL = command(), done: @escaping @MainActor (Bool) -> Void = { _ in }) {
+        Task {
+            done(await run(command, ["doctor", "--remove-hooks", "--agent", agent], answers: 1).ran)
         }
     }
 
@@ -132,5 +154,82 @@ enum HookSetup {
             process.waitUntilExit()
             return (process.terminationStatus == 0, String(decoding: output, as: UTF8.self).replacingOccurrences(of: "\r\n", with: "\n"))
         }.value
+    }
+}
+
+/// The Set Up sheet's accessory: each agent's settings file and its backup's name, then, under Show Details, the
+/// entries each file gains and the command they run, in SF Mono 11.
+private final class HookDetails: NSView {
+    private static let width: CGFloat = 420
+    private static let detailsHeight: CGFloat = 160
+
+    private weak var alert: NSAlert?
+    private let summary: NSTextField
+    private let disclosure = NSButton()
+    private let label = NSTextField(labelWithString: "Show Details")
+    private let details = NSScrollView()
+
+    init(_ missing: [HookSetup.Missing], command: URL, alert: NSAlert) {
+        self.alert = alert
+        let files = missing.map { "\($0.agent): \(($0.file as NSString).abbreviatingWithTildeInPath)" }
+        let backup = ((missing[0].file as NSString).lastPathComponent) + ".dewline-backup-\u{2026}"
+        summary = NSTextField(
+            wrappingLabelWithString: files.joined(separator: "\n")
+                + "\n\nEach file is copied first to a backup beside it, such as \(backup)."
+        )
+        super.init(frame: .zero)
+        summary.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        summary.preferredMaxLayoutWidth = Self.width
+        disclosure.bezelStyle = .disclosure
+        disclosure.setButtonType(.pushOnPushOff)
+        disclosure.title = ""
+        disclosure.target = self
+        disclosure.action = #selector(toggle)
+        disclosure.setAccessibilityLabel("Show Details")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let text = NSTextView()
+        text.isEditable = false
+        text.isSelectable = true
+        text.drawsBackground = false
+        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.textContainerInset = NSSize(width: 4, height: 4)
+        text.isVerticallyResizable = true
+        text.autoresizingMask = .width
+        text.string = missing.map { item in
+            ([(item.file as NSString).abbreviatingWithTildeInPath + " gains:"] + item.entries.map { "  " + $0 }).joined(separator: "\n")
+        }.joined(separator: "\n\n") + "\n\nEach hook runs \u{201C}\(command.path) notify\u{201D}, which sends Dewline a file\u{2019}s path and hash, never its content."
+        details.documentView = text
+        details.hasVerticalScroller = true
+        details.borderType = .bezelBorder
+        details.isHidden = true
+        for view in [summary, disclosure, label, details] { addSubview(view) }
+        layOut()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("HookDetails is built in code")
+    }
+
+    @objc private func toggle() {
+        details.isHidden = disclosure.state != .on
+        label.stringValue = details.isHidden ? "Show Details" : "Hide Details"
+        layOut()
+        alert?.layout()
+    }
+
+    /// Stacks the summary, the disclosure row and, when shown, the details, top down.
+    private func layOut() {
+        let summaryHeight = summary.sizeThatFits(NSSize(width: Self.width, height: .greatestFiniteMagnitude)).height
+        let row: CGFloat = 20
+        let shown = details.isHidden ? 0 : Self.detailsHeight + 6
+        let height = summaryHeight + 8 + row + shown
+        setFrameSize(NSSize(width: Self.width, height: height))
+        summary.frame = NSRect(x: 0, y: height - summaryHeight, width: Self.width, height: summaryHeight)
+        let rowY = height - summaryHeight - 8 - row
+        disclosure.frame = NSRect(x: 0, y: rowY, width: 20, height: row)
+        label.sizeToFit()
+        label.frame.origin = NSPoint(x: 22, y: rowY + (row - label.frame.height) / 2)
+        details.frame = NSRect(x: 0, y: 0, width: Self.width, height: Self.detailsHeight)
+        details.documentView?.frame.size.width = details.contentSize.width
     }
 }

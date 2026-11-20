@@ -46,9 +46,11 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
         window.autorecalculatesKeyViewLoop = true
         window.center()
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: Library.changed, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: ClosedChanges.changed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(applyTheme), name: ThemeStore.didChange, object: nil)
         applyTheme()
         reload()
+        ClosedChanges.refresh()
     }
 
     required init?(coder: NSCoder) {
@@ -208,8 +210,17 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: RecentCell.identifier, owner: nil) as? RecentCell ?? RecentCell()
         let item = rows[row]
-        cell.show(item.url, isFolder: item.isFolder, date: item.date)
+        cell.show(item.url, isFolder: item.isFolder, date: item.date, pending: Self.pending(at: item.url, isFolder: item.isFolder))
         return cell
+    }
+
+    /// The changes waiting for review in the note at `url`, or in the notes under the folder at `url`.
+    private static func pending(at url: URL, isFolder: Bool) -> Int {
+        let path = url.standardizedFileURL.path
+        return Review.closedNotes().filter { note in
+            let note = note.url.standardizedFileURL.path
+            return isFolder ? note.hasPrefix(path.hasSuffix("/") ? path : path + "/") : note == path
+        }.reduce(0) { $0 + $1.count }
     }
 }
 
@@ -222,7 +233,8 @@ private final class LaunchList: NSTableView {
     }
 }
 
-/// A recent folder or note: its name, the folder it is in, and when it was last open.
+/// A recent folder or note: its name, the folder it is in, how many changes wait for review in it, and when it was last
+/// open.
 private final class RecentCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("recent")
 
@@ -266,11 +278,11 @@ private final class RecentCell: NSTableCellView {
         fatalError("RecentCell is built in code")
     }
 
-    func show(_ url: URL, isFolder: Bool, date: Date) {
+    func show(_ url: URL, isFolder: Bool, date: Date, pending: Int) {
         let exists = FileManager.default.fileExists(atPath: url.path)
         name.stringValue = isFolder ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
         folder.stringValue = isFolder ? "" : url.deletingLastPathComponent().lastPathComponent
-        time.stringValue = relativeTime(date)
+        time.stringValue = (pending > 0 ? "\(pending) to review \u{00B7} " : "") + relativeTime(date)
         icon.image = NSImage(systemSymbolName: isFolder ? "folder" : "doc.text", accessibilityDescription: isFolder ? "Folder" : "Note")
         name.textColor = Chrome.color(exists ? .ink : .ink3)
         folder.textColor = Chrome.color(.ink2)

@@ -1,5 +1,6 @@
 //! `dewline doctor`: whether the app matches this command, whether the agent hooks of docs/hooks.md are installed,
-//! for the user or in the current folder's project files, and which companion tools are on PATH. `--install-hooks` merges the hooks in, asking first.
+//! for the user or in the current folder's project files, and which companion tools are on PATH. `--install-hooks` merges the hooks in, asking first;
+//! `--remove-hooks` takes them out of the user's settings, asking first.
 
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -87,11 +88,20 @@ const COMPANIONS: [(&str, &str); 6] = [
     ("harper-ls", "harper"),
 ];
 
-pub fn run(install: bool) -> Result<(), String> {
+/// What `dewline doctor` does to the agent hooks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Hooks {
+    Check,
+    Install,
+    Remove,
+}
+
+/// Checks, installs or removes the hooks of every agent, or of the agent named `only`.
+pub fn run(hooks: Hooks, only: Option<&str>) -> Result<(), String> {
     let home = env::home_dir().ok_or("there is no home folder")?;
     // SAFETY: isatty only inspects the descriptor.
-    if install && unsafe { libc::isatty(0) } != 1 {
-        return Err("--install-hooks asks before it changes a file, so it needs a terminal".into());
+    if hooks != Hooks::Check && unsafe { libc::isatty(0) } != 1 {
+        return Err("doctor asks before it changes a file, so it needs a terminal".into());
     }
     let exe = env::current_exe()
         .and_then(fs::canonicalize)
@@ -118,7 +128,10 @@ pub fn run(install: bool) -> Result<(), String> {
     // The project the agents run in, when they run here.
     let project = env::current_dir().ok();
     println!("\nAgent hooks:");
-    for agent in &AGENTS {
+    for agent in AGENTS
+        .iter()
+        .filter(|agent| only.is_none_or(|name| name == agent.name))
+    {
         let path = home.join(agent.settings);
         let folder = path.parent().expect("a settings file is in a folder");
         let settings = match read(&path) {
@@ -128,6 +141,10 @@ pub fn run(install: bool) -> Result<(), String> {
                 continue;
             }
         };
+        if hooks == Hooks::Remove {
+            remove_hooks(agent, &path, settings)?;
+            continue;
+        }
         let mut files: Vec<(PathBuf, Value)> = settings
             .iter()
             .map(|(value, _)| (path.clone(), value.clone()))
@@ -176,20 +193,26 @@ pub fn run(install: bool) -> Result<(), String> {
         } else if !folder.is_dir() {
             println!("  {}: not installed; no {}", agent.title, folder.display());
         } else {
-            let missing = missing(settings.as_ref().map(|(value, _)| value), agent, runs);
+            let current = settings.as_ref().map(|(value, _)| value);
+            let command = format!("{command} {}", agent.name);
             println!(
                 "  {}: {} missing from {}",
                 agent.title,
-                missing.join(", "),
+                missing(current, agent, runs).join(", "),
                 path.display()
             );
-            if install {
-                install_hooks(agent, &path, settings, &format!("{command} {}", agent.name))?;
+            for entry in additions(current, agent, &command)? {
+                println!("    {entry}");
+            }
+            if hooks == Hooks::Install {
+                install_hooks(agent, &path, settings, &command)?;
             }
         }
     }
-    if !install {
-        println!("  `dewline doctor --install-hooks` merges the missing ones in, asking first.");
+    if hooks == Hooks::Check {
+        println!(
+            "  `dewline doctor --install-hooks` merges the missing ones in, and `--remove-hooks` takes them out, asking first."
+        );
     }
 
     println!("\nCompanions:");
@@ -425,16 +448,10 @@ fn merge(
     Ok(settings)
 }
 
-fn install_hooks(
-    agent: &Agent,
-    path: &Path,
-    settings: Option<(Value, Vec<u8>)>,
-    command: &str,
-) -> Result<(), String> {
-    let (current, bytes) = settings.unzip();
-    let merged = merge(current.as_ref(), agent, command, runs)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    let added: Vec<_> = missing(current.as_ref(), agent, runs)
+/// Each event `merge` sets for `agent`, as `{"Event": group}`: the group holding `command` after the merge.
+fn additions(settings: Option<&Value>, agent: &Agent, command: &str) -> Result<Vec<Value>, String> {
+    let merged = merge(settings, agent, command, runs)?;
+    Ok(missing(settings, agent, runs)
         .into_iter()
         .map(|event| {
             let group = merged["hooks"][event].as_array().and_then(|groups| {
@@ -446,17 +463,29 @@ fn install_hooks(
             });
             json!({ (event): group })
         })
-        .collect();
-    println!("\n  In {} this sets:", path.display());
-    for entry in &added {
-        println!("    {entry}");
-    }
-    eprint!("  Merge them in? [y/N] ");
+        .collect())
+}
+
+/// Asks `question` on the terminal; true for yes.
+fn confirm(question: &str) -> Result<bool, String> {
+    eprint!("  {question} [y/N] ");
     let mut answer = String::new();
     io::stdin()
         .read_line(&mut answer)
         .map_err(|error| format!("stdin: {error}"))?;
-    if !matches!(answer.trim(), "y" | "Y" | "yes") {
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+}
+
+fn install_hooks(
+    agent: &Agent,
+    path: &Path,
+    settings: Option<(Value, Vec<u8>)>,
+    command: &str,
+) -> Result<(), String> {
+    let (current, bytes) = settings.unzip();
+    let merged = merge(current.as_ref(), agent, command, runs)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if !confirm(&format!("Merge them into {}?", path.display()))? {
         println!("  Left {} as it was.", path.display());
         return Ok(());
     }
@@ -469,6 +498,87 @@ fn install_hooks(
             "  Codex runs a new or changed hook once you trust it: in Codex, open /hooks and trust each Dewline hook."
         );
     }
+    Ok(())
+}
+
+/// `settings` without any hook calling `dewline notify --hook <name>` for `agent`, wherever its program is, and each
+/// one taken out as `{"Event": hook}`. A group, an event and `"hooks"` left empty by it go too; every other key and
+/// hook stays as it was.
+fn unmerge(settings: &Value, agent: &Agent) -> (Value, Vec<Value>) {
+    let mut settings = settings.clone();
+    let mut removed = Vec::new();
+    let ours = |hook: &Value| {
+        hook.get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| program(command, agent).is_some())
+    };
+    let Some(events) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return (settings, removed);
+    };
+    for (event, groups) in events.iter_mut() {
+        let Some(groups) = groups.as_array_mut() else {
+            continue;
+        };
+        groups.retain_mut(|group| {
+            if agent.flat {
+                if !ours(group) {
+                    return true;
+                }
+                removed.push(json!({ (event.as_str()): group.clone() }));
+                return false;
+            }
+            let Some(hooks) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+            let before = hooks.len();
+            hooks.retain(|hook| {
+                let mine = ours(hook);
+                if mine {
+                    removed.push(json!({ (event.as_str()): hook.clone() }));
+                }
+                !mine
+            });
+            hooks.len() == before || !hooks.is_empty()
+        });
+    }
+    if !removed.is_empty() {
+        events.retain(|_, groups| groups.as_array().is_none_or(|groups| !groups.is_empty()));
+        if events.is_empty()
+            && let Some(root) = settings.as_object_mut()
+        {
+            root.retain(|key, _| key != "hooks");
+        }
+    }
+    (settings, removed)
+}
+
+/// `dewline doctor --remove-hooks`: lists `agent`'s Dewline hooks in its settings at `path` and, asked, takes them out.
+fn remove_hooks(
+    agent: &Agent,
+    path: &Path,
+    settings: Option<(Value, Vec<u8>)>,
+) -> Result<(), String> {
+    let Some((current, bytes)) = settings else {
+        println!("  {}: no {}", agent.title, path.display());
+        return Ok(());
+    };
+    let (kept, removed) = unmerge(&current, agent);
+    if removed.is_empty() {
+        println!("  {}: no Dewline hooks in {}", agent.title, path.display());
+        return Ok(());
+    }
+    println!("  {}: Dewline hooks in {}", agent.title, path.display());
+    for entry in &removed {
+        println!("    {entry}");
+    }
+    if !confirm(&format!("Remove them from {}?", path.display()))? {
+        println!("  Left {} as it was.", path.display());
+        return Ok(());
+    }
+    let text = serde_json::to_string_pretty(&kept).expect("a JSON value serializes") + "\n";
+    write(path, Some(&bytes), text.as_bytes())
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    println!("  Removed from {}.", path.display());
     Ok(())
 }
 
@@ -597,6 +707,32 @@ mod tests {
         assert_eq!(keys, ["model", "permissions", "hooks"]);
         let events: Vec<_> = once["hooks"].as_object().unwrap().keys().collect();
         assert_eq!(events[..2], ["PreToolUse", "Notification"]);
+    }
+
+    #[test]
+    fn removing_takes_out_only_dewline_hooks() {
+        let claude = &AGENTS[0];
+        let settings = json!({
+            "model": "opus",
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.sh"}]}],
+                "Notification": [{"hooks": [{"type": "command", "command": "say hi"}]}],
+            },
+        });
+        let merged = merge(Some(&settings), claude, COMMAND, every).unwrap();
+        let (kept, removed) = unmerge(&merged, claude);
+        assert_eq!(kept, settings);
+        assert_eq!(removed.len(), claude.events.len());
+        assert_eq!(unmerge(&kept, claude), (settings, Vec::new()));
+
+        let bare = merge(None, claude, COMMAND, every).unwrap();
+        assert_eq!(unmerge(&bare, claude).0, json!({}));
+
+        let cursor = &AGENTS[2];
+        let mine = "/Applications/Dewline.app/Contents/Helpers/dewline notify --hook cursor";
+        let settings = json!({"version": 1, "hooks": {"stop": [{"command": "say done"}]}});
+        let merged = merge(Some(&settings), cursor, mine, every).unwrap();
+        assert_eq!(unmerge(&merged, cursor).0, settings);
     }
 
     #[test]

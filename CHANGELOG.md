@@ -20,6 +20,14 @@ What changed in each Dewline release, newest first.
 - A tab with changes waiting shows a dot in the writer's ink, and its tooltip says how many.
 - Edit > Keep Session (⌥⇧⌘↩) keeps every change of the session.
 - "No folder open" lines up with the sidebar's Outline header.
+- The hook setup sheet says in one sentence what hooks do and that agent edits still show without them, labeled Another app; it lists each settings file and its backup's name, and Show Details lists the JSON entries each file gains.
+- `dewline doctor --remove-hooks` takes Dewline's hooks out of each agent's settings, keeping a backup; `--agent` limits it, or `--install-hooks`, to one agent. Plain `dewline doctor` prints the entries `--install-hooks` would add.
+- Settings > Agents shows each agent's hook status with a symbol, with Set Up, Remove and Show File beside it.
+- Dewline no longer offers hook setup after the demo, only when a folder with agent files opens. Not Now applies to that folder; Don't offer again stops every offer.
+- Welcome.md leads with what Dewline does for agent edits and the demo link, says what Keep and Revert do, and uses curly quotes. The demo writes two changes, a replace and an insert.
+- A folder window with no note open says Dewline is watching the folder, shows whether agent hooks are on, and opens CLAUDE.md or README.md in one click.
+- Settings panes size to their content, and the selected theme's name keeps its weight.
+- Recent notes and folders in the launch window show how many changes wait for review.
 - With Open code files on, `.typ` files open as highlighted Typst. After Dewline saves a `.typ` or `.tex` file, or an agent's write lands in it, Dewline typesets it with the `typst`, `latexmk` or `tectonic` you have installed; the status bar shows errors with Go to Line, and error lines number in red. File > Export writes the PDF. Dewline bundles no compiler.
 - A scan of closed files also covers `.typ` and `.tex`, so an agent's write to one while it was closed opens marked.
 - `dewline doctor` lists `latexmk` and `tectonic`.

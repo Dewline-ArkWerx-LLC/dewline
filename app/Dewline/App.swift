@@ -278,11 +278,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The first launch: Welcome.md, kept in Dewline's own folder, open in a window without a folder and with the caret
-    /// at its end. No folder of the user's is made or opened until they ask.
+    /// at its end, and the move to Applications offered when the app runs from a disk image. No folder of the user's is
+    /// made or opened until they ask.
     func firstLaunch() {
         do {
             try Welcome.write()
-            Self.welcomeWindow(at: Welcome.url()).showWindow(nil)
+            let welcome = Self.welcomeWindow(at: Welcome.url())
+            welcome.showWindow(nil)
+            if HookSetup.misplaced() { HookSetup.offerMove(on: welcome.window) }
         } catch {
             NSApp.presentError(error)
         }

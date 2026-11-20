@@ -4,6 +4,14 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Set Up Agent Hooks refuses to run from a disk image or a translocated copy, whose path is gone once it ejects, and offers Move to Applications and Relaunch; the first launch offers the move too, and `dewline doctor --install-hooks` refuses the same paths.
+- The hook setup sheet lists every event it adds for each agent and what each group is for, says the hooks apply in every project (your user settings), and that they send paths and hashes, never file content.
+- Welcome.md puts "Show me a change" above the explanation, in the accent with a full underline, a pointing hand and the tip "Click to see a change"; its "Settings > Agents" opens the hook setup sheet.
+- The first agent change in a session says in the status bar: "First change from Claude Code. Keep or Revert it here."
+- The launch window shows the brand lockup, says "Open the folder your agent works in. Its edits show up marked, ready to keep or revert." when it lists nothing, and Return opens the selected recent instead of making a new note (⌘N still does).
+- The demo's writer is "Demo agent" on its stamp and in Earlier Versions, and its paragraph says the stamp reads CLAUDE, CODEX or CURSOR once hooks are set up.
+- Earlier Versions tints restored and removed lines in the theme's colors.
+
 - Writers' inks keep their hue on a dark page: Claude, Codex, Cursor, Gemini and Copilot read at full color and at least 4.5:1.
 - Images on a dark page draw at 90% brightness inside their faint rim.
 - Display math is centered in the column.

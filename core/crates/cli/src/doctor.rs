@@ -106,6 +106,12 @@ pub fn run(hooks: Hooks, only: Option<&str>) -> Result<(), String> {
     let exe = env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(|error| format!("this command's path: {error}"))?;
+    if hooks == Hooks::Install && misplaced(&exe) {
+        return Err(format!(
+            "this command runs from {}, which is gone once the disk image ejects or the app quits; move Dewline to Applications and set up the hooks from there",
+            exe.display()
+        ));
+    }
 
     let app = enclosing_app(&exe).map_or_else(
         || PathBuf::from("/Applications/Dewline.app"),
@@ -223,6 +229,11 @@ pub fn run(hooks: Hooks, only: Option<&str>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// True for a command on a disk image or in a copy macOS translocated, whose path a hook can't keep calling.
+fn misplaced(exe: &Path) -> bool {
+    exe.starts_with("/Volumes") || exe.to_string_lossy().contains("/AppTranslocation/")
 }
 
 fn app_version(app: &Path) -> Option<String> {
@@ -915,6 +926,22 @@ trusted_hash = "sha256:3"
         let fresh = dir.path().join("new/hooks.json");
         write(&fresh, None, b"{}").unwrap();
         assert_eq!(fs::read(&fresh).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn a_command_on_a_disk_image_or_translocated_is_misplaced() {
+        for path in [
+            "/Volumes/Dewline/Dewline.app/Contents/Helpers/dewline",
+            "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app/Contents/Helpers/dewline",
+        ] {
+            assert!(misplaced(Path::new(path)), "{path}");
+        }
+        for path in [
+            "/Applications/Dewline.app/Contents/Helpers/dewline",
+            "/VolumesX/dewline",
+        ] {
+            assert!(!misplaced(Path::new(path)), "{path}");
+        }
     }
 
     #[test]

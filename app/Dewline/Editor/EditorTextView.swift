@@ -789,6 +789,7 @@ final class EditorTextView: CaretTextView {
         let point = convert(event.locationInWindow, from: nil)
         hoverFootnote(at: point)
         hoverCode(at: point)
+        if link(at: point)?.url?.scheme?.lowercased() == "dewline" { NSCursor.pointingHand.set() }
         let hovered = point.x < textContainerOrigin.x + (textContainer?.size.width ?? 0) ? foldable(at: point)?.block.range.location : nil
         guard hovered != hoveredFold else { return }
         hoveredFold = hovered

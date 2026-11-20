@@ -10,6 +10,8 @@ enum HookSetup {
     struct Missing: Equatable {
         let agent: String
         let file: String
+        /// The hook events it lacks: "PreToolUse", "Stop".
+        var events: [String] = []
         var entries: [String] = []
     }
 
@@ -30,10 +32,75 @@ enum HookSetup {
             last = nil
             guard line.hasPrefix("  "), let colon = line.firstIndex(of: ":"), let from = line.range(of: " missing from ") else { continue }
             let agent = line[line.index(line.startIndex, offsetBy: 2)..<colon]
-            found.append(Missing(agent: String(agent), file: String(line[from.upperBound...])))
+            let events = line[line.index(after: colon)..<from.lowerBound].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            found.append(Missing(agent: String(agent), file: String(line[from.upperBound...]), events: events))
             last = found.count - 1
         }
         return found
+    }
+
+    /// What each kind of hook event is for, as docs/hooks.md says.
+    private static let purposes: [(events: Set<String>, purpose: String)] = [
+        (["PreToolUse", "PostToolUse", "PostToolUseFailure", "preToolUse", "postToolUse", "afterFileEdit"], "to name the agent behind each edit"),
+        (["Stop", "StopFailure", "UserPromptSubmit", "SessionEnd", "stop"], "to mark where each turn ends"),
+        (["InstructionsLoaded"], "to list the instruction files it loaded"),
+    ]
+
+    /// One line for each agent: the events it gains, grouped by what they are for.
+    static func summary(_ missing: [Missing]) -> String {
+        missing.map { item in
+            var groups = purposes.compactMap { group in
+                let events = item.events.filter(group.events.contains)
+                return events.isEmpty ? nil : events.joined(separator: ", ") + " " + group.purpose
+            }
+            let other = item.events.filter { event in !purposes.contains { $0.events.contains(event) } }
+            if !other.isEmpty { groups.append(other.joined(separator: ", ")) }
+            return "\(item.agent): " + groups.joined(separator: "; ") + "."
+        }.joined(separator: "\n")
+    }
+
+    /// True when the app runs from a disk image or a copy macOS translocated: a hook set up from here calls a path
+    /// that is gone once the image ejects or the app quits.
+    static func misplaced(_ bundle: URL = Bundle.main.bundleURL) -> Bool {
+        let path = bundle.standardizedFileURL.path
+        return path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/")
+    }
+
+    /// Asks to move the app into Applications and open it from there; Move copies it, quits, and opens the copy.
+    static func offerMove(on window: NSWindow?) {
+        let alert = NSAlert()
+        alert.messageText = "Move Dewline to Applications"
+        alert.informativeText = "Dewline is running from a disk image or a temporary copy. Agent hooks set up from here would stop working "
+            + "once it\u{2019}s gone, so set them up after the move."
+        alert.addButton(withTitle: "Move to Applications and Relaunch")
+        alert.addButton(withTitle: "Not Now")
+        present(alert, on: window) { response in
+            if response == .alertFirstButtonReturn { moveToApplications() }
+        }
+    }
+
+    private static func moveToApplications() {
+        let source = Bundle.main.bundleURL
+        let target = URL(filePath: "/Applications", directoryHint: .isDirectory).appending(path: source.lastPathComponent)
+        do {
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
+            try FileManager.default.copyItem(at: source, to: target)
+            // The copy keeps the download's quarantine, which would translocate it again.
+            let clear = Process()
+            clear.executableURL = URL(filePath: "/usr/bin/xattr")
+            clear.arguments = ["-dr", "com.apple.quarantine", target.path]
+            try clear.run()
+            clear.waitUntilExit()
+            // Opens the copy once this app has quit, so the two never hold the control socket at once.
+            let relaunch = Process()
+            relaunch.executableURL = URL(filePath: "/bin/sh")
+            relaunch.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"", "sh", String(getpid()), target.path]
+            try relaunch.run()
+        } catch {
+            NSApp.presentError(error)
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     /// Names in a folder that say an agent works there.
@@ -72,6 +139,10 @@ enum HookSetup {
         from window: NSWindow?, in folder: URL? = nil, agent: String? = nil, offered: Bool = false, command: URL = command(),
         done: @escaping @MainActor (Bool) -> Void = { _ in }
     ) {
+        guard !misplaced() else {
+            offerMove(on: window)
+            return done(false)
+        }
         let only = agent.map { ["--agent", $0] } ?? []
         Task {
             let report = await run(command, ["doctor"] + only, answers: 0, in: folder)
@@ -92,8 +163,8 @@ enum HookSetup {
             }
             alert.messageText = "Let Dewline see which agent made each edit"
             alert.informativeText = "Hooks let each change name the agent that wrote it; without them, agent edits still show, labeled Another app. "
-                + "Adds one local command (dewline notify) to PreToolUse and PostToolUse. Nothing leaves this Mac. "
-                + "Remove it any time in Settings > Agents."
+                + "Adds one local command, dewline notify, in every project (your user settings):\n\n\(summary(missing))\n\n"
+                + "It sends Dewline paths and hashes, never file content, and nothing leaves this Mac. Remove it any time in Settings > Agents."
             alert.accessoryView = HookDetails(missing, command: command, alert: alert)
             alert.addButton(withTitle: "Add Hooks")
             alert.addButton(withTitle: "Not Now")

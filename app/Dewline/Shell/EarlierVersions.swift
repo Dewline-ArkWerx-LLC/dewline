@@ -232,7 +232,7 @@ extension EarlierVersions {
         case .agent(.claude, _): "Claude Code"
         case .agent(.codex, _): "Codex"
         case .agent(.cursor, _): "Cursor"
-        case .agent(.demo, _): "Demo"
+        case .agent(.demo, _): "Demo agent"
         case .agent(.acp, let session): String(session.prefix { $0 != "#" })
         case .git(let action): action ?? "git"
         case .external: "Another app"
@@ -240,8 +240,8 @@ extension EarlierVersions {
         }
     }
 
-    /// What restoring `old` over `current` does, line by line, in full: lines it brings back after + on a green tint,
-    /// lines it removes struck after − on a red tint, the rest in ink 2.
+    /// What restoring `old` over `current` does, line by line, in full: lines it brings back after + on the theme's
+    /// git-added tint, lines it removes struck after − on its code-deleted tint, the rest in ink 2.
     static func difference(from current: String, to old: String) -> NSAttributedString {
         func lines(_ text: String) -> [String] {
             let lines = text.components(separatedBy: "\n")
@@ -277,6 +277,12 @@ extension EarlierVersions {
             return NSAttributedString(string: "Same as the current text.", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor])
         }
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        func tint(_ token: Token, _ alpha: CGFloat) -> NSColor {
+            let color = ThemeStore.shared.color(token)
+            return NSColor(name: nil) { color.resolved(for: $0).withAlphaComponent(alpha) }
+        }
+        let added = tint(.gitAdded, 0.16)
+        let deleted = tint(.codeDeleted, 0.14)
         let out = NSMutableAttributedString()
         for (line, kind) in lines {
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
@@ -287,10 +293,10 @@ extension EarlierVersions {
                 attributes[.foregroundColor] = NSColor.secondaryLabelColor
             case .back:
                 gutter = "+ "
-                attributes[.backgroundColor] = NSColor.systemGreen.withAlphaComponent(0.16)
+                attributes[.backgroundColor] = added
             case .gone:
                 gutter = "\u{2212} "
-                attributes[.backgroundColor] = NSColor.systemRed.withAlphaComponent(0.14)
+                attributes[.backgroundColor] = deleted
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
             var mark = attributes

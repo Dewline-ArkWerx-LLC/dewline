@@ -450,7 +450,7 @@ extension MarkdownStyler {
                 case .strikethrough:
                     styled.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: span.content)
                 case .link:
-                    styled.addAttributes(Links.style, range: span.content)
+                    styled.addAttributes(Links.style(of: span, in: styled.mutableString), range: span.content)
                 case .inlineCode where !source:
                     styled.enumerateAttribute(.font, in: span.content) { value, run, _ in
                         styled.addAttribute(.font, value: Self.code(matching: value as! NSFont), range: run)

@@ -55,9 +55,9 @@ struct MarkWriter: Equatable {
 
 /// Paints marked changes over the text at render time, never as text edits: a wash in the writer's hue under
 /// inserted text with an underline in the writer's style, one 3 pt rule in the writer's ink beside the changed rows in
-/// the left margin, and the writer's name and time on hover. Each writer session carries a `ChangeStamp` with Revert
-/// and Keep in the margin, on its focused or first change; a narrow margin folds the focused change's stamp under its
-/// block. Short removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
+/// the left margin, and the writer's name and time on hover. Each writer session carries a `ChangeStamp` in the
+/// margin, on its focused or first change, with Revert and Keep on the stamped change's alone until the pointer is on
+/// another; a margin too narrow for the compact stamp folds the focused change's stamp under its block. Short removed text reads inline at its deletion point as a struck ghost, in a gap the styler opens just before the
 /// change; longer removed text and a conflict's other version hang under the paragraph, in space the styler reserves
 /// below it. The marks sit under the text; ghosts and cards sit over it.
 @MainActor
@@ -630,6 +630,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     continue
                 }
                 stamp.isHidden = false
+                stamp.active = stamp === primary
                 stamp.placeInMargin(right: left - ChangeStamp.inset, first: first, second: second)
                 let shift = bottom + 8 - stamp.frame.minY
                 if shift > 0 { stamp.placeInMargin(right: left - ChangeStamp.inset, first: first + shift, second: second + shift) }
@@ -651,6 +652,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             }
             guard let y else { return primary.isHidden = true }
             primary.isHidden = false
+            primary.active = true
             primary.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
             setReach(fold.end ? primary.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
         }

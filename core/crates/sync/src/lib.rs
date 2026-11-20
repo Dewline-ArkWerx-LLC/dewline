@@ -752,7 +752,7 @@ impl Shared {
         self: Arc<Self>,
         gossip: Gossip,
         bootstrap: Vec<PublicKey>,
-        mut outbox: mpsc::UnboundedReceiver<Vec<u8>>,
+        outbox: mpsc::UnboundedReceiver<Vec<u8>>,
     ) {
         let topic = lock(&self.state).topic;
         let Ok(subscription) = gossip
@@ -763,15 +763,20 @@ impl Shared {
             return;
         };
         let (sender, mut receiver) = subscription.split();
-        tokio::spawn(async move {
-            while let Some(message) = outbox.recv().await {
-                let _ = sender.broadcast(message.into()).await;
-            }
-        });
+        // A broadcast with no neighbor is dropped, so the outbox waits for
+        // the first one.
+        let mut outbox = Some((sender, outbox));
         while let Some(event) = receiver.next().await {
             match event {
                 Ok(Event::Received(message)) => self.receive(&message.content),
                 Ok(Event::NeighborUp(_)) => {
+                    if let Some((sender, mut outbox)) = outbox.take() {
+                        tokio::spawn(async move {
+                            while let Some(message) = outbox.recv().await {
+                                let _ = sender.broadcast(message.into()).await;
+                            }
+                        });
+                    }
                     let state = lock(&self.state);
                     if let Some(to_host) = &state.to_host {
                         let want = Writer::new(wire::WANT)

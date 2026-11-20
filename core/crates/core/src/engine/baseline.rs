@@ -361,7 +361,15 @@ impl Engine {
                 if modified.contains(&path) {
                     self.list_uncommitted(&path, &bytes, wall)?;
                 } else {
-                    self.state().waiting.remove(&path);
+                    let mut state = self.state();
+                    if deep
+                        || !state
+                            .waiting
+                            .get(&path)
+                            .is_some_and(|waiting| waiting.uncommitted)
+                    {
+                        state.waiting.remove(&path);
+                    }
                 }
             }
         }
@@ -926,6 +934,7 @@ mod tests {
         fs::write(&path, NEW).unwrap();
         let engine = f.engine();
         engine.scan(&f.notes, true).unwrap();
+        engine.scan(&f.notes, false).unwrap();
         let listed = engine.closed_changes();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].origin, uncommitted_origin());

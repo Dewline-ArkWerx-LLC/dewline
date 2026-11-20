@@ -235,11 +235,19 @@ enum Export {
             formats.lastItem?.tag = choice.rawValue
         }
         formats.selectItem(withTag: start.rawValue)
+        formats.sizeToFit()
         let label = NSTextField(labelWithString: "Format:")
-        let accessory = NSStackView()
-        accessory.addView(label, in: .center)
-        accessory.addView(formats, in: .center)
-        accessory.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        label.textColor = .secondaryLabelColor
+        label.sizeToFit()
+        // The panel centers its accessory. Its own labels end 93 pt left of the middle and its fields start 85 pt
+        // left of it, so Format sits on their columns, with 8 pt above and below.
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: formats.frame.height + 16))
+        label.frame.origin = NSPoint(x: 180 - 93 + 2 - label.frame.width, y: 8 + (formats.frame.height - label.frame.height) / 2)
+        formats.frame.origin = NSPoint(x: 180 - 85 - 3, y: 8)
+        for view in [label, formats] {
+            view.autoresizingMask = [.minXMargin, .maxXMargin]
+            accessory.addSubview(view)
+        }
         panel.accessoryView = accessory
         panel.isExtensionHidden = false
         panel.canCreateDirectories = true

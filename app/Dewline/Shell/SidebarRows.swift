@@ -236,9 +236,9 @@ final class SidebarRowView: StationRowView {
     }
 }
 
-/// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), the writer badge
-/// right after it, and git's letter in SF Mono 11 in a 14 pt column on the trailing edge; a closed folder holding
-/// changed files shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle.
+/// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), and on the trailing
+/// edge the writer badge, then git's letter in SF Mono 11 in a 14 pt column; a closed folder holding changed files
+/// shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle.
 final class SidebarFileCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("file")
 
@@ -283,7 +283,7 @@ final class SidebarFileCell: NSTableCellView {
         self.holdsChanges = word == nil && holdsChanges
         chevron.isHidden = !entry.isFolder
         setExpanded(expanded)
-        badge.show(waiting)
+        badge.show(waiting, dots: entry.isFolder)
         git.stringValue = word?.letter ?? (self.holdsChanges ? "\u{2022}" : "")
         git.toolTip = word?.tip ?? (self.holdsChanges ? "Holds files changed since the last commit" : nil)
         git.isHidden = git.stringValue.isEmpty
@@ -346,16 +346,17 @@ final class SidebarFileCell: NSTableCellView {
             git.frame = NSRect(x: right - 14, y: (height - size.height) / 2, width: 14, height: size.height)
             right = git.frame.minX - 6
         }
-        let badgeWidth = badge.isHidden ? 0 : badge.intrinsicContentSize.width + 6
-        let room = max(right - left - badgeWidth, 0)
+        if !badge.isHidden {
+            let width = badge.intrinsicContentSize.width
+            badge.frame = NSRect(x: right - width, y: (height - WaitingBadge.height) / 2, width: width, height: WaitingBadge.height)
+            right = badge.frame.minX - 6
+        }
+        let room = max(right - left, 0)
         let full = ceil((fullName as NSString).size(withAttributes: [.font: Chrome.label]).width)
         name.attributedStringValue = display(fullName)
         let width = min(full, room)
         name.frame = NSRect(x: left - 2, y: (height - lineHeight) / 2, width: width + 4, height: lineHeight)
         toolTip = goneTip ?? (full <= room ? nil : fullName)
-        if !badge.isHidden {
-            badge.frame = NSRect(x: left + width + 6, y: (height - WaitingBadge.height) / 2, width: badge.intrinsicContentSize.width, height: WaitingBadge.height)
-        }
     }
 
     /// The name in `ink` (`ink2` when dimmed, `CodeFile.ink` for code), its ".md" in `ink2`: 4.5:1 or more on the
@@ -374,19 +375,21 @@ final class SidebarFileCell: NSTableCellView {
 
 /// The writer badge: a 16 pt capsule, radius 4, in the writer's ink at 14%, holding a 3 x 10 rule in that ink and the
 /// count in SF Mono 11 medium `ink`. The count is every undecided change in the note; the ink is the writer with most.
-/// Without a count (a note changed while closed, a closed folder holding changes) it is the rule alone, one per
-/// writer.
+/// Without a count it is the rule alone for a note changed while closed, and a 6 pt dot for a closed folder holding
+/// changes, one per writer.
 final class WaitingBadge: NSView {
     static let height: CGFloat = 16
     private static let font = Chrome.mono(11, weight: .medium)
     private var waiting: [WaitingCount] = []
+    private var dots = false
 
     var isEmpty: Bool { waiting.isEmpty }
     private var counted: Bool { waiting.allSatisfy { $0.count != nil } }
     private var count: String { "\(waiting.reduce(0) { $0 + ($1.count ?? 0) })" }
 
-    func show(_ waiting: [WaitingCount]) {
+    func show(_ waiting: [WaitingCount], dots: Bool = false) {
         self.waiting = waiting
+        self.dots = dots
         toolTip = waiting.isEmpty ? nil : waiting.map(\.tip).joined(separator: "\n")
         invalidateIntrinsicContentSize()
         needsDisplay = true
@@ -395,7 +398,7 @@ final class WaitingBadge: NSView {
     override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        guard counted else { return NSSize(width: CGFloat(waiting.count) * 6 - 3, height: Self.height) }
+        guard counted else { return NSSize(width: CGFloat(waiting.count) * (dots ? 9 : 6) - 3, height: Self.height) }
         return NSSize(width: 4 + 3 + 4 + ceil((count as NSString).size(withAttributes: [.font: Self.font]).width) + 5, height: Self.height)
     }
 
@@ -405,7 +408,11 @@ final class WaitingBadge: NSView {
         guard counted else {
             for (index, writer) in waiting.enumerated() {
                 writer.writer.color.resolved(for: appearance).setFill()
-                NSBezierPath(roundedRect: NSRect(x: CGFloat(index) * 6, y: (bounds.height - 10) / 2, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+                if dots {
+                    NSBezierPath(ovalIn: NSRect(x: CGFloat(index) * 9, y: (bounds.height - 6) / 2, width: 6, height: 6)).fill()
+                } else {
+                    NSBezierPath(roundedRect: NSRect(x: CGFloat(index) * 6, y: (bounds.height - 10) / 2, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
+                }
             }
             return
         }

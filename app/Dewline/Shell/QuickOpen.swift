@@ -390,17 +390,19 @@ struct MenuCommand {
     ]
 
     /// Every enabled item in `menu` and its submenus, in menu order, after the menus validate their items against the
-    /// key window as the menu bar does when it opens. Separators, hidden items, section headers, `excluding` and what
-    /// macOS adds to the menu bar are left out.
+    /// key window as the menu bar does when it opens. Separators, hidden items, section headers, `excluding`, what
+    /// macOS adds to the menu bar, Open Recent's files and the Window menu's windows are left out.
     static func all(in menu: NSMenu, path: [String] = [], excluding: Selector? = nil) -> [MenuCommand] {
         menu.update()
         return menu.items.flatMap { item -> [MenuCommand] in
             if item.isSeparatorItem || item.isHidden || item.isSectionHeader { return [] }
             if let submenu = item.submenu {
-                guard submenu !== NSApp.servicesMenu else { return [] }
+                guard submenu !== NSApp.servicesMenu, !(submenu.delegate is RecentMenu) else { return [] }
                 return all(in: submenu, path: path + [submenu.title.isEmpty ? item.title : submenu.title], excluding: excluding)
             }
-            guard item.isEnabled, let action = item.action, action != excluding, !item.title.isEmpty, !isSystem(item, action) else { return [] }
+            guard item.isEnabled, let action = item.action, action != excluding, action != #selector(NSWindow.makeKeyAndOrderFront(_:)),
+                !item.title.isEmpty, !isSystem(item, action)
+            else { return [] }
             let menus = path.joined(separator: " › ")
             let aliases = words[NSStringFromSelector(action)] ?? []
             let synonyms = ([menus] + aliases).joined(separator: " ")

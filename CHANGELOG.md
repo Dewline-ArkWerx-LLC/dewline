@@ -4,6 +4,15 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- The Changes segment counts what the toolbar counts: every change waiting in the window's notes and in notes changed while closed.
+- The change stamp stays in the margin when the Changes pane opens, compact ("CLAUDE · 1 of 3" over icon buttons) where the full stamp won't fit, so toggling the pane no longer reflows the note. Revert and Keep share one width, the counter always reads "1 of N", and the full stamp shows Next Change's keys (⌃⌘↓). Only the stamp at the caret, or under the pointer, shows its buttons.
+- Changes list rows show the text around the change, with Markdown markers taken out; Revert Session and Keep Session are buttons, Keep filled.
+- The rail's change label stays in the right margin, shortening the heading or dropping "Changes show here too" to fit, shows Next or Previous Change's keys, and stays hidden while the Changes pane is open. A note with no changes that fits on screen shows no rail track.
+- A folder window with no note open lists the notes waiting for review: marked changes, changes made while closed and notes git reports changed, each opening on Return or a click. Open CLAUDE.md is the default button, beside Set Up Agent Hooks… at the same width.
+- A tab with changes waiting shows the sidebar's writer badge with the count, in place of the dot.
+- Edit > Revert Session (⌃⌘⌫) and File > Earlier Versions… (⌥⌘Y) have shortcuts, and the title bar has a sidebar toggle.
+- A window opening on its own takes at least 1200 x 760 pt, or the whole screen when it is smaller.
+
 - An agent's write that adds list items no longer drops the bullet of the item after them.
 - Ticking a task box in an agent's change no longer shifts its row to the right.
 - A change's highlight leaves out the blanks at its ends and runs unbroken across inline code; code spans get rounded chips.

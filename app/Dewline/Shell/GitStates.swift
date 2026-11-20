@@ -36,6 +36,12 @@ final class GitStates {
         return nil
     }
 
+    /// The files under the folder that differ from the last commit, by path, with their states; an untracked folder
+    /// holding no tracked file is one entry.
+    var changed: [(url: URL, state: GitFileState)] {
+        files.sorted { $0.key < $1.key }.map { (folder.appending(path: $0.key), $0.value) }
+    }
+
     /// Whether a file under `folder`, a folder under the folder, differs from the last commit.
     func holdsChanges(_ folder: URL) -> Bool {
         let path = folder.standardizedFileURL.path

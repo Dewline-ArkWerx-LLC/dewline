@@ -63,6 +63,19 @@ enum Review {
         if let id = forward ? here.first : here.last { live.reveal(id, caret: true) }
     }
 
+    /// The window's open notes with marked changes, and the notes changed while closed that aren't among them.
+    static func waiting(in window: NSWindow?) -> (open: [LiveFile], closed: [ClosedNote]) {
+        let open = files(in: window).filter { $0.changes.values.contains(where: \.marked) }
+        let paths = Set(open.map(\.url.standardizedFileURL.path))
+        return (open, closedNotes().filter { !paths.contains($0.url.standardizedFileURL.path) })
+    }
+
+    /// The changes `waiting(in:)` holds, as Activity and the Changes segment count them.
+    static func waitingCount(in window: NSWindow?) -> Int {
+        let (open, closed) = waiting(in: window)
+        return open.reduce(0) { $0 + $1.changes.values.count(where: \.marked) } + closed.reduce(0) { $0 + $1.count }
+    }
+
     /// Whether any of the window's tabs holds a marked change.
     static func hasMarked(in window: NSWindow?) -> Bool {
         files(in: window).contains { $0.changes.values.contains(where: \.marked) }
@@ -390,8 +403,9 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
     }
 
-    /// The change's whole line, trimmed, with the changed words in bold after the words they replaced, struck; a change
-    /// that only removed text shows the line with the removed words struck.
+    /// The change's line without its Markdown markers, trimmed, with the changed words in bold after the words they
+    /// replaced, struck; a change that only removed text shows the line with the removed words struck. A change more
+    /// than 24 characters into its line shows from a word just before it, after an ellipsis.
     static func line(of id: UInt64, in live: LiveFile, text: NSString?) -> NSAttributedString {
         let store = ThemeStore.shared
         let regular: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: store.color(.ink)]
@@ -403,7 +417,8 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
         }
         let shown = NSMutableAttributedString(string: text.substring(with: line), attributes: regular)
         let local = NSIntersectionRange(NSRange(location: range.location - line.location, length: range.length), NSRange(location: 0, length: shown.length))
-        if local.length > 0 { shown.addAttribute(.font, value: NSFont.systemFont(ofSize: 13, weight: .semibold), range: local) }
+        let changed = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        if local.length > 0 { shown.addAttribute(.font, value: changed, range: local) }
         // A conflict's other version is no removal once the change holds text.
         let removed = change.conflict ? (local.length > 0 ? "" : change.theirs) : change.removed
         if let first = removed.split(whereSeparator: \.isNewline).first {
@@ -413,16 +428,46 @@ final class ReviewViewController: NSViewController, NSTableViewDataSource, NSTab
             if local.length > 0 { struck.append(NSAttributedString(string: " ", attributes: regular)) }
             shown.insert(struck, at: min(max(range.location - line.location, 0), shown.length))
         }
+        strip(shown)
         let trimmed = shown.string
         let lead = trimmed.prefix { $0.isWhitespace }.utf16.count
         let tail = String(trimmed.reversed().prefix { $0.isWhitespace }).utf16.count
         guard lead + tail < shown.length else { return NSAttributedString(string: "Blank lines", attributes: regular) }
-        return shown.attributedSubstring(from: NSRange(location: lead, length: shown.length - lead - tail))
+        let excerpt = NSMutableAttributedString(attributedString: shown.attributedSubstring(from: NSRange(location: lead, length: shown.length - lead - tail)))
+        var first = excerpt.length
+        excerpt.enumerateAttributes(in: NSRange(location: 0, length: excerpt.length)) { attributes, range, stop in
+            if attributes[.font] as? NSFont == changed || attributes[.strikethroughStyle] != nil {
+                first = range.location
+                stop.pointee = true
+            }
+        }
+        if first > 24 {
+            let string = excerpt.string as NSString
+            let space = string.range(of: " ", range: NSRange(location: first - 24, length: 24)).location
+            let start = space == NSNotFound ? first - 24 : space + 1
+            excerpt.replaceCharacters(in: NSRange(location: 0, length: start), with: "\u{2026}")
+        }
+        return excerpt
+    }
+
+    /// Takes a line's Markdown markers out, keeping the attributes of the text they wrap: a quote, list or heading
+    /// marker at its start, emphasis, code and highlight markers, and a link's target.
+    private static func strip(_ line: NSMutableAttributedString) {
+        let patterns = [
+            #"^\s*(?:(?:>\s?)+|#{1,6}\s+)?(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]\]\s+)?"#, #"\[(?=[^\]]*\]\()"#, #"\]\([^)]*\)"#,
+            #"\*\*|__|~~|==|`"#, #"(?<![\w*])\*(?=\S)|(?<=\S)\*(?![\w*])"#,
+        ]
+        for pattern in patterns {
+            let regex = try! NSRegularExpression(pattern: pattern)
+            for match in regex.matches(in: line.string, range: NSRange(location: 0, length: line.length)).reversed() where match.range.length > 0 {
+                line.deleteCharacters(in: match.range)
+            }
+        }
     }
 }
 
 /// The Changes list's table: Return calls `returned`.
-private final class ReturnTable: NSTableView {
+final class ReturnTable: NSTableView {
     var returned: () -> Void = {}
 
     override func keyDown(with event: NSEvent) {
@@ -431,7 +476,8 @@ private final class ReturnTable: NSTableView {
     }
 }
 
-/// A writer session's byline in 13 pt semibold, with Keep Session and Revert Session.
+/// A writer session's byline in 13 pt semibold, with Revert Session and Keep Session in the stamp's buttons, Keep
+/// filled.
 private final class SessionRow: NSTableCellView {
     init(_ byline: String, decide: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
@@ -441,10 +487,11 @@ private final class SessionRow: NSTableCellView {
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let revert = FlowButton("Revert Session", style: .plain) { decide(false) }
-        let keep = FlowButton("Keep Session", style: .plain) { decide(true) }
-        revert.toolTip = "Puts back the old text of every change in this session."
-        keep.toolTip = "Clears the marks on every change in this session."
+        let revert = StampButton("Revert Session", keys: "", style: .outlined) { decide(false) }
+        let keep = StampButton("Keep Session", keys: "", style: .filled) { decide(true) }
+        revert.toolTip = "Puts back the old text of every change in this session. Revert Session (\u{2303}\u{2318}\u{232B})"
+        keep.toolTip = "Clears the marks on every change in this session. Keep Session (\u{2325}\u{21E7}\u{2318}\u{21A9})"
+        revert.widthAnchor.constraint(equalTo: keep.widthAnchor).isActive = true
         let row = NSStackView(views: [name, revert, keep])
         row.spacing = 4
         row.setCustomSpacing(8, after: name)

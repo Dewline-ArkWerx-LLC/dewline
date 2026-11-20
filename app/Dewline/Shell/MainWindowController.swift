@@ -123,6 +123,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(updatePresence), name: Collaboration.changed, object: nil)
         #endif
         NotificationCenter.default.addObserver(self, selector: #selector(changesChanged), name: LiveFile.changesDidChange, object: nil)
+        for name in [ClosedChanges.changed, TabSet.changed] {
+            NotificationCenter.default.addObserver(self, selector: #selector(countChanges), name: name, object: nil)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
         Self.all.insert(self)
         if let folder {
@@ -172,11 +175,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ])
     }
 
-    /// The empty page's agent hooks line, filled in once `dewline doctor` answers.
-    private let hookLine = NSStackView()
+    /// The empty page's Set Up Agent Hooks… button, or "Agent hooks are on.", once `dewline doctor` answers.
+    private let hookButton = NSButton(title: "Set Up Agent Hooks\u{2026}", target: nil, action: #selector(setUpAgentHooks(_:)))
+    private let hookNote = NSTextField(labelWithString: "Agent hooks are on.")
 
-    /// The page of a folder with no note open: that Dewline watches the folder and what an agent's edit does, how to
-    /// pick or make a note, CLAUDE.md or README.md in one click, and whether agent hooks are on.
+    /// The page of a folder with no note open: what waits for review in the folder, each note opening on Return or a
+    /// click, or with nothing waiting, what an agent's edit does and how to pick or make a note; then Open CLAUDE.md
+    /// (or README.md), the default, beside Set Up Agent Hooks… while no agent has them.
     private func emptyPage(in folder: URL) -> NSView {
         func label(_ text: String, _ ink: Token) -> NSTextField {
             let label = NSTextField(wrappingLabelWithString: text)
@@ -186,23 +191,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             label.preferredMaxLayoutWidth = 360
             return label
         }
-        let stack = NSStackView(views: [
-            label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path)).", .ink),
+        let title = label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path)).", .ink)
+        title.font = .systemFont(ofSize: 18, weight: .semibold)
+        let prose = [
             label("Ask an agent to edit a note here; the change shows marked, ready to keep or revert.", .ink2),
             label("Pick a note in the sidebar, or press \u{2318}N\u{00A0}for\u{00A0}a\u{00A0}new\u{00A0}one.", .ink2),
-        ])
+        ]
+        let waiting = WaitingNotes(in: folder, git: index?.git) { [weak self] url in self?.openAtFirstChange(url) }
+        waiting.changed = { empty in prose.forEach { $0.isHidden = !empty } }
+        let stack = NSStackView(views: [title, waiting] + prose)
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 6
+        stack.setCustomSpacing(12, after: title)
+        let buttons = NSStackView()
+        buttons.distribution = .fillEqually
+        buttons.spacing = 12
         if let suggested = ["CLAUDE.md", "README.md"].map({ folder.appending(path: $0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             let open = NSButton(title: "Open \(suggested.lastPathComponent)", target: self, action: #selector(openSuggested(_:)))
             open.identifier = NSUserInterfaceItemIdentifier(suggested.path)
-            stack.addView(open, in: .center)
+            open.keyEquivalent = "\r"
+            buttons.addArrangedSubview(open)
+        }
+        hookButton.target = self
+        hookButton.isHidden = true
+        buttons.addArrangedSubview(hookButton)
+        hookNote.font = Chrome.label
+        hookNote.textColor = Chrome.color(.ink2)
+        hookNote.isHidden = true
+        for view in [buttons, hookNote] {
+            stack.addView(view, in: .center)
             stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
         }
-        hookLine.spacing = 6
-        stack.addView(hookLine, in: .center)
-        stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
+        waiting.reload()
         updateHookLine(in: folder)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let empty = PaperView()
@@ -210,26 +231,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: empty.centerYAnchor),
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+            waiting.widthAnchor.constraint(equalToConstant: 420),
         ])
         return empty
     }
 
-    /// "Agent hooks are on", or Set Up Agent Hooks… while no agent has them. The test host runs no doctor.
+    /// Set Up Agent Hooks… while no agent has them, else "Agent hooks are on.". The test host runs no doctor.
     private func updateHookLine(in folder: URL) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         Task { [weak self] in
             let on = await Task.detached { HookStatus.read(in: folder).any }.value
             guard let self else { return }
-            hookLine.views.forEach { $0.removeFromSuperview() }
-            if on {
-                let text = NSTextField(labelWithString: "Agent hooks are on.")
-                text.font = Chrome.label
-                text.textColor = Chrome.color(.ink2)
-                hookLine.addView(text, in: .center)
-            } else {
-                hookLine.addView(NSButton(title: "Set Up Agent Hooks\u{2026}", target: self, action: #selector(setUpAgentHooks(_:))), in: .center)
-            }
+            hookButton.isHidden = on
+            hookNote.isHidden = !on
         }
     }
 
@@ -319,8 +334,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc private func changesChanged() {
         updateState()
-        let live = (document as? MarkdownDocument)?.live
-        pane.changesCount = live?.changes.values.count(where: { $0.marked || $0.conflict }) ?? 0
+        countChanges()
+    }
+
+    /// The Changes segment counts what Activity does: the window's marked changes and its notes changed while closed.
+    @objc private func countChanges() {
+        pane.changesCount = Review.waitingCount(in: window)
     }
 
     @objc private func themeDidChange() {
@@ -390,6 +409,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Selects this tab, in its window's place, and brings it front.
     override func showWindow(_ sender: Any?) {
+        if let window, !window.isVisible, !window.isMiniaturized, tabs.tabs.count == 1 { Self.fill(window) }
         let place = readPending()
         tabs.select(self)
         super.showWindow(sender)
@@ -398,6 +418,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if let window { Updates.shared.windowDidShow(window) }
         if let window, let folder { HookSetup.offer(on: window, in: folder.url) }
         shown(at: place)
+    }
+
+    /// A window opening on its own takes at least 1200 x 760, as much of that as its screen holds: one placed while the
+    /// screen was locked or smaller keeps the smaller frame it was given.
+    private static func fill(_ window: NSWindow) {
+        guard let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        let size = NSSize(width: min(max(window.frame.width, 1200), screen.width), height: min(max(window.frame.height, 760), screen.height))
+        guard size != window.frame.size else { return }
+        window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false)
+        window.center()
     }
 
     /// Selects this tab and puts its window just behind `front`.
@@ -692,6 +722,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func toggleChanges(_ sender: Any?) {
         togglePane(.changes)
+    }
+
+    /// Whether the right pane is open on Changes.
+    var showsChanges: Bool {
+        !paneItem.isCollapsed && pane.tab == .changes
     }
 
     @objc func toggleBacklinks(_ sender: Any?) {
@@ -993,6 +1028,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// Opens a note Activity lists, at its first waiting change.
     @objc func openWaiting(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
+        openAtFirstChange(url)
+    }
+
+    private func openAtFirstChange(_ url: URL) {
         open(url, newTab: false)
         guard let live = (NSDocumentController.shared.document(for: url) as? MarkdownDocument)?.live,
             let first = live.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location })
@@ -1064,6 +1103,120 @@ enum LoadsPopover {
         popover.contentViewController = controller
         popover.contentSize = stack.fittingSize
         popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+    }
+}
+
+/// The notes in a folder with something to review, each once under the first that applies: marked changes in an open
+/// note, changes made while it was closed, or a difference from the last commit. Up to eight rows show at once;
+/// Return or a click opens the note.
+@MainActor
+final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelegate {
+    private let folder: URL
+    private weak var git: GitStates?
+    private let open: (URL) -> Void
+    private let table = ReturnTable()
+    private(set) var rows: [(url: URL, detail: String)] = []
+    private lazy var height = heightAnchor.constraint(equalToConstant: 0)
+    /// Called after each reload with whether the list is empty.
+    var changed: (Bool) -> Void = { _ in }
+
+    init(in folder: URL, git: GitStates?, open: @escaping (URL) -> Void) {
+        self.folder = folder.standardizedFileURL
+        self.git = git
+        self.open = open
+        super.init(frame: .zero)
+        table.addTableColumn(NSTableColumn(identifier: .init("Note")))
+        table.headerView = nil
+        table.style = .plain
+        table.backgroundColor = .clear
+        table.rowHeight = 24
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(clicked)
+        table.returned = { [weak self] in self?.openRow(self?.table.selectedRow ?? -1) }
+        table.setAccessibilityLabel("Waiting for review")
+        documentView = table
+        drawsBackground = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        height.isActive = true
+        for name in [LiveFile.changesDidChange, ClosedChanges.changed] {
+            NotificationCenter.default.addObserver(self, selector: #selector(reload), name: name, object: nil)
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: GitStates.changed, object: git)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("WaitingNotes is built in code")
+    }
+
+    @objc func reload() {
+        var rows: [(url: URL, detail: String)] = []
+        var seen: Set<String> = []
+        func add(_ url: URL, _ detail: String) {
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(folder.path + "/"), seen.insert(path).inserted else { return }
+            rows.append((url, detail))
+        }
+        for live in NSDocumentController.shared.documents.compactMap({ ($0 as? MarkdownDocument)?.live }) {
+            let marked = live.changes.values.filter(\.marked)
+            if let first = marked.first { add(live.url, "\(MarkWriter(first.origin).name) \u{00B7} \(marked.count) to review") }
+        }
+        for note in Review.closedNotes() { add(note.url, "\(MarkWriter(note.origin).name) \u{00B7} changed while closed") }
+        let notes = FolderEntry.markdownExtensions.union(FolderEntry.dialectExtensions)
+        for (url, state) in git?.changed ?? [] where notes.contains(url.pathExtension.lowercased()) {
+            switch state {
+            case .new: add(url, "New since the last commit")
+            case .conflicted: add(url, "Merge conflict")
+            case .deleted: break
+            case .modified, .renamed: add(url, "Modified since the last commit")
+            }
+        }
+        self.rows = rows
+        table.reloadData()
+        if table.selectedRow < 0, !rows.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
+        height.constant = CGFloat(min(rows.count, 8)) * table.rowHeight
+        isHidden = rows.isEmpty
+        changed(rows.isEmpty)
+    }
+
+    @objc private func clicked() {
+        openRow(table.clickedRow)
+    }
+
+    private func openRow(_ row: Int) {
+        if rows.indices.contains(row) { open(rows[row].url) }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        rows.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let (url, detail) = rows[row]
+        let relative = String(url.standardizedFileURL.path.dropFirst(folder.path.count + 1))
+        let name = NSTextField(labelWithString: relative)
+        name.font = Chrome.label
+        name.textColor = Chrome.color(.ink)
+        name.lineBreakMode = .byTruncatingMiddle
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let note = NSTextField(labelWithString: detail)
+        note.font = Chrome.status
+        note.textColor = Chrome.color(.ink2)
+        note.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let line = NSStackView(views: [name, note])
+        line.spacing = 12
+        line.translatesAutoresizingMaskIntoConstraints = false
+        let cell = NSTableCellView()
+        cell.addSubview(line)
+        NSLayoutConstraint.activate([
+            line.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            line.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        cell.setAccessibilityLabel("\(relative), \(detail)")
+        return cell
     }
 }
 

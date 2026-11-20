@@ -28,6 +28,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private let paneItem: NSSplitViewItem
     /// The right pane collapsed the sidebar to make room, so closing the pane brings it back.
     private var paneHidSidebar = false
+    /// A window narrower than 700 pt collapsed the sidebar, so widening it brings it back.
+    private var narrowHidSidebar = false
     private(set) var textView: EditorTextView?
     private var outlineUpdate: Task<Void, Never>?
     private var sectionUpdate: Task<Void, Never>?
@@ -79,7 +81,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         )
         window.contentViewController = MainWindowController.underTitleRow(split)
         window.setContentSize(NSSize(width: 1200, height: 760))
-        window.contentMinSize = NSSize(width: 960, height: 600)
         // Dewline draws the tabs, so each keeps its own document, sheets and undo.
         window.tabbingMode = .disallowed
         // Resume reopens every window at launch, so AppKit restores none.
@@ -127,6 +128,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             NotificationCenter.default.addObserver(self, selector: #selector(countChanges), name: name, object: nil)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateMinimumSize), name: NSSplitView.didResizeSubviewsNotification, object: split.splitView)
+        updateMinimumSize()
+        statusBar.reserved = folder != nil
         Self.all.insert(self)
         if let folder {
             window.title = FileManager.default.displayName(atPath: folder.url.path)
@@ -178,6 +182,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// The empty page's Set Up Agent Hooks… button, or "Agent hooks are on.", once `dewline doctor` answers.
     private let hookButton = NSButton(title: "Set Up Agent Hooks\u{2026}", target: nil, action: #selector(setUpAgentHooks(_:)))
     private let hookNote = NSTextField(labelWithString: "Agent hooks are on.")
+    /// "Agent hooks are on." with Copy a Test Prompt under it.
+    private var hookLine: NSView?
 
     /// The page of a folder with no note open: what waits for review in the folder, each note opening on Return or a
     /// click, or with nothing waiting, what an agent's edit does and how to pick or make a note; then Open CLAUDE.md
@@ -218,8 +224,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         buttons.addArrangedSubview(hookButton)
         hookNote.font = Chrome.label
         hookNote.textColor = Chrome.color(.ink2)
-        hookNote.isHidden = true
-        for view in [buttons, hookNote] {
+        let tryIt = label("Run it in Claude Code here; the edit shows up marked.", .ink2)
+        let copy = NSButton(title: "Copy a Test Prompt", target: self, action: #selector(copyTestPrompt(_:)))
+        copy.toolTip = Self.testPrompt(in: folder)
+        let hooksOn = NSStackView(views: [hookNote, copy, tryIt])
+        hooksOn.orientation = .vertical
+        hooksOn.spacing = 6
+        hooksOn.isHidden = true
+        hookLine = hooksOn
+        for view in [buttons, hooksOn] {
             stack.addView(view, in: .center)
             stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
         }
@@ -237,15 +250,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return empty
     }
 
-    /// Set Up Agent Hooks… while no agent has them, else "Agent hooks are on.". The test host runs no doctor.
+    /// Set Up Agent Hooks… while no agent has them, else "Agent hooks are on." over Copy a Test Prompt. The test host
+    /// runs no doctor.
     private func updateHookLine(in folder: URL) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         Task { [weak self] in
             let on = await Task.detached { HookStatus.read(in: folder).any }.value
             guard let self else { return }
             hookButton.isHidden = on
-            hookNote.isHidden = !on
+            hookLine?.isHidden = !on
         }
+    }
+
+    /// A prompt that makes an agent edit a note here, for the first marked change.
+    static func testPrompt(in folder: URL) -> String {
+        let note = FileManager.default.fileExists(atPath: folder.appending(path: "README.md").path) ? "README.md" : "dewline-test.md"
+        return "Add a line \"Dewline test\" to the end of \(note)."
+    }
+
+    @objc private func copyTestPrompt(_ sender: Any?) {
+        guard let folder else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(Self.testPrompt(in: folder.url), forType: .string)
+        statusBar.post(.init(id: "prompt", kind: .result, text: "Copied. Paste it into Claude Code running in this folder.", untilTyping: true))
     }
 
     @objc private func openSuggested(_ sender: NSButton) {
@@ -733,28 +760,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         togglePane(.backlinks)
     }
 
+    /// Opens the pane on `tab`, or closes it. Changes takes the keyboard as it opens; pressed again with the keyboard
+    /// in the list, it gives the keyboard back to the note and stays open.
     private func togglePane(_ tab: RightPane.Tab) {
         if !paneItem.isCollapsed, pane.tab == tab {
+            if tab == .changes, (pane.changes as? ReviewViewController)?.hasFocus == true, let textView {
+                window?.makeFirstResponder(textView)
+                return
+            }
             for each in tabs.tabs { each.hidePane() }
         } else {
             for each in tabs.tabs { each.showPane(tab) }
+            if tab == .changes { (pane.changes as? ReviewViewController)?.focusList() }
         }
     }
 
-    /// Opens the right pane on `tab`. A window too narrow for the sidebar, a 480 pt page and the pane loses the sidebar
-    /// until the pane closes.
+    /// Opens the right pane on `tab`, as wide as the page leaves of 380 pt but at least 260. A window too narrow for the
+    /// sidebar, a 480 pt page and a 260 pt pane loses the sidebar until the pane closes.
     func showPane(_ tab: RightPane.Tab) {
         let sidebarItem = split.splitViewItems[0]
-        if paneItem.isCollapsed, !sidebarItem.isCollapsed, let window,
-            window.frame.width < sidebar.view.frame.width + 480 + RightPane.width
-        {
+        let least = RightPane.widths.lowerBound
+        if paneItem.isCollapsed, !sidebarItem.isCollapsed, let window, window.frame.width < sidebar.view.frame.width + 480 + least {
             sidebarItem.isCollapsed = true
             paneHidSidebar = true
         }
         pane.select(tab)
         if paneItem.isCollapsed {
             paneItem.isCollapsed = false
-            split.splitView.setPosition(split.splitView.bounds.width - RightPane.width, ofDividerAt: 1)
+            let room = split.splitView.bounds.width - (sidebarItem.isCollapsed ? 0 : sidebar.view.frame.width) - 480
+            split.splitView.setPosition(split.splitView.bounds.width - min(RightPane.width, max(room, least)), ofDividerAt: 1)
+        }
+    }
+
+    /// The least content width: the page's 420, and the sidebar's and the pane's least widths while they show.
+    @objc private func updateMinimumSize() {
+        let items = split.splitViewItems
+        let width = 420 + items.filter { $0 !== items[1] && !$0.isCollapsed }.map(\.minimumThickness).reduce(0, +)
+        if window?.contentMinSize.width != width { window?.contentMinSize = NSSize(width: width, height: 600) }
+    }
+
+    /// A window narrower than 700 pt collapses the sidebar, which comes back once it is wider again.
+    func windowDidResize(_ notification: Notification) {
+        guard let window, tabs.selected === self else { return }
+        let sidebarItem = split.splitViewItems[0]
+        if window.frame.width < 700, !sidebarItem.isCollapsed {
+            sidebarItem.isCollapsed = true
+            narrowHidSidebar = true
+        } else if window.frame.width >= 700, narrowHidSidebar {
+            narrowHidSidebar = false
+            if !paneHidSidebar { sidebarItem.isCollapsed = false }
         }
     }
 
@@ -1031,8 +1085,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         openAtFirstChange(url)
     }
 
-    private func openAtFirstChange(_ url: URL) {
-        open(url, newTab: false)
+    /// Opens `url` at its first marked change, in a new tab when asked.
+    func openAtFirstChange(_ url: URL, newTab: Bool = false) {
+        open(url, newTab: newTab)
         guard let live = (NSDocumentController.shared.document(for: url) as? MarkdownDocument)?.live,
             let first = live.changes.filter(\.value.marked).min(by: { $0.value.range.location < $1.value.range.location })
         else { return }
@@ -1172,7 +1227,7 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             switch state {
             case .new: add(url, "New since the last commit")
             case .conflicted: add(url, "Merge conflict")
-            case .deleted: break
+            case .deleted: add(url, "Deleted since the last commit")
             case .modified, .renamed: add(url, "Modified since the last commit")
             }
         }
@@ -1189,7 +1244,35 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     }
 
     private func openRow(_ row: Int) {
-        if rows.indices.contains(row) { open(rows[row].url) }
+        guard rows.indices.contains(row) else { return }
+        let url = rows[row].url
+        guard git?.state(of: url) == .deleted else { return open(url) }
+        let folder = folder
+        Task { [weak self] in
+            let text = await Task.detached { Self.committedText(of: url, in: folder) }.value
+            guard let self, let window, let text else { return NSSound.beep() }
+            let alert = NSAlert()
+            alert.messageText = "\(url.lastPathComponent) was deleted"
+            alert.informativeText = "Its text at the last commit, read-only."
+            alert.accessoryView = readOnlyText(NSAttributedString(string: text, attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.textColor,
+            ]))
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        }
+    }
+
+    /// `url`'s text in the last commit, read with git; nil when git can't read it.
+    private nonisolated static func committedText(of url: URL, in folder: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/git")
+        process.arguments = ["-C", folder.path, "show", "HEAD:./" + String(url.standardizedFileURL.path.dropFirst(folder.path.count + 1))]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {

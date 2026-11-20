@@ -1,7 +1,8 @@
 import AppKit
 
 /// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: one message at a
-/// time with its buttons, a problem's after a red octagon. With no message it is hidden and takes no height. Nothing in it blinks.
+/// time with its buttons, a problem's after a red octagon. With no message it is hidden and takes no height unless
+/// `reserved`, so a message never moves the editor. Results and problems are read out to VoiceOver. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
@@ -9,9 +10,9 @@ final class StatusBar: NSView {
     /// held save, an export's result and tracking problems.
     struct Message {
         enum Kind: Int, Comparable {
-            // The one shown is the first that applies, in this order: what was just done, what someone waits on, what
-            // is broken, what is asked once, then what is only worth knowing.
-            case result, request, problem, setup, question, info
+            // The one shown is the first that applies, in this order: what was just done, what is broken, what
+            // someone waits on, what is asked once, then what is only worth knowing.
+            case result, problem, request, setup, question, info
 
             static func < (lhs: Kind, rhs: Kind) -> Bool { lhs.rawValue < rhs.rawValue }
         }
@@ -44,6 +45,10 @@ final class StatusBar: NSView {
         ((window ?? NSApp.mainWindow)?.windowController as? MainWindowController)?.statusBar
     }
 
+    /// Keeps the line's height with no message, as a folder window does.
+    var reserved = false {
+        didSet { if reserved != oldValue { rebuild() } }
+    }
     private let line = NSStackView()
     private var messages: [Message] = []
     private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: 0)
@@ -92,6 +97,11 @@ final class StatusBar: NSView {
         messages.removeAll { $0.id == message.id }
         messages.append(message)
         rebuild()
+        if [.result, .problem].contains(message.kind) {
+            NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+                .announcement: message.text, .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ])
+        }
     }
 
     func clear(_ id: String) {
@@ -114,7 +124,7 @@ final class StatusBar: NSView {
 
     private func rebuild() {
         for view in line.arrangedSubviews { view.removeFromSuperview() }
-        isHidden = shown == nil
+        isHidden = shown == nil && !reserved
         heightConstraint.constant = isHidden ? 0 : Self.height
         guard let message = shown else { return }
         if message.kind == .problem, let symbol = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: "Problem") {

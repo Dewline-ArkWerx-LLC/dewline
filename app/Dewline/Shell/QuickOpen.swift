@@ -385,7 +385,7 @@ struct MenuCommand {
         "revertAllChanges:": ["Discard All", "Reject All"],
         "nextChange:": ["Next Edit"],
         "previousChange:": ["Previous Edit"],
-        "toggleReview:": ["Diff"],
+        "toggleChanges:": ["Diff", "Review"],
         "toggleFocusMode:": ["Zen"],
     ]
 

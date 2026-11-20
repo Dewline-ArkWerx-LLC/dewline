@@ -409,7 +409,7 @@ struct JourneyTests {
     }
 
     /// Claude Code rewrites the open file and two closed ones. The open file's four changes land marked with Claude's
-    /// name, the stamp counts them and the Changes tab lists each line with its changed words in bold, and a row's
+    /// name, the stamp counts them and the Changes tab lists each line with its changed words in Claude's ink, and a row's
     /// Revert and the stamp's Keep decide them: the stamp's Keep acts on every change it counts, the file's bytes
     /// follow each decision, the decisions log holds one line per decision without the text, and nothing
     /// is left to review. The closed files are listed as changed while closed, and one opens with Claude's write
@@ -434,7 +434,7 @@ struct JourneyTests {
         #expect(Review.hasMarked(in: tab.window))
         #expect(tab.marked.map { tab.live.line($0.id) } == [3, 7, 11, 15])
 
-        // The Changes tab lists the whole lines, each with its changed words in bold.
+        // The Changes tab lists the whole lines, each with its changed words in the writer's ink.
         Self.claim(.turnEnd, vault.engine)
         await waitForMain { ClosedChanges.all.count == 2 }
         let review = ReviewViewController(for: tab.window)
@@ -446,11 +446,13 @@ struct JourneyTests {
         guard case .change(let live, let first, let text) = review.rows[2] else { Issue.record("no change row"); return }
         let line = ReviewViewController.line(of: first, in: live, text: text)
         #expect(line.string == "Alpha line, revised.")
-        func weight(at index: Int) -> CGFloat {
-            let font = line.attribute(.font, at: index, effectiveRange: nil) as? NSFont
-            return (font?.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
+        func ink(at index: Int) -> NSColor? {
+            line.attribute(.foregroundColor, at: index, effectiveRange: nil) as? NSColor
         }
-        #expect(weight(at: (line.string as NSString).range(of: ", revised").location) > weight(at: 0))
+        let aqua = try #require(NSAppearance(named: .aqua))
+        let revised = ink(at: (line.string as NSString).range(of: ", revised").location)?.resolved(for: aqua)
+        #expect(revised == MarkWriter(claude).color.resolved(for: aqua))
+        #expect(revised != ink(at: 0)?.resolved(for: aqua))
 
         // The stamp names the writer and counts its changes. A row's Revert takes one out; Keep All keeps the rest.
         let changes = tab.marked

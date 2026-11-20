@@ -9,13 +9,15 @@ on:
 permissions:
   contents: read
 
+# Pull requests cancel their older runs. Pushes to main queue instead, so every commit on main gets a verdict.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: max
 
 jobs:
-  # Pull requests and merge groups that change only site/, docs/, .github/ISSUE_TEMPLATE/ or the Markdown at the root
-  # skip the rust and swift jobs. Pushes to main run every job, so each commit a release tags has passed them all.
+  # Pull requests that change only site/, docs/, .github/ISSUE_TEMPLATE/ or the Markdown at the root skip the rust and
+  # swift jobs. Merge groups and pushes to main run every job, so each commit a release tags has passed them all.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -27,11 +29,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           app=true
-          if [[ $EVENT != push ]]; then
+          if [[ $EVENT == pull_request ]]; then
             compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD")
             # The compare API lists at most 300 files; a longer list runs everything.
             if (($(jq '.files | length' <<< "$compare") < 300)); then
@@ -116,10 +118,10 @@ jobs:
       - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO
 
   # The release path with no secrets: the universal app from pinned inputs, its Mach-O and Info.plist checks, its DMG
-  # signed ad hoc, and a feed signed with a key made for this run and checked by scripts/verify-feed.sh. Runs on main,
-  # not on pull requests.
+  # signed ad hoc, and a feed signed with a key made for this run and checked by scripts/verify-feed.sh. Runs on main
+  # and in the merge queue, not on pull requests.
   release-dry:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: xcode-27
     timeout-minutes: 45
     steps:
@@ -163,17 +165,30 @@ jobs:
           version: 1.30.1
           advanced-security: false
 
+  # Every job must succeed. Only a pull request may skip: rust and swift when changes found no app or core change, and
+  # release-dry always.
   required:
     if: always()
     needs: [changes, rust, deny, swift, release-dry, landmines, zizmor]
     runs-on: ubuntu-latest
     steps:
       - env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          EVENT: ${{ github.event_name }}
+          APP: ${{ needs.changes.outputs.app }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          for result in $RESULTS; do
-            case "$result" in
-              success|skipped) ;;
-              *) echo "a required job ended: $result"; exit 1 ;;
+          results=$(jq -r 'to_entries[] | "\(.key) \(.value.result)"' <<< "$NEEDS")
+          status=0
+          while read -r job result; do
+            case $EVENT/$job/$APP in
+              pull_request/rust/false | pull_request/swift/false | pull_request/release-dry/*) may_skip=true ;;
+              *) may_skip=false ;;
             esac
-          done
+            if [[ $result == success || ($result == skipped && $may_skip == true) ]]; then
+              echo "$job: $result"
+            else
+              echo "::error::$job ended $result on $EVENT"
+              status=1
+            fi
+          done <<< "$results"
+          exit $status

@@ -1,8 +1,10 @@
 import AppKit
 
-/// What the window answers through the responder chain: the right pane's tabs, Share, and reopening a closed tab.
+/// What the window answers through the responder chain: the right pane's tabs, Share, reopening a closed tab, and
+/// keeping every change of the selected change's session.
 @MainActor @objc protocol ShellActions {
     func toggleChanges(_ sender: Any?)
+    @objc optional func keepSession(_ sender: Any?)
     #if COLLAB
     func shareNote(_ sender: Any?)
     #endif
@@ -109,9 +111,13 @@ enum MainMenu {
         keepAll.keyEquivalentModifierMask = [.command, .shift]
         let revertAll = menu.addItem(withTitle: "Revert All Changes", action: #selector(EditorTextView.revertAllChanges(_:)), keyEquivalent: "\u{8}")
         revertAll.keyEquivalentModifierMask = [.command, .option, .shift]
+        let keepSession = menu.addItem(withTitle: "Keep Session", action: #selector(ShellActions.keepSession(_:)), keyEquivalent: "\r")
+        keepSession.keyEquivalentModifierMask = [.command, .option, .shift]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")
+        let relative = menu.addItem(withTitle: "Copy Relative Path", action: #selector(MainWindowController.copyRelativePath(_:)), keyEquivalent: "C")
+        relative.keyEquivalentModifierMask = [.command, .option]
         return menu
     }
 
@@ -219,6 +225,8 @@ enum MainMenu {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: String(UnicodeScalar(key)!))
             item.keyEquivalentModifierMask = [.command, .control]
         }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Reveal in Sidebar", action: #selector(MainWindowController.revealInSidebar(_:)), keyEquivalent: "J")
         return menu
     }
 

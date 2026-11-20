@@ -7,8 +7,7 @@ app/DewlineTests/PerfTests.swift exempt times launch, open and scroll for script
 app/DewlineTests/SourceModeMeasurements.swift exempt times source-mode layout for scripts/perf.sh
 app/DewlineTests/BlockMapTests.swift no-fixed-sleep 1
 app/DewlineTests/CaretSpikeTests.swift no-fixed-sleep 6
-app/DewlineTests/CaretTests.swift no-fixed-sleep 4
-app/DewlineTests/CaretTests.swift no-wall-clock-asserts 2
+app/DewlineTests/CaretTests.swift no-fixed-sleep 2
 app/DewlineTests/CodeFilesTests.swift no-fixed-sleep 2
 app/DewlineTests/CollaborationTests.swift no-fixed-sleep 8
 app/DewlineTests/ConstructTests.swift no-fixed-sleep 2

@@ -54,12 +54,42 @@ private func motion(_ level: Motion, _ body: () throws -> Void) rethrows {
     try body()
 }
 
+/// The caret's idle clock, moved by hand: `advance` runs each timer due on the way, at its deadline.
 @MainActor
-private final class Moment {
-    var time: ContinuousClock.Instant?
+private final class HandClock {
+    private(set) var now = DispatchTime.now()
+    private var timers: [(id: Int, deadline: DispatchTime, body: @MainActor () -> Void)] = []
+    private var made = 0
+
+    /// Runs the body with this clock standing in for the caret's.
+    func standIn(_ body: () throws -> Void) rethrows {
+        let (now, wake) = (CaretTextView.now, CaretTextView.wake)
+        CaretTextView.now = { self.now }
+        CaretTextView.wake = { deadline, fire in
+            self.made += 1
+            let id = self.made
+            self.timers.append((id, deadline, fire))
+            return { self.timers.removeAll { $0.id == id } }
+        }
+        defer { (CaretTextView.now, CaretTextView.wake) = (now, wake) }
+        try body()
+    }
+
+    func advance(by seconds: Double) {
+        let end = now + seconds
+        while let next = timers.filter({ $0.deadline <= end }).min(by: { $0.deadline < $1.deadline }) {
+            timers.removeAll { $0.id == next.id }
+            now = next.deadline
+            next.body()
+        }
+        now = end
+    }
 }
 
-private let systemAllowsMotion = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+@MainActor
+private final class Moment {
+    var time: DispatchTime?
+}
 
 @MainActor
 struct CaretTests {
@@ -72,47 +102,50 @@ struct CaretTests {
 
     /// Acceptance test 3 in the test host: solid five seconds after the last input, through NSTextView's own
     /// indicator updates and selection changes from code, and automatic again on the next input.
-    @Test func caretTurnsSolidFiveSecondsAfterInput() async throws {
-        let caret = try Caret()
-        defer { caret.close() }
-        let indicator = try #require(caret.view.indicator)
-        let solid = Moment()
-        let observation = indicator.observe(\.displayMode) { indicator, _ in
-            MainActor.assumeIsolated {
-                if indicator.displayMode == .visible && solid.time == nil { solid.time = .now }
+    @Test func caretTurnsSolidFiveSecondsAfterInput() throws {
+        let clock = HandClock()
+        try clock.standIn {
+            let caret = try Caret()
+            defer { caret.close() }
+            let indicator = try #require(caret.view.indicator)
+            let solid = Moment()
+            let observation = indicator.observe(\.displayMode) { indicator, _ in
+                MainActor.assumeIsolated {
+                    if indicator.displayMode == .visible && solid.time == nil { solid.time = clock.now }
+                }
             }
+            defer { observation.invalidate() }
+            let start = clock.now
+            try caret.input()
+            while solid.time == nil && clock.now < start + 10 {
+                clock.advance(by: 0.1)
+            }
+            let after = try #require(solid.time).uptimeNanoseconds - start.uptimeNanoseconds
+            #expect(after >= 5_000_000_000, "solid after \(after) ns")
+            #expect(indicator.displayMode == .visible)
+            caret.view.updateInsertionPointStateAndRestartTimer(true)
+            caret.view.needsLayout = true
+            caret.view.layoutSubtreeIfNeeded()
+            caret.view.setSelectedRange(NSRange(location: 3, length: 0))
+            #expect(indicator.displayMode == .visible)
+            caret.window.key = false
+            caret.window.resignKey()
+            caret.window.key = true
+            let again = clock.now
+            caret.window.becomeKey()
+            #expect(indicator.displayMode != .visible, "blinking again once the window is key again")
+            solid.time = nil
+            while solid.time == nil && clock.now < again + 10 {
+                clock.advance(by: 0.1)
+            }
+            let restarted = try #require(solid.time).uptimeNanoseconds - again.uptimeNanoseconds
+            #expect(restarted >= 5_000_000_000, "the clock restarts when the window becomes key: solid after \(restarted) ns")
+            try caret.input()
+            #expect(indicator.displayMode != .visible)
         }
-        defer { observation.invalidate() }
-        let start = ContinuousClock.now
-        try caret.input()
-        while solid.time == nil && ContinuousClock.now - start < .seconds(10) {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let after = try #require(solid.time) - start
-        #expect(after >= .seconds(5), "solid after \(after)")
-        #expect(indicator.displayMode == .visible)
-        caret.view.updateInsertionPointStateAndRestartTimer(true)
-        caret.view.needsLayout = true
-        caret.view.layoutSubtreeIfNeeded()
-        caret.view.setSelectedRange(NSRange(location: 3, length: 0))
-        #expect(indicator.displayMode == .visible)
-        caret.window.key = false
-        caret.window.resignKey()
-        caret.window.key = true
-        let again = ContinuousClock.now
-        caret.window.becomeKey()
-        #expect(indicator.displayMode != .visible, "blinking again once the window is key again")
-        solid.time = nil
-        while solid.time == nil && ContinuousClock.now - again < .seconds(10) {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let restarted = try #require(solid.time) - again
-        #expect(restarted >= .seconds(5), "the clock restarts when the window becomes key: solid after \(restarted)")
-        try caret.input()
-        #expect(indicator.displayMode != .visible)
     }
 
-    @Test(.enabled(if: systemAllowsMotion)) func jumpStreaksOntoTheSystemCaret() throws {
+    @Test func jumpStreaksOntoTheSystemCaret() throws {
         let caret = try Caret()
         defer { caret.close() }
         try motion(.calm) {
@@ -128,7 +161,7 @@ struct CaretTests {
         }
     }
 
-    @Test(.enabled(if: systemAllowsMotion)) func jumpThatScrollsMarksTheLine() throws {
+    @Test func jumpThatScrollsMarksTheLine() throws {
         let caret = try Caret()
         defer { caret.close() }
         try motion(.calm) {
@@ -174,7 +207,7 @@ private struct SplitMix: RandomNumberGenerator {
 extension CaretTests {
     /// Acceptance test 2: with a streak in flight, typing ends it before `insertText` returns and leaves the glyph
     /// left of the caret; the first commit after the edit holds both, and no later commit moves the caret.
-    @Test(.enabled(if: systemAllowsMotion)) func glyphLandsBeforeTheCaretInOneCommit() throws {
+    @Test func glyphLandsBeforeTheCaretInOneCommit() throws {
         let caret = try Caret()
         defer { caret.close() }
         let view = caret.view
@@ -209,7 +242,7 @@ extension CaretTests {
 
     /// Acceptance test 2's property: 1,000 random edits, half of them right after a jump that may start
     /// a streak; once the text changes no streak runs, and an edit never starts one.
-    @Test(.enabled(if: systemAllowsMotion)) func editsNeverRunTheStreak() throws {
+    @Test func editsNeverRunTheStreak() throws {
         let caret = try Caret(lines: 40)
         defer { caret.close() }
         let view = caret.view
@@ -275,7 +308,7 @@ extension CaretTests {
 
     /// Acceptance test 8 through Off, the level Reduce Motion runs: the streak layer never gets an animation, every
     /// jump gets the static landing mark until the next input, and a new level applies at the next jump.
-    @Test(.enabled(if: systemAllowsMotion)) func offMarksJumpsWithoutMotion() throws {
+    @Test func offMarksJumpsWithoutMotion() throws {
         let caret = try Caret()
         defer { caret.close() }
         let effects = caret.view.effects
@@ -303,7 +336,7 @@ extension CaretTests {
 extension CaretTests {
     /// Find Next is a jump: a match in view gets the streak; a match it scrolls to gets neither streak nor landing
     /// mark, because the selected match marks it.
-    @Test(.enabled(if: systemAllowsMotion)) func findNextIsAJump() throws {
+    @Test func findNextIsAJump() throws {
         let caret = try Caret()
         defer { caret.close() }
         let view = caret.view
@@ -337,7 +370,7 @@ extension CaretTests {
     }
 
     /// A key repeat snaps every move, a jump included.
-    @Test(.enabled(if: systemAllowsMotion)) func keyRepeatSnapsJumps() throws {
+    @Test func keyRepeatSnapsJumps() throws {
         let caret = try Caret()
         defer { caret.close() }
         try motion(.calm) {
@@ -357,7 +390,7 @@ extension CaretTests {
 
     /// The landing mark ends on the caret's line on wrapped paragraphs, both on a document opened just before the
     /// jump, while the layout above the target still moves, and on one already laid out.
-    @Test(.enabled(if: systemAllowsMotion)) func landingMarkSettlesOnTheCaretLine() throws {
+    @Test func landingMarkSettlesOnTheCaretLine() throws {
         let caret = try Caret()
         defer { caret.close() }
         let view = caret.view

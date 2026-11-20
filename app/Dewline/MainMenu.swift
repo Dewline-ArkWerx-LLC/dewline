@@ -73,7 +73,7 @@ enum MainMenu {
         menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         menu.addItem(withTitle: "Save", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
         menu.addItem(withTitle: "Rename\u{2026}", action: #selector(NSDocument.rename(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Duplicate", action: #selector(AppDelegate.duplicateNote(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Duplicate", action: #selector(AppDelegate.duplicateNote(_:)), keyEquivalent: "S")
         menu.addItem(withTitle: "Move to Trash", action: #selector(AppDelegate.trashNote(_:)), keyEquivalent: "")
         let versions = menu.addItem(withTitle: "Earlier Versions\u{2026}", action: #selector(AppDelegate.showEarlierVersions(_:)), keyEquivalent: "y")
         versions.keyEquivalentModifierMask = [.command, .option]
@@ -97,12 +97,17 @@ enum MainMenu {
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let plain = menu.addItem(withTitle: "Paste and Match Style", action: #selector(NSTextView.pasteAsPlainText(_:)), keyEquivalent: "V")
+        plain.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Find", action: nil, keyEquivalent: "").submenu = findMenu()
         menu.addItem(withTitle: "Go to Line…", action: #selector(CaretTextView.goToLine(_:)), keyEquivalent: "l")
+        menu.addItem(withTitle: "Spelling and Grammar", action: nil, keyEquivalent: "").submenu = spellingMenu()
+        menu.addItem(withTitle: "Substitutions", action: nil, keyEquivalent: "").submenu = substitutionsMenu()
+        menu.addItem(withTitle: "Transformations", action: nil, keyEquivalent: "").submenu = transformationsMenu()
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Smart Punctuation", action: #selector(EditorTextView.toggleSmartPunctuation(_:)), keyEquivalent: "")
         menu.addItem(format(.moveLineUp, "[", [.command, .option]))
         menu.addItem(format(.moveLineDown, "]", [.command, .option]))
         menu.addItem(.separator())
@@ -162,12 +167,43 @@ enum MainMenu {
         let menu = NSMenu(title: "Find")
         let find = menu.addItem(withTitle: "Find…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
         find.tag = NSTextFinder.Action.showFindInterface.rawValue
+        let replace = menu.addItem(withTitle: "Find and Replace…", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "f")
+        replace.keyEquivalentModifierMask = [.command, .option]
+        replace.tag = NSTextFinder.Action.showReplaceInterface.rawValue
         menu.addItem(withTitle: "Find in Files…", action: #selector(MainWindowController.findInFiles(_:)), keyEquivalent: "F")
         menu.addItem(.separator())
         let next = menu.addItem(withTitle: "Find Next", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "g")
         next.tag = NSTextFinder.Action.nextMatch.rawValue
         let previous = menu.addItem(withTitle: "Find Previous", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "G")
         previous.tag = NSTextFinder.Action.previousMatch.rawValue
+        let selection = menu.addItem(withTitle: "Use Selection for Find", action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: "e")
+        selection.tag = NSTextFinder.Action.setSearchString.rawValue
+        menu.addItem(withTitle: "Jump to Selection", action: #selector(NSResponder.centerSelectionInVisibleArea(_:)), keyEquivalent: "j")
+        return menu
+    }
+
+    private static func spellingMenu() -> NSMenu {
+        let menu = NSMenu(title: "Spelling and Grammar")
+        menu.addItem(withTitle: "Show Spelling and Grammar", action: #selector(NSText.showGuessPanel(_:)), keyEquivalent: ":")
+        menu.addItem(withTitle: "Check Document Now", action: #selector(NSText.checkSpelling(_:)), keyEquivalent: ";")
+        return menu
+    }
+
+    /// Smart Punctuation is Dewline's own setting for curly quotes and dashes, so the system's switches for those stay
+    /// in the Substitutions panel.
+    private static func substitutionsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Substitutions")
+        menu.addItem(withTitle: "Show Substitutions", action: #selector(NSTextView.orderFrontSubstitutionsPanel(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Smart Punctuation", action: #selector(EditorTextView.toggleSmartPunctuation(_:)), keyEquivalent: "")
+        return menu
+    }
+
+    private static func transformationsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Transformations")
+        menu.addItem(withTitle: "Make Upper Case", action: #selector(NSResponder.uppercaseWord(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Make Lower Case", action: #selector(NSResponder.lowercaseWord(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Capitalize", action: #selector(NSResponder.capitalizeWord(_:)), keyEquivalent: "")
         return menu
     }
 

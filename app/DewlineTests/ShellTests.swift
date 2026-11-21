@@ -135,4 +135,42 @@ struct ShellTests {
         let folder = Library.Visit(url: URL(filePath: "/notes/", directoryHint: .isDirectory), date: .now)
         #expect(Library.adding(folder, to: [Library.Visit(url: URL(filePath: "/notes"), date: .distantPast)], limit: 20) == [folder])
     }
+
+    /// The stamp counts the window's changes, and deciding a note's last one stays on the note and names the next.
+    @MainActor @Test func decidingANotesLastChangeStaysAndNamesTheNextNote() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appending(path: "dewline-shell-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let notes = root.appending(path: "notes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        let engine = try ChangeEngine(store: root.appending(path: "store"))
+        var tabs: [MainWindowController] = []
+        defer { for tab in tabs { (tab.document as? NSDocument)?.close() } }
+        for name in ["plan.md", "spec.md"] {
+            let url = notes.appending(path: name)
+            try Data("# Notes\n\nOne line.\n".utf8).write(to: url)
+            let document = MarkdownDocument()
+            document.engine = engine
+            try document.read(from: url, ofType: MarkdownDocument.type)
+            document.fileURL = url
+            document.fileType = MarkdownDocument.type
+            NSDocumentController.shared.addDocument(document)
+            let tab = MainWindowController(folder: Folder(notes), joining: tabs.first)
+            tab.display(document)
+            tabs.append(tab)
+        }
+        let main = tabs[0]
+        let lives = tabs.compactMap { ($0.document as? MarkdownDocument)?.live }
+        for name in ["plan.md", "spec.md"] { try Data("# Notes\n\nOne line, revised.\n".utf8).write(to: notes.appending(path: name)) }
+        await waitForMain { lives.allSatisfy { $0.changes.values.contains(where: \.marked) } }
+        let textView = try #require(main.textView)
+        textView.marks.relayout()
+        let stamp = try #require(textView.subviews.lazy.compactMap { $0 as? ChangeStamp }.first { !$0.isHidden })
+        #expect(stamp.accessibilityLabel()?.hasSuffix(", saved, 1 of 2") == true)
+        let id = try #require(lives[0].changes.first { $0.value.marked }?.key)
+        textView.setSelectedRange(NSRange(location: lives[0].changes[id]!.range.location + 1, length: 0))
+        textView.keepChange(nil)
+        #expect(lives[0].changes[id] == nil)
+        #expect(main.statusBar.shown?.text == "Next: spec.md \u{2303}\u{2318}\u{2193}")
+        #expect(main.tabs.selected === main)
+    }
 }

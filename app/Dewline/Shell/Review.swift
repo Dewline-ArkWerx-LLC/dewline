@@ -661,8 +661,8 @@ private final class SessionRow: NSTableCellView {
         let keep = StampButton("Keep Session", keys: "", style: .filled) { decide(true) }
         revert.toolTip = "Puts back the old text of every change in this session. Revert Session (\u{2303}\u{2318}\u{232B})"
         keep.toolTip = "Clears the marks on every change in this session. Keep Session (\u{2325}\u{21E7}\u{2318}\u{21A9})"
-        revert.widthAnchor.constraint(equalTo: keep.widthAnchor).isActive = true
         let row = NSStackView(views: [name, revert, keep])
+        revert.widthAnchor.constraint(equalTo: keep.widthAnchor).isActive = true
         row.spacing = 4
         row.setCustomSpacing(8, after: name)
         row.translatesAutoresizingMaskIntoConstraints = false

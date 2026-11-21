@@ -26,8 +26,10 @@ use super::{
 pub enum Status {
     /// Its content or mode differs from HEAD's or the index's.
     Modified,
-    /// Not in HEAD: staged, added with intent, or untracked.
-    New,
+    /// Not in HEAD, and staged or added with intent.
+    Added,
+    /// In neither the index nor an ignore file.
+    Untracked,
     /// Gone from the working tree, or from the index.
     Deleted,
     /// Staged with the blob of a file the index deletes from HEAD.
@@ -42,9 +44,11 @@ pub enum Status {
 pub struct Statuses {
     pub gitdir: PathBuf,
     pub files: Vec<(PathBuf, Status)>,
-    /// Commits on HEAD's branch that its upstream lacks, when the branch has
-    /// an upstream and both can be walked.
+    /// Commits on HEAD's branch that its upstream lacks, and commits on the
+    /// upstream that the branch lacks, when the branch has an upstream and
+    /// both can be walked.
     pub ahead: Option<u32>,
+    pub behind: Option<u32>,
 }
 
 /// Bounds the work of reading one object: deltas in its chain, and bytes
@@ -127,7 +131,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
         Some(commit) => Some(objects.commit_tree(commit)?),
         None => None,
     };
-    let ahead = head.and_then(|head| ahead(&repo.gitdir, &common, &configs, &objects, head));
+    let lead = head.and_then(|head| lead(&repo.gitdir, &common, &configs, &objects, head));
     let mut head = HashMap::new();
     let mut same = HashSet::new();
     if let Some(tree) = tree {
@@ -161,11 +165,11 @@ pub fn status(folder: &Path) -> Option<Statuses> {
                 .enumerate()
                 .any(|(at, &byte)| byte == b'/' && same.contains(&name[..at]));
         let staged = match head.get(name) {
-            _ if entry.extended & INTENT_TO_ADD != 0 => Some(Status::New),
+            _ if entry.extended & INTENT_TO_ADD != 0 => Some(Status::Added),
             _ if unchanged => None,
             None => {
                 added.push(entry);
-                Some(Status::New)
+                Some(Status::Added)
             }
             Some(&(mode, id)) => (id != entry.id || canonical(mode) != canonical(entry.mode))
                 .then_some(Status::Modified),
@@ -207,7 +211,7 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     let empty = blob_id(b"");
     let mut unmatched = Vec::new();
     for entry in added {
-        if files.get(&entry.name) != Some(&Status::New) || entry.id == empty {
+        if files.get(&entry.name) != Some(&Status::Added) || entry.id == empty {
             continue;
         }
         let from = deleted.get_mut(&(canonical(entry.mode), entry.id));
@@ -266,22 +270,24 @@ pub fn status(folder: &Path) -> Option<Statuses> {
     Some(Statuses {
         gitdir: repo.gitdir,
         files,
-        ahead,
+        ahead: lead.map(|(ahead, _)| ahead),
+        behind: lead.map(|(_, behind)| behind),
     })
 }
 
-/// How many commits `head` has that the upstream of HEAD's branch lacks, as
-/// `git rev-list --count @{u}..HEAD` counts them, walking both newest first
-/// by commit time. None when HEAD is detached, its branch has no upstream,
-/// or the walk reads more than `MAX_AHEAD_WALK` commits, meets one with more
-/// than `MAX_PARENTS` parents, or can't read one.
-fn ahead(
+/// How many commits `head` has that the upstream of HEAD's branch lacks,
+/// and the upstream has that `head` lacks, as `git rev-list --left-right
+/// --count HEAD...@{u}` counts them, walking both newest first by commit
+/// time. None when HEAD is detached, its branch has no upstream, or the walk
+/// reads more than `MAX_AHEAD_WALK` commits, meets one with more than
+/// `MAX_PARENTS` parents, or can't read one.
+fn lead(
     gitdir: &Path,
     common: &Path,
     configs: &[Vec<u8>],
     objects: &Objects,
     head: Oid,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let line = read_line(&gitdir.join("HEAD"))?;
     let branch = line.strip_prefix("ref: refs/heads/")?.trim_end();
     let section = format!("branch \"{branch}\"");
@@ -308,33 +314,32 @@ fn ahead(
     };
 
     // Each commit's sides: 1 reached from HEAD, 2 from the upstream. The
-    // walk ends once every queued commit is the upstream's.
+    // walk ends once every queued commit is both's.
     let mut walk = Lead::default();
     walk.reach(objects, head, 1)?;
     walk.reach(objects, upstream, 2)?;
-    let mut walked = HashSet::new();
-    let mut count = 0;
+    // A commit that gains a side after it was walked passes it on again; the
+    // counts are of the commits left on one side once the walk ends.
+    let mut walked = HashMap::new();
     while walk.open > 0 {
         let (_, id, parents) = walk.queue.pop()?;
         let id = Oid(id);
         walk.dequeue(id);
-        if !walked.insert(id) {
-            continue;
-        }
         let side = walk.sides[&id];
-        if side == 1 {
-            count += 1;
+        if walked.insert(id, side) == Some(side) {
+            continue;
         }
         for parent in parents {
             walk.reach(objects, parent, side)?;
         }
     }
-    Some(count)
+    let count = |side| walk.sides.values().filter(|&&sides| sides == side).count() as u32;
+    Some((count(1), count(2)))
 }
 
 /// The walk's state: each commit's sides, the commits queued by time, how
-/// many times each is queued, how many queued are not the upstream's, and
-/// how many commits were read.
+/// many times each is queued, how many queued are not both's, and how many
+/// commits were read.
 #[derive(Default)]
 struct Lead {
     sides: HashMap<Oid, u8>,
@@ -349,10 +354,10 @@ impl Lead {
     /// past `MAX_AHEAD_WALK` reads, or on a commit with too many parents.
     fn reach(&mut self, objects: &Objects, id: Oid, side: u8) -> Option<()> {
         let sides = self.sides.entry(id).or_default();
-        if *sides & side == 0 {
-            let was_open = *sides & 2 == 0;
+        if *sides | side != *sides {
+            let was_open = *sides != 3;
             *sides |= side;
-            if was_open && *sides & 2 != 0 && self.queued.get(&id).is_some_and(|&n| n > 0) {
+            if was_open && *sides == 3 && self.queued.get(&id).is_some_and(|&n| n > 0) {
                 self.open -= 1;
             }
             self.reads += 1;
@@ -364,7 +369,7 @@ impl Lead {
                 return None;
             }
             let queued = self.queued.entry(id).or_default();
-            if *queued == 0 && *sides & 2 == 0 {
+            if *queued == 0 && *sides != 3 {
                 self.open += 1;
             }
             *queued += 1;
@@ -377,7 +382,7 @@ impl Lead {
     fn dequeue(&mut self, id: Oid) {
         let queued = self.queued.entry(id).or_default();
         *queued -= 1;
-        if *queued == 0 && self.sides[&id] & 2 == 0 {
+        if *queued == 0 && self.sides[&id] != 3 {
             self.open -= 1;
         }
     }
@@ -1533,7 +1538,7 @@ impl Walk<'_> {
                 }
             } else if !self.ignored(&path, is_folder) && (!is_folder || self.holds_untracked(&path))
             {
-                self.files.insert(path, Status::New);
+                self.files.insert(path, Status::Untracked);
             }
         }
     }
@@ -1690,21 +1695,21 @@ mod tests {
             ("c.md", Deleted),
             ("conflict.md", Conflicted),
             ("d.md", Deleted),
-            ("docs/new.md", New),
-            ("e.md", New),
+            ("docs/new.md", Untracked),
+            ("e.md", Untracked),
             ("exec.sh", Modified),
-            ("fresh", New),
-            ("inner", New),
-            ("ita.md", New),
-            ("keep.log", New),
+            ("fresh", Untracked),
+            ("inner", Untracked),
+            ("ita.md", Added),
+            ("keep.log", Untracked),
             ("link", Modified),
             ("moved.md", Deleted),
-            ("moved2.md", New),
+            ("moved2.md", Untracked),
             ("new/guide.md", Renamed),
             ("new/name.md", Renamed),
-            ("notes.md", New),
-            ("staged.md", New),
-            ("two words.md", New),
+            ("notes.md", Untracked),
+            ("staged.md", Added),
+            ("two words.md", Untracked),
         ];
         let expected: Vec<_> = expected
             .iter()
@@ -1745,7 +1750,10 @@ mod tests {
         write(&root, "docs/plan.md", b"# Plan, edited\n");
         assert_eq!(
             statuses(&root.join("docs")),
-            [("new.md".to_owned(), New), ("plan.md".to_owned(), Modified)]
+            [
+                ("new.md".to_owned(), Untracked),
+                ("plan.md".to_owned(), Modified)
+            ]
         );
         assert_eq!(
             statuses(&root.join("docs")).len(),
@@ -1756,9 +1764,12 @@ mod tests {
         // Folders inside an untracked one: each file or folder under them.
         assert_eq!(
             statuses(&root.join("fresh")),
-            [("x.md".to_owned(), New), ("y".to_owned(), New)]
+            [("x.md".to_owned(), Untracked), ("y".to_owned(), Untracked)]
         );
-        assert_eq!(statuses(&root.join("fresh/y")), [("z.md".to_owned(), New)]);
+        assert_eq!(
+            statuses(&root.join("fresh/y")),
+            [("z.md".to_owned(), Untracked)]
+        );
 
         // HEAD's c.md is not under a folder now at its path.
         fs::create_dir(root.join("c.md")).unwrap();
@@ -1844,15 +1855,44 @@ mod tests {
         git(&root, &["branch", "-q", "base", "main~3"]);
         git(&root, &["branch", "-q", "-u", "base"]);
         assert_eq!(status(&root).unwrap().ahead, Some(3));
+        assert_eq!(status(&root).unwrap().behind, Some(0));
         git(&root, &["update-ref", "refs/remotes/origin/main", "main~5"]);
         git(&root, &["remote", "add", "origin", "."]);
         git(&root, &["config", "branch.main.remote", "origin"]);
         git(&root, &["config", "branch.main.merge", "refs/heads/main"]);
-        let count = git(&root, &["rev-list", "--count", "@{u}..HEAD"]);
-        assert_eq!(
-            status(&root).unwrap().ahead,
-            Some(count.trim().parse().unwrap())
+        let lead = |root: &Path| {
+            let found = status(root).unwrap();
+            (found.ahead.unwrap(), found.behind.unwrap())
+        };
+        let counts = |root: &Path| {
+            let counts = git(
+                root,
+                &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+            );
+            let mut counts = counts
+                .split_whitespace()
+                .map(|count| count.parse().unwrap());
+            (counts.next().unwrap(), counts.next().unwrap())
+        };
+        assert_eq!(lead(&root), counts(&root));
+        // The upstream moves on from main~5 too.
+        let tip = git(
+            &root,
+            &[
+                "commit-tree",
+                "-p",
+                "main~5",
+                "-m",
+                "upstream",
+                "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            ],
         );
+        git(
+            &root,
+            &["update-ref", "refs/remotes/origin/main", tip.trim()],
+        );
+        assert_eq!(lead(&root), (5, 1));
+        assert_eq!(lead(&root), counts(&root));
         write(&root, "docs/more/7.md", b"edited\n");
         assert_eq!(
             statuses(&root),
@@ -1928,6 +1968,7 @@ mod tests {
         import(wide(1, 16));
         upstream(&root);
         assert_eq!(status(&root).unwrap().ahead, Some(16));
+        assert_eq!(status(&root).unwrap().behind, Some(1));
         let parents = git(&root, &["rev-list", "--max-count=17", "--all"]);
         let mut args = vec![
             "commit-tree",
@@ -1954,8 +1995,8 @@ mod tests {
         assert_eq!(
             statuses(&root),
             [
-                ("CLAUDE.md".to_owned(), Status::New),
-                ("docs/plan.md".to_owned(), Status::New)
+                ("CLAUDE.md".to_owned(), Status::Added),
+                ("docs/plan.md".to_owned(), Status::Added)
             ]
         );
         let outside = tempfile::tempdir().unwrap();

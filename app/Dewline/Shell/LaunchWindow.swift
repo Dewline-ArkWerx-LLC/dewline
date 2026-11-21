@@ -19,7 +19,7 @@ final class LaunchWindowController: NSWindowController, NSTableViewDataSource, N
 
     private let list = LaunchList()
     private let filter = NSSearchField()
-    private static let emptyText = "Open the folder your agent works in. Its edits show up marked, ready to keep or revert."
+    static let emptyText = "Open the folder your agent works in. Its edits show up marked, ready to keep or revert."
     private let empty = NSTextField(wrappingLabelWithString: emptyText)
     private let lockup = NSImageView(image: NSImage(named: "Lockup")!)
     private let tagline = NSTextField(labelWithString: "Notes you can grep.")

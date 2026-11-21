@@ -116,8 +116,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// The location of the heading whose section is at the top of the page.
     private var section: Int?
     private var showsIgnored: Bool
-    /// Whether code files opened when the rows were listed.
-    private var listsCode: Bool
+    /// Whether the Outline holds one heading, and so is collapsed.
+    private var oneHeading = false
     /// The rows are listed once the window has drawn its first frame; until then the sidebar shows empty.
     private var filled = false
     /// The open file as `show` last had it before the rows were listed.
@@ -139,7 +139,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         header = folder.map { _ in SidebarHeader() }
         index = folder.map(FolderIndex.of)
         showsIgnored = Preferences.shared.showsIgnored
-        listsCode = CodeFile.isOn
         showsOutline = folder.map { UserDefaults.standard.bool(forKey: "Outline " + $0.url.path) } ?? false
         super.init(nibName: nil, bundle: nil)
         find?.reveal = { [weak self] url, match, newTab in self?.reveal(url, match, newTab) }
@@ -204,6 +203,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
         root.material = .sidebar
         root.blendingMode = .behindWindow
+        let tint = SidebarTint(frame: root.bounds)
+        tint.autoresizingMask = [.width, .height]
+        root.addSubview(tint)
         var top = root.topAnchor
         if let header {
             header.picker.folderMenu = { [weak self] in self?.folderMenu() ?? NSMenu() }
@@ -423,6 +425,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         outlineSection.children = rows
         reload()
+        // One heading tells nothing the note's first line doesn't; its section stays shut until a second comes.
+        if rows.count == 1 {
+            outlineView.collapseItem(outlineSection)
+        } else if oneHeading {
+            outlineView.expandItem(outlineSection)
+        }
+        oneHeading = rows.count == 1
     }
 
     /// Sets in medium the heading whose section holds `location`.
@@ -537,9 +546,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     @objc private func preferencesChanged() {
-        guard Preferences.shared.showsIgnored != showsIgnored || CodeFile.isOn != listsCode else { return }
+        guard Preferences.shared.showsIgnored != showsIgnored else { return }
         showsIgnored = Preferences.shared.showsIgnored
-        listsCode = CodeFile.isOn
         relist { _ in true }
     }
 
@@ -614,7 +622,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let header, let folder else { return }
         let key = Self.openFolderItem.map { KeyEquivalent($0.keyEquivalent, $0.keyEquivalentModifierMask).glyphs } ?? ""
         header.picker.show(FileManager.default.displayName(atPath: folder.url.path), branch: gitBranch(at: folder.url),
-            changed: index?.git.changed.count ?? 0, ahead: index?.git.ahead ?? 0, openKey: key)
+            changed: index?.git.changed.count ?? 0, ahead: index?.git.ahead ?? 0, behind: index?.git.behind ?? 0, openKey: key)
     }
 
     /// The folder pop-up: Open Folder…, Open Recent, Copy Branch Name, Reveal in Finder.
@@ -684,27 +692,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     @objc private func changesChanged() {
         guard filled else { return }
         var waiting: [String: [WaitingCount]] = [:]
-        for note in Review.closedNotes() {
-            let path = note.url.standardizedFileURL.path
-            let writer = MarkWriter(note.origin)
-            if !(waiting[path] ?? []).contains(where: { $0.writer.name == writer.name }) {
-                waiting[path, default: []].append(WaitingCount(writer: writer, count: nil))
-            }
+        let (open, closed) = Review.waiting(in: view.window)
+        for note in closed {
+            waiting[note.url.standardizedFileURL.path, default: []].add(MarkWriter(note.origin), note.count)
         }
-        for live in Review.files(in: view.window) {
-            var counts: [WaitingCount] = []
+        for live in open {
             for change in live.changes.values where change.marked {
-                let writer = MarkWriter(change.origin)
-                if let index = counts.firstIndex(where: { $0.writer.name == writer.name }) {
-                    counts[index] = WaitingCount(writer: writer, count: (counts[index].count ?? 0) + 1)
-                } else {
-                    counts.append(WaitingCount(writer: writer, count: 1))
-                }
+                waiting[live.url.standardizedFileURL.path, default: []].add(MarkWriter(change.origin), 1)
             }
-            if !counts.isEmpty { waiting[live.url.standardizedFileURL.path] = counts.sorted { $0.count ?? 0 > $1.count ?? 0 } }
-        }
-        for note in Review.closedNotes() where waiting[note.url.standardizedFileURL.path] == nil {
-            waiting[note.url.standardizedFileURL.path] = [WaitingCount(writer: MarkWriter(note.origin), count: note.count)]
         }
         waitingChanges = waiting
         refreshRows()
@@ -749,12 +744,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// A closed folder's roll-up: each writer with changes waiting in a note under it, without counts.
+    /// A closed folder's roll-up: each writer's changes waiting in the notes under it, summed; git's uncommitted
+    /// changes show as the folder's dot instead.
     private func rollUp(under folder: String) -> [WaitingCount] {
         var writers: [WaitingCount] = []
-        for (path, counts) in waitingChanges.sorted(by: { $0.key < $1.key }) where path.hasPrefix(folder + "/") {
-            for count in counts where !writers.contains(where: { $0.writer.name == count.writer.name }) {
-                writers.append(WaitingCount(writer: count.writer, count: nil))
+        for (path, counts) in waitingChanges where path.hasPrefix(folder + "/") {
+            for count in counts where count.writer.writer != .git {
+                writers.add(count.writer, count.count)
             }
         }
         return writers
@@ -1314,5 +1310,31 @@ extension MainWindowController {
     @objc func revealInSidebar(_ sender: Any?) {
         guard let url = (document as? NSDocument)?.fileURL else { return }
         sidebar.revealFile(url)
+    }
+}
+
+/// The theme's sidebar tint at 70% over the sidebar's material, so the sidebar takes the theme's temperature rather
+/// than the wallpaper's.
+private final class SidebarTint: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: ThemeStore.didChange, object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("SidebarTint is built in code")
+    }
+
+    @objc private func redraw() {
+        needsDisplay = true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Chrome.color(.sidebarTint).withAlphaComponent(0.7).setFill()
+        dirtyRect.fill(using: .sourceOver)
     }
 }

@@ -9,8 +9,10 @@ final class GitStates {
     static let changed = Notification.Name("DewlineGitStatesChanged")
     private let folder: URL
     private var files: [String: GitFileState] = [:]
-    /// The commits HEAD's branch has that its upstream lacks; 0 without an upstream.
+    /// The commits HEAD's branch has that its upstream lacks, and those the upstream has that it lacks; 0 without an
+    /// upstream.
     private(set) var ahead = 0
+    private(set) var behind = 0
     /// Every folder above a file in `files`, by its path under the folder.
     private var dirtyFolders: Set<String> = []
     /// Watches a gitdir outside the folder.
@@ -33,15 +35,16 @@ final class GitStates {
         if let state = files[path] { return state }
         while let slash = path.lastIndex(of: "/") {
             path = String(path[..<slash])
-            if files[path] == .new { return .new }
+            if files[path] == .new(staged: false) { return .new(staged: false) }
         }
         return nil
     }
 
-    /// The files under the folder that differ from the last commit, by path, with their states; an untracked folder
-    /// holding no tracked file is one entry.
+    /// The files under the folder that differ from the last commit, conflicts first, then by path, with their states;
+    /// an untracked folder holding no tracked file is one entry.
     var changed: [(url: URL, state: GitFileState)] {
-        files.sorted { $0.key < $1.key }.map { (folder.appending(path: $0.key), $0.value) }
+        files.sorted { ($0.value == .conflicted ? 0 : 1, $0.key) < ($1.value == .conflicted ? 0 : 1, $1.key) }
+            .map { (folder.appending(path: $0.key), $0.value) }
     }
 
     /// Whether a file under `folder`, a folder under the folder, differs from the last commit.
@@ -76,9 +79,11 @@ final class GitStates {
         let kept = status == nil && gitdir.map { FileManager.default.fileExists(atPath: $0.path) } == true
         let files = status?.files ?? [:]
         let ahead = status?.ahead ?? 0
-        if !kept && (files != self.files || ahead != self.ahead) {
+        let behind = status?.behind ?? 0
+        if !kept && (files != self.files || ahead != self.ahead || behind != self.behind) {
             self.files = files
             self.ahead = ahead
+            self.behind = behind
             dirtyFolders = Set(files.keys.flatMap { path in
                 path.indices.filter { path[$0] == "/" }.map { String(path[..<$0]) }
             })

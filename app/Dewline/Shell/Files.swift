@@ -22,7 +22,7 @@ struct FolderEntry: Equatable {
         !isFolder && CodeFile.language(of: url) != nil
     }
 
-    /// A note, or a code file while Open code files is on: the files the sidebar and Quick Open open.
+    /// A note, or a code file while Open code files is on: the files the sidebar, Quick Open and Find in Files open.
     var opens: Bool {
         isMarkdown || isCode && CodeFile.isOn
     }

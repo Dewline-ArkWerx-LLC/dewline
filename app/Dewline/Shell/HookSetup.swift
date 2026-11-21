@@ -192,12 +192,19 @@ enum HookSetup {
     /// Folders opened from the guide's setup list, whose hooks row already asked this launch.
     static var askedThisLaunch: Set<String> = []
 
+    /// True when `changes` hold a change no hook named, made outside a shell command: one hooks would have named. The
+    /// offer waits for it, so it comes once the user has seen why hooks matter.
+    static func unnamedEdit(in changes: [UInt64: LiveFile.Change]) -> Bool {
+        changes.values.contains { $0.marked && $0.origin == .external && !$0.shell }
+    }
+
     /// Offers Set Up on `window` if an agent's hooks are missing, once for each folder that holds an agent's files;
-    /// doctor reads `folder`'s project settings too. A folder counts as checked once doctor has run and found nothing
-    /// missing or the sheet has shown, so Not Now holds for that folder only.
+    /// doctor reads `folder`'s project settings too. Its window asks once an unnamed edit lands in a note there. A
+    /// folder counts as checked once doctor has run and found nothing missing or the sheet has shown, so Not Now holds
+    /// for that folder only.
     static func offer(on window: NSWindow, in folder: URL) {
         let key = folder.path
-        // While the guide runs it is the one thing asking; a later window offers.
+        // While the guide runs it is the one thing asking; a later edit offers.
         guard WelcomeGuide.running == nil, !checking.contains(key), !askedThisLaunch.contains(key), !UserDefaults.standard.bool(forKey: declinedKey),
             !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,

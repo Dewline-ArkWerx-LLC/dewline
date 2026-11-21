@@ -173,7 +173,7 @@ extension EditorTextView {
         let storage = textStorage!
         let padding = textContainer?.lineFragmentPadding ?? 0
         let left = textContainerOrigin.x + padding
-        let width = (textContainer?.size.width ?? 0) - 2 * padding
+        let width = (textContainer?.column ?? 0) - 2 * padding
         var drawn = Set<Int>()
         storage.enumerateAttribute(.dewlineCallout, in: visible) { value, range, _ in
             guard let type = value as? String else { return }

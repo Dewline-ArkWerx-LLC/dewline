@@ -232,7 +232,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     private var columnWidth: CGFloat {
         guard let textView, let container = textView.textContainer else { return 0 }
-        return container.size.width - 2 * container.lineFragmentPadding
+        return container.column - 2 * container.lineFragmentPadding
     }
 
     private func measureHangers() {

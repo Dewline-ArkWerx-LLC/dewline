@@ -245,7 +245,7 @@ class CaretTextView: NSTextView {
     }
 
     private func line(around caret: NSRect) -> NSRect {
-        NSRect(x: textContainerOrigin.x, y: caret.minY, width: textContainer!.size.width, height: caret.height)
+        NSRect(x: textContainerOrigin.x, y: caret.minY, width: textContainer!.column, height: caret.height)
     }
 
     private var cursorColor: CGColor {

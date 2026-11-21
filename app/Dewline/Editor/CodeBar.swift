@@ -134,22 +134,20 @@ extension EditorTextView {
         guard let point, !styler.showsSource, let storage = textStorage, storage.length > 0, let window else { return codeBar.show(block: nil) }
         let index = min(characterIndexForInsertion(at: point), storage.length - 1)
         var whole = NSRange()
-        guard let start = storage.attribute(.dewlineCode, at: index, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length)) as? Int,
-            let fence = styler.map.blocks(touching: NSRange(location: start, length: 0)).lazy
+        guard let code = storage.attribute(.dewlineCode, at: index, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length)) as? CodeWell,
+            let fence = styler.map.blocks(touching: NSRange(location: code.start, length: 0)).lazy
                 .flatMap({ block in block.spans.map { $0.shifted(by: block.range.location) } })
-                .first(where: { $0.kind == .fencedCode && $0.range.location == start })
+                .first(where: { $0.kind == .fencedCode && $0.range.location == code.start })
         else { return codeBar.show(block: nil) }
         func line(_ at: Int) -> NSRect {
             convert(window.convertFromScreen(firstRect(forCharacterRange: NSRange(location: at, length: 0), actualRange: nil)), from: nil)
         }
-        let padding = textContainer?.lineFragmentPadding ?? 0
-        let (top, bottom) = (line(whole.location), line(max(NSMaxRange(whole) - 1, whole.location)))
-        let well = NSRect(x: textContainerOrigin.x + padding, y: top.minY, width: (textContainer?.size.width ?? 0) - 2 * padding, height: bottom.maxY - top.minY)
+        let well = codeWell(code, top: line(whole.location), bottom: line(max(NSMaxRange(whole) - 1, whole.location)))
         guard well.contains(point) else { return codeBar.show(block: nil) }
         let text = storage.mutableString
         let opening = text.lineRange(for: NSRange(location: fence.range.location, length: 0))
         codeBar.show(
-            block: start, language: CodeHighlights.language(text.substring(with: opening).trimmingCharacters(in: .newlines)),
+            block: code.start, language: CodeHighlights.language(text.substring(with: opening).trimmingCharacters(in: .newlines)),
             code: text.substring(with: fence.content), well: well
         )
     }

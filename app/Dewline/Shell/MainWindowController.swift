@@ -370,6 +370,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc private func changesChanged() {
         updateState()
         countChanges()
+        offerHooks()
+    }
+
+    /// Offers hook setup for the folder once this tab's note shows an edit no hook named.
+    private func offerHooks() {
+        guard let window, let folder, let live = (document as? MarkdownDocument)?.live, HookSetup.unnamedEdit(in: live.changes) else { return }
+        HookSetup.offer(on: window, in: folder.url)
     }
 
     /// The Changes segment counts what Activity does: the window's marked changes and its notes changed while closed.
@@ -451,7 +458,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         enterSharedFullScreen()
         (NSApp.delegate as? AppDelegate)?.closeLaunchWindow()
         if let window { Updates.shared.windowDidShow(window) }
-        if let window, let folder { HookSetup.offer(on: window, in: folder.url) }
+        offerHooks()
         shown(at: place)
     }
 

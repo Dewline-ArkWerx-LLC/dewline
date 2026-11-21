@@ -406,7 +406,7 @@ final class Rail: NSScroller {
             let visible = textView.visibleRect
             let keys = mark.y < visible.minY ? "\u{2303}\u{2318}\u{2191}" : mark.y > visible.maxY ? "\u{2303}\u{2318}\u{2193}" : ""
             // The pill's 8 pt sides, its 9 pt rule and 8 pt clear of the text column.
-            let column = textView.textContainerOrigin.x + (textView.textContainer.map { $0.size.width - $0.lineFragmentPadding } ?? 0)
+            let column = textView.textContainerOrigin.x + (textView.textContainer.map { $0.column - $0.lineFragmentPadding } ?? 0)
             let width = right - textView.convert(NSPoint(x: column, y: 0), to: labels).x - 8 - 25
             let text = Self.label(writer: writer, place: place, time: time, keys: keys, intro: introducing && hovered == nil, width: width)
             labels.items = text.map { [RailLabels.Item(text: $0, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)] } ?? []

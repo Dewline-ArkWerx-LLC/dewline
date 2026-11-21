@@ -551,7 +551,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window?.makeFirstResponder(textView)
     }
 
-    private var placeUpdate: Task<Void, Never>?
+    private(set) var placeUpdate: Task<Void, Never>?
 
     /// The status bar's idle line in a folder window, once the caret rests: the note's path from the folder and the
     /// caret's line and column.

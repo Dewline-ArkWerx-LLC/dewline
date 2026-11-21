@@ -5,12 +5,12 @@ import MdCore
 /// one of 80 characters or more, if any) with the markers removed and its links marked, and its first line of code; a
 /// sample stands in for anything missing.
 struct Excerpt {
-    var heading = "Public beta plan"
-    var paragraph = "Ship the notarized build to the first forty testers. Public beta opens on 2 December, after the dry run. Steps in the release checklist."
-    var links = [NSRange(location: 118, length: 17)]
+    var heading = "Field notes"
+    var paragraph = "The rain held off until noon, so we took the long way home past the harbor and counted the boats. Notes from the walk are in the trip log."
+    var links = [NSRange(location: 125, length: 12)]
     /// A few words to show the selection on.
-    var selection = NSRange(location: 71, length: 13)
-    var code = "xcodebuild -scheme Dewline"
+    var selection = NSRange(location: 41, length: 12)
+    var code = "let boats = 14"
 
     @MainActor static var open: Excerpt {
         var excerpt = Excerpt()

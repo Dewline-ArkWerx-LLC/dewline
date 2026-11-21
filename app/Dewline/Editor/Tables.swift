@@ -5,7 +5,8 @@ import AppKit
 /// sits one row's pitch above the first row. A column left unaligned whose body cells all start with a digit aligns
 /// right. A row the selection touches, or the head with its delimiter row, shows its source.
 /// Columns are as wide as their widest cell, and only widen while the selection stays in the table. A table wider than
-/// the text shrinks its columns toward their longest words, and its rows draw their cells wrapped in their columns.
+/// the text shrinks its columns toward their least widths (a cell of 12 characters or fewer and a code span never
+/// wrap), gives the room left to its longest-text columns first, and its rows draw their cells wrapped in their columns.
 @MainActor
 final class Tables {
     enum Alignment {
@@ -128,13 +129,14 @@ final class Tables {
         let room = available - gap * CGFloat(count - 1)
         let wraps = available > 0 && widths.reduce(0, +) > room
         if wraps {
-            let words = lines.map { line in
+            let narrowest = lines.map { line in
                 line.cells.prefix(count).map { cell in
                     let code = line.code.filter { NSIntersectionRange($0.range, cell.content) == $0.range }
-                    return Self.longestWord(styled.attributedSubstring(from: cell.content), code: code.map { NSRange(location: $0.range.location - cell.content.location, length: $0.range.length) })
+                    return Self.least(styled.attributedSubstring(from: cell.content), code: code.map { NSRange(location: $0.range.location - cell.content.location, length: $0.range.length) })
                 }
             }
-            let least = (0..<count).map { column in min(words.map { $0.count > column ? $0[column] : 0 }.max() ?? 0, room / CGFloat(count)) }
+            var least = (0..<count).map { column in narrowest.map { $0.count > column ? $0[column] : 0 }.max() ?? 0 }
+            if least.reduce(0, +) > room { least = least.map { min($0, room / CGFloat(count)) } }
             widths = Self.fit(widths, least: least, into: room)
         }
         var starts: [CGFloat] = [0]
@@ -210,16 +212,23 @@ final class Tables {
         return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
     }
 
-    /// Column widths that fill `room`: each column keeps its `least` and shares what is left in proportion to how far
-    /// its widest cell reaches past that.
+    /// Column widths that fill `room`: each column keeps its `least`, and what is left goes to the columns with the
+    /// widest cells first, each up to its widest cell.
     private static func fit(_ widths: [CGFloat], least: [CGFloat], into room: CGFloat) -> [CGFloat] {
-        let spare = zip(widths, least).map { max($0 - $1, 0) }
-        let share = max(room - least.reduce(0, +), 0) / max(spare.reduce(0, +), 1)
-        return zip(least, spare).map { ($0 + $1 * min(share, 1)).rounded(.down) }
+        var fitted = least
+        var slack = max(room - least.reduce(0, +), 0)
+        for column in widths.indices.sorted(by: { widths[$0] > widths[$1] }) {
+            let grow = min(max(widths[column] - fitted[column], 0), slack)
+            fitted[column] += grow
+            slack -= grow
+        }
+        return fitted.map { $0.rounded(.down) }
     }
 
-    /// The width of a cell's longest word, each code span in it counting as one: a path in code breaks at no slash.
-    private static func longestWord(_ cell: NSAttributedString, code: [NSRange]) -> CGFloat {
+    /// The narrowest a cell draws: all of it when it has 12 characters or fewer, else its longest word, each code span
+    /// in it counting as one: a path in code breaks at no slash.
+    private static func least(_ cell: NSAttributedString, code: [NSRange]) -> CGFloat {
+        if cell.string.trimmingCharacters(in: .whitespaces).count <= 12 { return cell.size().width.rounded(.up) }
         var widest = code.map { cell.attributedSubstring(from: $0).size().width }.max() ?? 0
         (cell.string as NSString).enumerateSubstrings(in: NSRange(location: 0, length: cell.length), options: .byWords) { _, word, _, _ in
             widest = max(widest, cell.attributedSubstring(from: word).size().width)
@@ -227,11 +236,13 @@ final class Tables {
         return widest.rounded(.up)
     }
 
-    /// A cell's text, aligned for drawing in its column, its code spans on their background.
+    /// A cell's text, aligned for drawing in its column, its code spans on their background with no break at their blanks.
     private static func cell(_ text: NSAttributedString, _ alignment: Alignment) -> NSAttributedString {
         let aligned = NSMutableAttributedString(attributedString: text)
         aligned.enumerateAttribute(.dewlineCodeChip, in: NSRange(location: 0, length: aligned.length)) { value, run, _ in
-            if value != nil { aligned.addAttribute(.backgroundColor, value: ThemeStore.shared.color(.codeBackground), range: run) }
+            guard value != nil else { return }
+            aligned.addAttribute(.backgroundColor, value: ThemeStore.shared.color(.codeBackground), range: run)
+            aligned.mutableString.replaceOccurrences(of: " ", with: "\u{00A0}", range: run)
         }
         guard alignment != .left else { return aligned }
         let style = ThemeStore.shared.paragraphStyle(lineHeight: ThemeStore.shared.bodyLineHeight).mutableCopy() as! NSMutableParagraphStyle

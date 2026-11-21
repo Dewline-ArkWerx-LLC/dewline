@@ -14,7 +14,6 @@
   --mk-on-accent: #FFFFFF;
   --mk-add: #3C8A5A;
   --mk-mod: #B07A1E;
-  --leaf: #418273;
   --fp-edge: calc(-1 * ((100vw - min(100vw, 80rem)) / 2 + var(--gutter)));
 }
 @media (prefers-color-scheme: dark) {
@@ -29,53 +28,18 @@
     --mk-on-accent: #06120F;
     --mk-add: #6CBB8A;
     --mk-mod: #D9A452;
-    --leaf: #4E9C8A;
   }
 }
 .top nav a[aria-current="page"] { color: var(--ink); }
 .top nav a[aria-current="page"]::after { transform: none; background: var(--dawn); }
 
-/* Hero: two lines of display type over a sun cresting the horizon. */
+/* Hero: two lines of display type, centered. */
 .fh { position: relative; overflow-x: clip; }
-.fh-in { position: relative; z-index: 1; padding-block: clamp(3.5rem, 8vw, 6.5rem) clamp(9rem, 15vw, 12.5rem); text-align: center; }
+.fh-in { position: relative; z-index: 1; padding-block: clamp(3.5rem, 8vw, 6.5rem) clamp(3.5rem, 8vw, 6.5rem); text-align: center; }
 .fh-h { text-wrap: balance; }
 .fh .lead { margin: 1.75rem auto 0; max-width: 33rem; text-wrap: pretty; }
 .fh .get { justify-content: center; }
 .fh .meta { margin-top: 1.25rem; }
-.fh-dawn { position: absolute; left: 0; right: 0; bottom: 3px; height: clamp(9rem, 20vw, 15rem); pointer-events: none; }
-.fh-sky {
-  position: absolute; inset: 0; overflow: hidden;
-  mask-image: linear-gradient(to top, #000 30%, transparent), linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
-  mask-composite: intersect;
-  --sun: var(--dawn);
-  --core: color-mix(in oklab, var(--dawn) 34%, var(--paper));
-  --a: 24%;
-}
-@media (prefers-color-scheme: dark) {
-  .fh-sky { --core: color-mix(in oklab, var(--dawn) 40%, #FFF1E8); --a: 40%; }
-}
-.fh-rise { position: absolute; inset: 0; }
-.fh-halo, .fh-band, .fh-sun { position: absolute; left: 50%; top: 100%; aspect-ratio: 1; border-radius: 50%; translate: -50% -50%; }
-.fh-halo {
-  width: min(64rem, 120vw);
-  background: radial-gradient(closest-side,
-    color-mix(in oklab, var(--sun) var(--a), transparent) 0%,
-    color-mix(in oklab, var(--sun) calc(var(--a) * 0.45), transparent) 30%,
-    color-mix(in oklab, var(--leaf) calc(var(--a) * 0.4), transparent) 58%,
-    transparent 100%);
-}
-.fh-band { border: 1px solid color-mix(in oklab, var(--leaf) 26%, transparent); }
-.fh-band:nth-of-type(2) { width: min(16rem, 40vw); border-color: color-mix(in oklab, var(--sun) 32%, transparent); }
-.fh-band:nth-of-type(3) { width: min(25rem, 62vw); }
-.fh-band:nth-of-type(4) { width: min(36rem, 90vw); border-color: color-mix(in oklab, var(--leaf) 14%, transparent); }
-.fh-sun {
-  width: min(9rem, 24vw);
-  background: radial-gradient(closest-side, var(--core) 0%, color-mix(in oklab, var(--sun) 40%, var(--core)) 62%, color-mix(in oklab, var(--sun) 80%, var(--core)) 92%, var(--sun) 99%, transparent 100%);
-  box-shadow: 0 0 22px 2px color-mix(in oklab, var(--sun) 40%, transparent), 0 0 80px 10px color-mix(in oklab, var(--sun) 18%, transparent);
-}
-.fh-dew { position: absolute; left: 0; top: 8%; width: 100%; height: 55%; }
-.fh-dew circle { fill: var(--leaf); opacity: 0.6; }
-.fh-dew circle:nth-child(3n) { fill: var(--dawn); }
 
 /* Feature rows */
 .frow { padding-block: clamp(6rem, 11vw, 9.5rem); overflow-x: clip; }
@@ -104,48 +68,14 @@
 .fmore:hover { text-decoration-color: var(--ink); }
 .arr { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 
-/* The scene: a panel that runs past the window on every side and out to the page's edge on its own,
-   the window above it. Each tint is a time of morning: a sun low behind the window, its rings, dew. */
+/* The scene: a flat panel that runs past the window on every side and out to the page's edge on its own,
+   the window above it. */
 .fscene { position: relative; container-type: inline-size; }
 .fpanel {
   position: absolute; z-index: 0; top: -3.25rem; bottom: -3.25rem; left: -2.75rem; right: var(--fp-edge);
-  border-radius: 2rem 0 0 2rem; overflow: hidden;
-  --sky-a: #F4D8C6; --sky-b: #F8ECE2; --glow: var(--dawn); --ring: var(--dawn); --dot: var(--leaf); --sx: 78%; --sy: 112%;
-  background:
-    radial-gradient(circle at var(--sx) var(--sy), color-mix(in oklab, var(--glow) 34%, transparent) 0, transparent 46%),
-    repeating-radial-gradient(circle at var(--sx) var(--sy), transparent 0 3.4rem, color-mix(in oklab, var(--ring) 16%, transparent) 3.4rem calc(3.4rem + 1px)),
-    linear-gradient(170deg, var(--sky-a), var(--sky-b));
+  border-radius: 2rem 0 0 2rem; background: var(--mist);
 }
-.frow.flip .fpanel { left: var(--fp-edge); right: -2.75rem; border-radius: 0 2rem 2rem 0; --sx: 22%; }
-.fp-sun, .fp-dew { position: absolute; inset: 0; }
-.fp-sun {
-  left: calc(var(--sx) - 4.5rem); top: calc(var(--sy) - 4.5rem); width: 9rem; height: 9rem; border-radius: 50%;
-  background: radial-gradient(closest-side, color-mix(in oklab, var(--glow) 55%, #FFF6EE), color-mix(in oklab, var(--glow) 80%, transparent) 88%, transparent);
-  opacity: 0.55; filter: blur(2px);
-}
-.fp-dew {
-  background-image: radial-gradient(circle, color-mix(in oklab, var(--dot) 55%, transparent) 0 1.2px, transparent 1.6px);
-  background-size: 22px 22px;
-  mask-image: linear-gradient(to bottom, #000, transparent 60%);
-  opacity: 0.55;
-}
-.t-dew   { --sky-a: #D8E9E1; --sky-b: #EEF5F1; --glow: #6FB09B; --ring: var(--leaf); --dot: var(--leaf); }
-.t-tide  { --sky-a: #D3E4E4; --sky-b: #F1EDE4; --glow: var(--dawn); --ring: #4F8E93; --dot: #4F8E93; --sy: 118%; }
-.t-ember { --sky-a: #F0C9B4; --sky-b: #F6E6DA; --glow: #D9643F; --ring: var(--dawn); --dot: var(--dawn); }
-.t-moss  { --sky-a: #DCE7D6; --sky-b: #F3F1E6; --glow: #C98A3A; --ring: var(--leaf); --dot: var(--leaf); --sy: 116%; }
-.t-dawn2 { --sky-a: #EBD6CF; --sky-b: #E9EEEA; --glow: var(--dawn); --ring: #9E6B5E; --dot: var(--leaf); }
-.t-night { --sky-a: #1F3A36; --sky-b: #3B4C47; --glow: #E0603E; --ring: #8FC2B4; --dot: #8FC2B4; --sy: 114%; }
-@media (prefers-color-scheme: dark) {
-  .fpanel   { --sky-a: #2A1C17; --sky-b: #131B19; }
-  .t-dew    { --sky-a: #12251F; --sky-b: #0E1715; }
-  .t-tide   { --sky-a: #11232A; --sky-b: #141A18; }
-  .t-ember  { --sky-a: #331C14; --sky-b: #151817; }
-  .t-moss   { --sky-a: #18241A; --sky-b: #141714; }
-  .t-dawn2  { --sky-a: #2A1A1A; --sky-b: #10191A; }
-  .t-night  { --sky-a: #1A2E2A; --sky-b: #0D1513; }
-  .fp-sun { opacity: 0.4; }
-  .fp-dew { opacity: 0.35; }
-}
+.frow.flip .fpanel { left: var(--fp-edge); right: -2.75rem; border-radius: 0 2rem 2rem 0; }
 
 /* The window: a thin glass frame, then the app. Everything inside is sized in em off one font size
    that follows the scene's width, so the window scales as a whole. */
@@ -158,6 +88,9 @@
 @media (prefers-color-scheme: dark) {
   .fwin { background: color-mix(in oklab, #FFFFFF 6%, transparent); border-color: rgba(225, 235, 230, 0.12); box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.8); }
 }
+.fwin > img { display: block; width: 100%; height: auto; border-radius: 0.75rem; }
+.fwin.tall { max-width: 17rem; margin-inline: auto; }
+.fwin figcaption { padding: 0.875rem 0.5rem 0.5rem; font-size: 0.9375rem; line-height: 1.5; color: var(--body); }
 .mk {
   overflow: hidden; border-radius: 0.75rem; border: 1px solid var(--mk-rule);
   background: var(--mk-paper); color: var(--mk-ink);
@@ -356,9 +289,9 @@
 .mk-term .tl { display: inline-block; }
 .mk-term .p { color: #E0603E; }
 .mk-term .cur { display: inline-block; width: 0.55em; height: 1.1em; vertical-align: -0.2em; background: #D5E1DC; }
-.t-night ~ .fwin { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.14); }
-.fpage .t-night ~ .fwin .mk { border-color: #22302C; }
-.fpage .t-night ~ .fwin .mk-bar { background: #111D1A; border-color: #22302C; color: #D5E1DC; }
+#cli .fwin { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.14); }
+.fpage #cli .fwin .mk { border-color: #22302C; }
+.fpage #cli .fwin .mk-bar { background: #111D1A; border-color: #22302C; color: #D5E1DC; }
 
 /* Narrow windows: the sidebar sits above the note, in the rows that are about it. */
 @container (max-width: 30rem) {
@@ -417,9 +350,6 @@
    window rises, then the window's own moment. features.js arms only scenes still below the fold
    and adds .is-on when one enters; armed animations wait paused on their first frame. */
 @media screen and (prefers-reduced-motion: no-preference) {
-  .fh-rise { animation: fh-rise 1800ms var(--ease-reveal) 350ms both; }
-  .fh-dew { animation: fade-in 1200ms ease-out 1400ms both; }
-  .fh-halo { animation: fh-breathe 7s ease-in-out 2.2s infinite alternate; }
   .fh .lead { animation: rise 800ms var(--ease-reveal) 250ms both; }
   .fh .get, .fh .meta { animation: rise 800ms var(--ease-reveal) 350ms both; }
 
@@ -479,8 +409,6 @@
   .fx .armed :is(.mk-chg, .mk-chg *, .mk-review, .mk-rail i, .mk-li, .gs, .mk-two, .mk-mm *, .mk-math, .mk-code, .mk-hits, .mk-hf, .mk-hl, .mk-pop, .mk-back, .mk-sheet, .mk-mi, .tl) { animation-play-state: paused; }
   .fx .armed.is-on :is(.mk-chg, .mk-chg *, .mk-review, .mk-rail i, .mk-li, .gs, .mk-two, .mk-mm *, .mk-math, .mk-code, .mk-hits, .mk-hf, .mk-hl, .mk-pop, .mk-back, .mk-sheet, .mk-mi, .tl) { animation-play-state: running; }
 }
-@keyframes fh-rise { from { opacity: 0; transform: translateY(40%); } }
-@keyframes fh-breathe { to { opacity: 0.8; scale: 0.95; } }
 @keyframes fp-open { from { clip-path: inset(0 0 0 100% round 2rem 0 0 2rem); } to { clip-path: inset(0 round 2rem 0 0 2rem); } }
 @keyframes fp-open-l { from { clip-path: inset(0 100% 0 0 round 0 2rem 2rem 0); } to { clip-path: inset(0 round 0 2rem 2rem 0); } }
 @keyframes fw-rise { from { opacity: 0; transform: translateY(2rem) scale(0.985); } }

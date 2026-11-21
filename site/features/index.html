@@ -63,50 +63,23 @@
       <h1 id="fh-h" class="hl fh-h"><span class="ln"><span>Everything</span></span> <span class="ln"><span>in the app.</span></span></h1>
       <p class="lead">Dewline edits the Markdown files you already keep, and every feature on this page is built in. There are no plugins to find or update.</p>
       <div class="get">
-        <a class="btn" href="/download">Download for macOS 26</a>
+        <a class="btn" href="/download">Download for Mac</a>
       </div>
-      <p class="meta">Free to start, with no account and no telemetry.</p>
+      <p class="meta">macOS 26 or later. Free to start, with no account and no telemetry.</p>
     </div>
-    <div class="fh-dawn" aria-hidden="true">
-      <div class="fh-sky">
-        <div class="fh-rise"><i class="fh-halo"></i><i class="fh-band"></i><i class="fh-band"></i><i class="fh-band"></i><i class="fh-sun"></i></div>
-        <svg class="fh-dew" viewBox="0 0 800 100" preserveAspectRatio="none"><circle cx="60" cy="70" r="1.6"/><circle cx="130" cy="34" r="1.2"/><circle cx="214" cy="58" r="1.4"/><circle cx="268" cy="20" r="1"/><circle cx="330" cy="76" r="1.1"/><circle cx="472" cy="16" r="0.9"/><circle cx="520" cy="62" r="1.5"/><circle cx="586" cy="30" r="1.2"/><circle cx="648" cy="70" r="1.3"/><circle cx="712" cy="40" r="1.1"/><circle cx="752" cy="78" r="1"/><circle cx="400" cy="6" r="0.9"/></svg>
-      </div>
-    </div>
-    <div class="horizon" aria-hidden="true"></div>
   </section>
 
   <section class="frow" id="changes" aria-labelledby="changes-h">
     <div class="wrap frow-in">
       <div class="ftext">
         <h2 id="changes-h" class="rv">Other writers, marked by name.</h2>
-        <p class="rv">When git, a sync app, a script or an agent changes a note while you’re typing in it, Dewline merges the change, keeps a version of the note first and marks the change with its writer’s name. Keep it with <kbd>⌘↩</kbd>, revert it with <kbd>⌥⌘⌫</kbd>, or step through them all.</p>
+        <p class="rv">When git, a sync app, a script or an agent changes a note while you’re typing in it, Dewline merges the change, keeps a version of the note first and marks the change with its writer: git, an agent named by its hooks, or Another app. Keep it with <kbd>⌘↩</kbd>, revert it with <kbd>⌥⌘⌫</kbd>, or step through them all.</p>
         <a class="fmore rv" href="/docs/agents/">How changes land<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-dawn" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
-        <figure class="fwin" role="img" aria-label="A note called Launch plan with a change marked in it: Ship on Friday is struck out and Ship on Friday, once notarization passes is inserted, stamped Claude Code, 09:41, version kept, with Revert and Keep buttons. A bar under the text says Claude changed 3 places and 2 other notes.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Launch plan<small>projects</small></span></div>
-            <div class="mk-tabs"><span class="mk-tab on">Launch plan</span><span class="mk-tab">Station log</span><span class="mk-tab">todo</span></div>
-            <div class="mk-body mk-solo">
-              <div class="mk-doc">
-                <h3>Launch plan</h3>
-                <p>Cut the release branch on Thursday and send the build to the notary.</p>
-                <div class="mk-chg on">
-                  <p><del>Ship on Friday.</del> <span class="mk-ins">Ship on Friday, once notarization passes.</span></p>
-                  <div class="mk-stamp"><span class="mk-who">Claude Code · 09:41 · version kept</span><span class="mk-acts"><span class="mk-act">Revert</span><span class="mk-act keep">Keep</span></span></div>
-                </div>
-                <h4>Goals</h4>
-                <ul class="mk-ul">
-                  <li>Open any folder of Markdown files.</li>
-                  <li class="mk-chg wait"><span class="mk-ins">Keep the appcast signed.</span></li>
-                </ul>
-              </div>
-              <div class="mk-rail"><i class="h"></i><i class="c"></i><i class="h"></i><i class="c"></i><i class="c"></i></div>
-            </div>
-            <div class="mk-review"><span><b>Claude</b> changed 3 places · <u>2 other notes</u></span><span class="mk-step"><span class="mk-key">↑</span><span class="mk-key">↓</span>1 of 3</span></div>
-          </div>
+        <div class="fpanel" aria-hidden="true"></div>
+        <figure class="fwin">
+          <img src="/img/shorter-intro-light.webp" width="1400" height="485" alt="retry-queue.md in Dewline. The two-sentence intro is struck through whole, with Retries move to Postgres written above it in the agent’s ink, and the Updated date changed from 18 to 20 Nov. The stamp reads CLAUDE 20:02, saved, 1 of 2, with Revert and Keep." loading="lazy" decoding="async">
         </figure>
       </div>
     </div>
@@ -116,26 +89,14 @@
     <div class="wrap frow-in">
       <div class="ftext">
         <h2 id="agents-h" class="rv">Agents sign their edits.</h2>
-        <p class="rv">Hooks for Claude Code, Codex and Cursor tell Dewline which writes were theirs, checked by hash, so each change carries the agent’s name. Autosave waits while an agent writes. Agents can read what you reverted, so they don’t make the same change again.</p>
+        <p class="rv">Hooks for Claude Code, Codex and Cursor tell Dewline which writes were theirs, checked by hash, so the change carries the agent’s name. Shell commands, Cursor Tab and some Cursor edits stay unnamed. Autosave waits while an agent writes. Agents can read what you kept and reverted with <code>dewline changes</code>.</p>
         <a class="fmore rv" href="/docs/agents/">Set up agent hooks<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-dew" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
-        <figure class="fwin" role="img" aria-label="The Changes list. Waiting: launch-plan.md, 3 changes by Claude Code; a journal note, 1 change by Codex; README.md, 2 changes by Cursor; Station log, changed by another app during a Claude Code shell command; todo.md, changed while closed. Decided today: one Codex change reverted and one Claude Code change kept.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Changes<small>field-notes</small></span><span class="mk-kbd">⇧⌘R</span></div>
-            <div class="mk-list">
-              <p class="mk-group">Waiting on you</p>
-              <div class="mk-li"><span class="mk-av cc"></span><span class="mk-file">projects/launch-plan.md</span><span class="mk-meta">Claude Code · 3 changes</span></div>
-              <div class="mk-li"><span class="mk-av cx"></span><span class="mk-file">journal/2026-11-18.md</span><span class="mk-meta">Codex · 1 change</span></div>
-              <div class="mk-li"><span class="mk-av cu"></span><span class="mk-file">README.md</span><span class="mk-meta">Cursor · 2 changes</span></div>
-              <div class="mk-li"><span class="mk-av ot"></span><span class="mk-file">notes/Station log.md</span><span class="mk-meta">Another app · during Claude Code’s shell command</span></div>
-              <div class="mk-li"><span class="mk-av ot"></span><span class="mk-file">todo.md</span><span class="mk-meta">Another app · changed while closed</span></div>
-              <p class="mk-group">Decided today</p>
-              <div class="mk-li dim"><span class="mk-dec rev">Reverted</span><span class="mk-file">journal/2026-11-17.md</span><span class="mk-meta">Codex · 08:52</span></div>
-              <div class="mk-li dim"><span class="mk-dec">Kept</span><span class="mk-file">projects/launch-plan.md</span><span class="mk-meta">Claude Code · 08:40</span></div>
-            </div>
-          </div>
+        <div class="fpanel" aria-hidden="true"></div>
+        <figure class="fwin">
+          <img src="/img/codex-title-case-light.webp" width="1245" height="669" alt="style-guide.md in Dewline under the rule Sentence case for every heading. Codex has moved the headings to Title Case: Voice and Tone, Headings and Titles, Code Samples over the struck Code samples. The stamp reads CODEX 20:03, saved, 1 of 9, with Revert and Keep." loading="lazy" decoding="async">
+          <figcaption>Sentence case for every heading. Codex set nine in Title Case.</figcaption>
         </figure>
       </div>
     </div>
@@ -145,41 +106,13 @@
     <div class="wrap frow-in">
       <div class="ftext">
         <h2 id="git-h" class="rv">It knows the folder is a repo.</h2>
-        <p class="rv">The sidebar shows each file’s git status and its branch, and leaves out what <code>.gitignore</code> lists, as Quick Open and Find in Files do. When a pull and your typing change the same paragraph, you pick which version stays. No conflict markers enter the file.</p>
+        <p class="rv">The sidebar shows git’s state for each file as one letter, and the folder header counts what changed since the last commit and how far the branch is ahead. A file deleted since then stays as a struck-through row. When a pull and your typing change the same paragraph, you pick which version stays, and no conflict markers enter the file.</p>
         <a class="fmore rv" href="/docs/files/">How saving works<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-tide" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
-        <figure class="fwin" role="img" aria-label="A folder window. The sidebar shows the folder field-notes on branch main, a .claude folder, and notes marked modified and new. The open note, Station log, has a card under a paragraph: Two versions of this paragraph, the version from git, and the buttons Keep Yours, Use git’s and Keep Both.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Station log<small>field-notes</small></span></div>
-            <div class="mk-body stack">
-              <div class="mk-side">
-                <p class="mk-repo">field-notes <code>main</code> ⌄</p>
-                <ul class="mk-tree">
-                  <li class="d">.claude</li>
-                  <li class="i">CLAUDE.md</li>
-                  <li class="d">notes</li>
-                  <li class="i sel">Station log.md<span class="gs m">modified</span></li>
-                  <li class="i">Dew point.md<span class="gs a">new</span></li>
-                  <li class="i">Morning round.md</li>
-                  <li>README.md</li>
-                  <li>todo.md<span class="gs m">modified</span></li>
-                </ul>
-              </div>
-              <div class="mk-doc">
-                <h3>Station log</h3>
-                <p>Dew on the rail by 05:40. Rail dry by 07:00, before the first train.</p>
-                <div class="mk-two">
-                  <p class="mk-two-h">Two versions of this paragraph</p>
-                  <p class="mk-two-l">From git</p>
-                  <p class="mk-two-t">Dew on the rail by 05:40. Rail dry by 07:25, per the logger.</p>
-                  <div class="mk-acts"><span class="mk-act keep">Keep Yours</span><span class="mk-act">Use git’s</span><span class="mk-act">Keep Both</span></div>
-                </div>
-              </div>
-            </div>
-            <div class="mk-status"><span>.gitignore respected</span><span>186 words</span></div>
-          </div>
+        <div class="fpanel" aria-hidden="true"></div>
+        <figure class="fwin tall">
+          <img src="/img/sidebar-light.webp" width="484" height="920" alt="Dewline’s sidebar on a notes folder. The header reads notes, main, up 2, 16 changed. Three deleted drafts and five deleted notes show as struck-through rows marked D, and the five notes moved into notes/Archive show marked A." loading="lazy" decoding="async">
         </figure>
       </div>
     </div>
@@ -193,7 +126,7 @@
         <a class="fmore rv" href="/docs/markdown/">What Dewline reads<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-ember" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
+        <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin" role="img" aria-label="A rendered note called Release flow: a Mermaid flowchart from Draft to Review to Publish, with a loop back to Draft, a typeset integral equal to the square root of pi over 2, and a Swift code block with syntax colors, a language label and a Copy button.">
           <div class="mk" aria-hidden="true">
             <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Release flow<small>docs</small></span></div>
@@ -236,7 +169,7 @@
         <a class="fmore rv" href="/docs/editing/#find">Find and replace<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-moss" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
+        <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin" role="img" aria-label="Find in Files in the sidebar, searching path:notes dew (point|rail) as a regular expression, with 9 matches in 3 notes and a Replace All button. Beside it, a note where typing [[Sta lists Station log and two other notes, and a Backlinks list with 2 notes.">
           <div class="mk" aria-hidden="true">
             <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Morning round<small>field-notes</small></span></div>
@@ -278,7 +211,7 @@
         <a class="fmore rv" href="/docs/export/">What each format keeps<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-dawn2" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
+        <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin" role="img" aria-label="The export panel over a note: the name Launch plan.pdf and an open Format menu listing HTML, PDF, Word, Rich Text, OpenDocument, EPUB, LaTeX, Markdown (portable), Plain Text and PNG Image. The status bar says Exported Launch plan.pdf, Show in Finder.">
           <div class="mk" aria-hidden="true">
             <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Launch plan<small>projects</small></span></div>
@@ -311,7 +244,7 @@
         <a class="fmore rv" href="/docs/cli/">The command line<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
-        <div class="fpanel t-night" aria-hidden="true"><i class="fp-sun"></i><i class="fp-dew"></i></div>
+        <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin" role="img" aria-label="A terminal running dewline commands: setting EDITOR to dewline open --wait, opening a note at line 12, exporting to EPUB, opening a dewline://open link, starting dewline mcp on a notes folder, and capturing a line to the inbox.">
           <div class="mk" aria-hidden="true">
             <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">~/Notes<small>zsh</small></span></div>
@@ -354,7 +287,6 @@
             <div><dt>Drafts</dt><dd>When a save is refused, the status bar says why and keeps a draft you can restore.</dd></div>
             <div><dt>Earlier versions</dt><dd>File &gt; Earlier Versions lists each one with its time and writer. A restore is one undo.</dd></div>
             <div><dt>Writes while closed</dt><dd>A change made while the note was closed, or Dewline was quit, is marked when you open it.</dd></div>
-            <div><dt>iCloud</dt><dd>When iCloud keeps two versions of a note, Dewline asks which one stays (not yet tested on a device).</dd></div>
             <div><dt>Quick Look</dt><dd>Press Space on a .md file in Finder to see it rendered in your theme.</dd></div>
           </dl>
         </section>
@@ -391,8 +323,8 @@
             <div><dt>Link previews</dt><dd>A link alone on its line shows a card. Off until you turn it on.</dd></div>
           </dl>
         </section>
-        <section class="fgroup rv" aria-labelledby="g-privacy-and-speed">
-          <h3 id="g-privacy-and-speed">Privacy and speed</h3>
+        <section class="fgroup rv" aria-labelledby="g-privacy-and-build">
+          <h3 id="g-privacy-and-build">Privacy and build</h3>
           <dl>
             <div><dt>No account</dt><dd>No sign-in, analytics or crash reporter. Dewline goes online for updates and, if you turn them on, link previews.</dd></div>
             <div><dt>Native</dt><dd>AppKit and TextKit 2 over a Rust engine. No Electron, and no JavaScript runs on your notes.</dd></div>
@@ -413,11 +345,11 @@
   <rect class="tile-cursor" x="655" y="257" width="105" height="510" rx="8"/>
 </svg>
       <h2 class="rv">Open a folder.</h2>
-      <p class="close-lead rv">⌘-click “Show me a change” in the welcome note, and a writer called Demo edits it so you can watch a change land.</p>
+      <p class="close-lead rv">The first launch runs a short guide: a demo agent edits Welcome.md, and you revert one change and keep the other. Then open the folder your agent works in.</p>
       <div class="get rv">
-        <a class="btn" href="/download">Download for macOS 26</a>
+        <a class="btn" href="/download">Download for Mac</a>
       </div>
-      <p class="meta rv">Version <span data-version>0.2.0</span>, signed and notarized, for Apple Silicon and Intel. <span><a class="text-link" href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest">Release notes</a> · <a class="text-link" href="/docs/first-steps/">First steps</a></span></p>
+      <p class="meta rv">Version <span data-version>0.6.1</span>, signed and notarized. macOS 26 or later, Apple Silicon and Intel. <span><a class="text-link" href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest">Release notes</a> · <a class="text-link" href="/docs/first-steps/">First steps</a></span></p>
     </div>
   </section>
 </main>

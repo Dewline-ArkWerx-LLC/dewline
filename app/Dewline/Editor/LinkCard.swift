@@ -62,8 +62,8 @@ final class LinkCards {
     }
 
     /// The paragraph blocks that are only a `dewline:` link, as their link spans, in document offsets.
-    private func buttons(in range: NSRange, of text: NSString) -> [SyntaxSpan] {
-        map.blocks(in: range).compactMap { block in
+    private func buttons(in range: NSRange, of text: NSString, touching: Bool = false) -> [SyntaxSpan] {
+        (touching ? map.blocks(touching: range) : map.blocks(in: range)).compactMap { block in
             guard block.kind == .paragraph, let link = block.spans.first(where: { $0.kind == .link })?.shifted(by: block.range.location) else { return nil }
             var end = NSMaxRange(block.range)
             while end > block.range.location, [0x0A, 0x0D].contains(text.character(at: end - 1)) { end -= 1 }
@@ -87,7 +87,9 @@ final class LinkCards {
     /// The cards the selection entered or left since they were last styled.
     func revealChanges(_ selection: [NSRange]) -> [NSRange] {
         guard let text = textView?.textStorage?.mutableString else { return [] }
-        let now = Set(selection.flatMap { cards(in: $0, of: text, touching: true) }.map(\.range).filter { Self.touches($0, selection) })
+        let now = Set(
+            selection.flatMap { cards(in: $0, of: text, touching: true).map(\.range) + buttons(in: $0, of: text, touching: true).map(\.range) }
+                .filter { Self.touches($0, selection) })
         return Array(now.symmetricDifference(revealed))
     }
 
@@ -119,9 +121,11 @@ final class LinkCards {
         }
         for link in buttons(in: whole, of: storage.mutableString) {
             let label = NSRange(location: link.content.location - offset, length: link.content.length)
-            guard label.location > 0, label.length > 0, NSMaxRange(label) <= styled.length,
-                !Self.touches(NSRange(location: link.range.location - offset, length: link.range.length), selection)
-            else { continue }
+            guard label.location > 0, label.length > 0, NSMaxRange(label) <= styled.length else { continue }
+            if Self.touches(NSRange(location: link.range.location - offset, length: link.range.length), selection) {
+                revealed.insert(link.range)
+                continue
+            }
             styled.removeAttribute(.underlineStyle, range: label)
             styled.addAttributes([.foregroundColor: ThemeStore.shared.color(.accent), .dewlineCodeChip: Self.button], range: label)
             // The hidden "[" before the label and the label's last character make room for the button's sides.

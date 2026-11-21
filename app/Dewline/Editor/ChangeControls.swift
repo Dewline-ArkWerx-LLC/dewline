@@ -233,12 +233,6 @@ final class ChangeStamp: NSView {
     static let duringShell = "During Claude Code\u{2019}s shell command"
     /// What a change says once Revert finds text typed inside it; Revert then asks before it puts the old text back.
     static let typedInside = "You edited inside it"
-    /// Whether a change was ever kept or reverted, after which the stamp shows Next Change's keys.
-    private static var decided: Bool {
-        get { UserDefaults.standard.bool(forKey: "DecidedAChange") }
-        set { if newValue != decided { UserDefaults.standard.set(newValue, forKey: "DecidedAChange") } }
-    }
-
     private let revert: StampButton
     private let keep: StampButton
     private let setUp: StampButton
@@ -280,14 +274,6 @@ final class ChangeStamp: NSView {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.handler = {
-            Self.decided = true
-            revert()
-        }
-        self.keep.handler = {
-            Self.decided = true
-            keep()
-        }
         self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All (\u{2325}\u{21E7}\u{2318}\u{232B})"
         self.keep.toolTip = "Already saved; Keep clears the mark. Keep (\u{2318}\u{21A9}). Option-click: Keep All (\u{21E7}\u{2318}\u{21A9})"
         setUp.toolTip = "Name this writer: set up agent hooks"
@@ -361,7 +347,6 @@ final class ChangeStamp: NSView {
     func show(_ writer: MarkWriter, at time: Date, index: Int, of total: Int, external: Bool, shell: Bool, refused: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
         let changed = writer != self.writer || time != self.time || index != self.index || total != self.total
-        if writer == self.writer, total < self.total { Self.decided = true }
         self.writer = writer
         self.time = time
         self.index = index
@@ -408,7 +393,6 @@ final class ChangeStamp: NSView {
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
-            Self.decided = true
             textView.history.perform("Revert Change") {
                 for (id, change) in refused where live.changes[id] != nil {
                     live.keep(id)
@@ -433,9 +417,8 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 3 of 4 ⌃⌘↓": the writer in small capitals in its ink, the time with fixed-width digits, the
-    /// change's place in the window and, once a change was decided, Next Change's keys; "CLAUDE · 3 of 4" in the compact
-    /// stamp.
+    /// "CLAUDE 3:25 PM · 3 of 4": the writer in small capitals in its ink, the time with fixed-width digits and the
+    /// change's place in the window; "CLAUDE · 3 of 4" in the compact stamp.
     private var line: NSAttributedString {
         line(compact: keep.form != .full && !folded)
     }
@@ -453,9 +436,6 @@ final class ChangeStamp: NSView {
             line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
         }
         line.append(NSAttributedString(string: " \u{00B7} \(index) of \(total)", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2]))
-        if !compact && Self.decided {
-            line.append(NSAttributedString(string: "  \u{2303}\u{2318}\u{2193}", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2]))
-        }
         return line
     }
 

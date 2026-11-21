@@ -23,7 +23,7 @@ fail() { echo "verify-feed.sh: $*" >&2; exit 1; }
 [[ $(openssl version) == "OpenSSL "[3-9]* ]] || fail "needs OpenSSL 3 or later for Ed25519; $(command -v openssl) is $(openssl version)"
 if [[ $feed == https://* ]]; then
     curl -fsSL --proto =https --proto-redir =https --connect-timeout 10 --max-time 30 \
-        -A "dewline-build (https://github.com/ark-232/dewline)" -o "$work/feed" "$feed" \
+        -A "dewline-build (https://github.com/Dewline-ArkWerx-LLC/dewline)" -o "$work/feed" "$feed" \
         || fail "cannot fetch $feed"
 elif [[ -f $feed ]]; then
     cp "$feed" "$work/feed"

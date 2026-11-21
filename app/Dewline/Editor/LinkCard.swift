@@ -29,7 +29,7 @@ final class LinkCards {
     init(map: BlockMap) {
         self.map = map
         NotificationCenter.default.addObserver(self, selector: #selector(previewsDidChange(_:)), name: LinkPreviews.didChange, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
     /// The address of a paragraph that holds only one, or nil.

@@ -122,7 +122,7 @@ final class EditorTextView: CaretTextView {
         for word in ["Dewline", "dewline"] {
             NSSpellChecker.shared.ignoreWord(word, inSpellDocumentWithTag: spellCheckerDocumentTag)
         }
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange(_:)), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange(_:)), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
     required init?(coder: NSCoder) {

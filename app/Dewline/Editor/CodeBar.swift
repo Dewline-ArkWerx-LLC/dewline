@@ -29,7 +29,7 @@ final class CodeBar: NSView {
         ])
         alphaValue = 0
         isHidden = true
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: ThemeStore.shared)
         themeDidChange()
     }
 

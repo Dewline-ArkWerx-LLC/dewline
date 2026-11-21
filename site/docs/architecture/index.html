@@ -45,7 +45,7 @@
     <button type="button" class="search-open" aria-keyshortcuts="Meta+K /"><span>Search</span><kbd>⌘K</kbd></button>
     <nav class="dtop-links" aria-label="Site">
       <a href="/features/">Features</a>
-      <a href="https://github.com/ark-232/dewline">Source</a>
+      <a href="https://github.com/Dewline-ArkWerx-LLC/dewline">Source</a>
       <a class="dtop-get" href="/download">Download</a>
     </nav>
   </div>
@@ -161,7 +161,7 @@
         </div>
         <figcaption><b>Figure 1.</b> One bundle, two languages. The app calls the engine through UniFFI. The Quick Look preview loads the same framework. The <code>dewline</code> command links the engine's core crate (marked) on its own, and reaches the running app only through a private socket.</figcaption>
       </figure>
-      <p>Two other designs were ruled out. A pure Rust UI would lack VoiceOver for text, Writing Tools, the find bar, Services and spell check. A web view editor breaks the memory budget and limits Writing Tools to a panel. Record <a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0001-foundations.md">0001</a> chose the stack.</p>
+      <p>Two other designs were ruled out. A pure Rust UI would lack VoiceOver for text, Writing Tools, the find bar, Services and spell check. A web view editor breaks the memory budget and limits Writing Tools to a panel. Record <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0001-foundations.md">0001</a> chose the stack.</p>
 
       <h2 id="rules">Rules the code keeps</h2>
       <ul>
@@ -179,13 +179,13 @@
         <table>
           <thead><tr><th scope="col">Part</th><th scope="col">How it works</th><th scope="col">Record</th></tr></thead>
           <tbody>
-            <tr id="editor"><th scope="row">Editor</th><td><code>NSTextView</code> on TextKit 2 only. Syntax hides by turning clear. A keystroke reparses one block; the rest reparses off the main thread after 300 ms idle.</td><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0004-textkit.md">0004</a>, <a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td></tr>
+            <tr id="editor"><th scope="row">Editor</th><td><code>NSTextView</code> on TextKit 2 only. Syntax hides by turning clear. A keystroke reparses one block; the rest reparses off the main thread after 300 ms idle.</td><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0004-textkit.md">0004</a>, <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td></tr>
             <tr id="documents"><th scope="row">Documents</th><td><code>NSDocument</code>, with AppKit's autosave and Versions off. Dewline saves 2 s after your last edit, through the engine.</td><td></td></tr>
-            <tr id="parser"><th scope="row">Parser</th><td>pulldown-cmark 0.13.6 plus one pass for Obsidian syntax. Passes all 652 CommonMark 0.31.2 examples and GFM's. Fuzzed.</td><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td></tr>
+            <tr id="parser"><th scope="row">Parser</th><td>pulldown-cmark 0.13.6 plus one pass for Obsidian syntax. Passes all 652 CommonMark 0.31.2 examples and GFM's. Fuzzed.</td><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td></tr>
             <tr id="change-engine"><th scope="row">Merge</th><td>Three-way: lines, then words, with imara-diff's Myers. Offsets are UTF-16, as Swift counts them. Fuzzed.</td><td></td></tr>
             <tr id="snapshots"><th scope="row">Snapshots</th><td>A content-addressed store in Application Support: zstd blobs named by BLAKE3 hash, synced and renamed into place.</td><td></td></tr>
             <tr id="jail"><th scope="row">Path jail</th><td><code>realpath</code>, then open from the root with <code>O_NOFOLLOW_ANY</code> and check again. Used by MCP, links and export.</td><td></td></tr>
-            <tr id="rendering"><th scope="row">Rendering</th><td>syntect 5.3.0 for code, RaTeX 0.1.15 for math, mermaid-rs-renderer 0.3.1 and resvg for diagrams. No JavaScript runs on your notes.</td><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a>, <a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0005-math-engine.md">0005</a>, <a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0002-1.0-scope.md">0002</a></td></tr>
+            <tr id="rendering"><th scope="row">Rendering</th><td>syntect 5.3.0 for code, RaTeX 0.1.15 for math, mermaid-rs-renderer 0.3.1 and resvg for diagrams. No JavaScript runs on your notes.</td><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a>, <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0005-math-engine.md">0005</a>, <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0002-1.0-scope.md">0002</a></td></tr>
             <tr id="export"><th scope="row">Export</th><td>The engine writes HTML and DOCX. The app lays out PDF in a web view that runs no script.</td><td></td></tr>
             <tr id="boundary"><th scope="row">Boundary</th><td>UniFFI 0.32.2 and one shared <code>DewlineFFI.xcframework</code>. A Rust panic returns as a Swift error.</td><td></td></tr>
             <tr id="command"><th scope="row">Command</th><td>Links <code>dewline-core</code> alone and only system libraries. Reaches the app through one Unix socket.</td><td></td></tr>
@@ -282,7 +282,7 @@
       <ul>
         <li>The file is snapshotted before anything lands, and your unsaved typing before the merge.</li>
         <li>While git holds <code>index.lock</code> or an agent's hooked call is open, the landing waits, 10 s at most.</li>
-        <li>A change carries a writer's name only when that writer's hooks report it (<a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0007-agent-attribution.md">0007</a>).</li>
+        <li>A change carries a writer's name only when that writer's hooks report it (<a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0007-agent-attribution.md">0007</a>).</li>
       </ul>
 
       <h2 id="collaboration">Collaboration</h2>
@@ -293,7 +293,7 @@
         <li><strong>Keys.</strong> Each message is sealed with XChaCha20-Poly1305 and signed with the sender's ed25519 key. Each approval or removal makes a new document key.</li>
         <li><strong>The seam.</strong> A collaborator's edit reaches the engine as one replace, outside your undo history, with the caret kept.</li>
       </ul>
-      <p>Not built yet: rejoining after a dropped connection, and edits over iroh-gossip's 1 MiB message size (<a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a>).</p>
+      <p>Not built yet: rejoining after a dropped connection, and edits over iroh-gossip's 1 MiB message size (<a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a>).</p>
 
       <h2 id="decisions">Decision records</h2>
       <p>Each record in <code>docs/decisions/</code> names what it decided and what would reopen it.</p>
@@ -301,17 +301,17 @@
         <table>
           <thead><tr><th scope="col">Record</th><th scope="col">Decided</th></tr></thead>
           <tbody>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0001-foundations.md">0001</a></td><td>Mac only, macOS 26, a Swift and AppKit app over a Rust engine through UniFFI, the FSL-1.1-ALv2 license.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0002-1.0-scope.md">0002</a></td><td>The 1.0 scope, and diagrams and math rendered natively with no JavaScript.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0003-full-app.md">0003</a></td><td>The full app shell, themes, fonts installed from a hash-checked catalog, one inbox file.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0004-textkit.md">0004</a></td><td>TextKit 2 only, by measurement against TextKit 1.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0005-math-engine.md">0005</a></td><td>RaTeX for math, over SwiftMath.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td><td>One parser, and what Rust may do on the keystroke path.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0007-agent-attribution.md">0007</a></td><td>When a change gets an agent's name, per agent.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a></td><td>syntect, its 16 syntaxes and its limits.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a></td><td>Live collaboration: Loro, iroh, invites, keys and removal.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0010-perf-budgets.md">0010</a></td><td>Four performance budgets reset after the third perf pass.</td></tr>
-            <tr><td><a href="https://github.com/ark-232/dewline/blob/main/docs/decisions/0011-paid-sync-pricing.md">0011</a></td><td>The app is free to start; paid plans cover only services that run on our servers.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0001-foundations.md">0001</a></td><td>Mac only, macOS 26, a Swift and AppKit app over a Rust engine through UniFFI, the FSL-1.1-ALv2 license.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0002-1.0-scope.md">0002</a></td><td>The 1.0 scope, and diagrams and math rendered natively with no JavaScript.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0003-full-app.md">0003</a></td><td>The full app shell, themes, fonts installed from a hash-checked catalog, one inbox file.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0004-textkit.md">0004</a></td><td>TextKit 2 only, by measurement against TextKit 1.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0005-math-engine.md">0005</a></td><td>RaTeX for math, over SwiftMath.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td><td>One parser, and what Rust may do on the keystroke path.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0007-agent-attribution.md">0007</a></td><td>When a change gets an agent's name, per agent.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a></td><td>syntect, its 16 syntaxes and its limits.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a></td><td>Live collaboration: Loro, iroh, invites, keys and removal.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0010-perf-budgets.md">0010</a></td><td>Four performance budgets reset after the third perf pass.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0011-paid-sync-pricing.md">0011</a></td><td>The app is free to start; paid plans cover only services that run on our servers.</td></tr>
           </tbody>
         </table>
       </div>
@@ -332,10 +332,10 @@
     <p>© 2026 ArkWerx LLC</p>
     <nav aria-label="Project">
       <a href="/docs/">Docs</a>
-      <a href="https://github.com/ark-232/dewline/releases">Releases</a>
-      <a href="https://github.com/ark-232/dewline">Source</a>
+      <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases">Releases</a>
+      <a href="https://github.com/Dewline-ArkWerx-LLC/dewline">Source</a>
       <a href="/docs/security/">Security</a>
-      <a href="https://github.com/ark-232/dewline/issues/new">Report an issue</a>
+      <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/issues/new">Report an issue</a>
     </nav>
   </div>
 </footer>

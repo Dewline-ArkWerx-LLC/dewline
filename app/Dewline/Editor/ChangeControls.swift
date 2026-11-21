@@ -34,7 +34,7 @@ private final class ActionButton: NSButton {
         toolTip = shortcut.map { "\(title) (\($0))" }
         setAccessibilityLabel(label)
         paint()
-        NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -301,7 +301,7 @@ final class ChangeStamp: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: ThemeStore.shared)
         NotificationCenter.default.addObserver(self, selector: #selector(revertRefused(_:)), name: LiveFile.revertRefused, object: nil)
     }
 

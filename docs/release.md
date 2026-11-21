@@ -22,14 +22,14 @@ A release PR sets the version in `core/Cargo.toml`, and adds the version's secti
 Run these in a terminal on this Mac. Keep every exported key in a new folder under `~` (never `~/Development`, `~/Documents` or `~/Personal`, which sync to Google Drive), and delete it once the secret is set. `gh secret set` without `--body` prompts for the value, so nothing lands in shell history. The environments must exist first:
 
 ```fish
-for env in release-approval release feed-signing updates tap site; gh api -X PUT repos/ark-232/dewline/environments/$env; end
+for env in release-approval release feed-signing updates tap site; gh api -X PUT repos/Dewline-ArkWerx-LLC/dewline/environments/$env; end
 ```
 
 `pull.yml` deploys to `release-approval`, `feed-signing`, `updates` and `site` from `pull/v*` tags and to a `tap-revert` environment that holds the tap App's credentials with no wait timer. Create `tap-revert`, then allow `pull/v*` tags on all five:
 
 ```fish
-echo '{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}' | gh api -X PUT repos/ark-232/dewline/environments/tap-revert --input -
-for env in release-approval feed-signing updates site tap-revert; gh api -X POST repos/ark-232/dewline/environments/$env/deployment-branch-policies -f name='pull/v*' -f type=tag; end
+echo '{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}' | gh api -X PUT repos/Dewline-ArkWerx-LLC/dewline/environments/tap-revert --input -
+for env in release-approval feed-signing updates site tap-revert; gh api -X POST repos/Dewline-ArkWerx-LLC/dewline/environments/$env/deployment-branch-policies -f name='pull/v*' -f type=tag; end
 ```
 
 **Developer ID certificate.** Confirm it comes from the G2 intermediate, then export it with a new password and store it:
@@ -39,17 +39,17 @@ security find-certificate -c "Developer ID Application: ArkWerx LLC" -p | openss
 umask 077; mkdir ~/dewline-keys
 # Keychain Access > login > My Certificates > "Developer ID Application: ArkWerx LLC (7W6LLR2DK7)"
 #   > File > Export Items... > ~/dewline-keys/developer-id.p12, with a new password
-base64 -i ~/dewline-keys/developer-id.p12 | gh secret set DEVELOPER_ID_P12 --env release -R ark-232/dewline
-gh secret set DEVELOPER_ID_P12_PASSWORD --env release -R ark-232/dewline
+base64 -i ~/dewline-keys/developer-id.p12 | gh secret set DEVELOPER_ID_P12 --env release -R Dewline-ArkWerx-LLC/dewline
+gh secret set DEVELOPER_ID_P12_PASSWORD --env release -R Dewline-ArkWerx-LLC/dewline
 rm ~/dewline-keys/developer-id.p12
 ```
 
 **App Store Connect API key** (`AuthKey_39V9MTV26C.p8`; notarization needs a Team key with the App Manager role). The issuer ID is on App Store Connect > Users and Access > Integrations:
 
 ```sh
-gh secret set ASC_KEY_P8 --env release -R ark-232/dewline < /path/to/AuthKey_39V9MTV26C.p8
-gh secret set ASC_KEY_ID --env release -R ark-232/dewline --body 39V9MTV26C
-gh secret set ASC_ISSUER_ID --env release -R ark-232/dewline
+gh secret set ASC_KEY_P8 --env release -R Dewline-ArkWerx-LLC/dewline < /path/to/AuthKey_39V9MTV26C.p8
+gh secret set ASC_KEY_ID --env release -R Dewline-ArkWerx-LLC/dewline --body 39V9MTV26C
+gh secret set ASC_ISSUER_ID --env release -R Dewline-ArkWerx-LLC/dewline
 xcrun notarytool history --key /path/to/AuthKey_39V9MTV26C.p8 --key-id 39V9MTV26C --issuer <issuer ID>
 ```
 
@@ -59,7 +59,7 @@ xcrun notarytool history --key /path/to/AuthKey_39V9MTV26C.p8 --key-id 39V9MTV26
 umask 077; mkdir -p ~/dewline-keys; ~/Development/dewline/scripts/sparkle-tools.sh ~/dewline-keys; cd ~/dewline-keys
 ./bin/generate_keys
 ./bin/generate_keys -x ed25519.key
-gh secret set SPARKLE_ED_PRIVATE_KEY --env feed-signing -R ark-232/dewline < ed25519.key
+gh secret set SPARKLE_ED_PRIVATE_KEY --env feed-signing -R Dewline-ArkWerx-LLC/dewline < ed25519.key
 ```
 
 Put the printed public key in `SPARKLE_PUBLIC_ED_KEY` in `app/project.yml` and in `SUPublicEDKey` in `app/updater.golden.json`, in one PR. Until then the updater refuses to start and `release.yml` stops at `build`.
@@ -76,12 +76,12 @@ Then `rm ed25519.key`. Losing this key may strand every install, because each bu
 **GitHub Apps for the feed and the tap.** The spec replaces the tap PAT with one-repo GitHub Apps, whose tokens last an hour. In Settings > Developer settings > GitHub Apps, create two Apps with no webhook: `dewline-feed` (Contents read and write) installed only on `ark-232/dewline-updates`, and `dewline-tap` (Contents and Pull requests read and write) installed only on `ark-232/homebrew-tap`. Generate a private key for each, then:
 
 ```sh
-gh secret set FEED_APP_ID --env updates -R ark-232/dewline --body <dewline-feed App ID>
-gh secret set FEED_APP_PRIVATE_KEY --env updates -R ark-232/dewline < ~/dewline-keys/dewline-feed.private-key.pem
-gh secret set TAP_APP_ID --env tap -R ark-232/dewline --body <dewline-tap App ID>
-gh secret set TAP_APP_PRIVATE_KEY --env tap -R ark-232/dewline < ~/dewline-keys/dewline-tap.private-key.pem
-gh secret set TAP_APP_ID --env tap-revert -R ark-232/dewline --body <dewline-tap App ID>
-gh secret set TAP_APP_PRIVATE_KEY --env tap-revert -R ark-232/dewline < ~/dewline-keys/dewline-tap.private-key.pem
+gh secret set FEED_APP_ID --env updates -R Dewline-ArkWerx-LLC/dewline --body <dewline-feed App ID>
+gh secret set FEED_APP_PRIVATE_KEY --env updates -R Dewline-ArkWerx-LLC/dewline < ~/dewline-keys/dewline-feed.private-key.pem
+gh secret set TAP_APP_ID --env tap -R Dewline-ArkWerx-LLC/dewline --body <dewline-tap App ID>
+gh secret set TAP_APP_PRIVATE_KEY --env tap -R Dewline-ArkWerx-LLC/dewline < ~/dewline-keys/dewline-tap.private-key.pem
+gh secret set TAP_APP_ID --env tap-revert -R Dewline-ArkWerx-LLC/dewline --body <dewline-tap App ID>
+gh secret set TAP_APP_PRIVATE_KEY --env tap-revert -R Dewline-ArkWerx-LLC/dewline < ~/dewline-keys/dewline-tap.private-key.pem
 rm ~/dewline-keys/*.pem
 ```
 

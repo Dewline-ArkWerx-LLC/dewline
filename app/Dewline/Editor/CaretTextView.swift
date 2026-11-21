@@ -5,9 +5,20 @@ import AppKit
 class CaretTextView: NSTextView {
     let effects = CaretEffectsView()
     private var monitor: Any?
-    private var idleTimer: DispatchSourceTimer?
+    private var idleTimer: (() -> Void)?
     private var lastInput = DispatchTime.now()
     private var solid = false
+
+    /// The idle clock's time and its one-shot timer on the main queue, which returns the timer's cancel; tests stand in a
+    /// clock they move by hand.
+    static var now: () -> DispatchTime = { .now() }
+    static var wake: (DispatchTime, @escaping @MainActor () -> Void) -> () -> Void = { deadline, body in
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: deadline, leeway: .milliseconds(500))
+        timer.setEventHandler { MainActor.assumeIsolated(body) }
+        timer.activate()
+        return timer.cancel
+    }
 
     /// The theme's cursor orange, light and dark.
     static var cursor: NSColor {
@@ -36,7 +47,7 @@ class CaretTextView: NSTextView {
         center.removeObserver(self, name: ThemeStore.didChange, object: ThemeStore.shared)
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        idleTimer?.cancel()
+        idleTimer?()
         idleTimer = nil
         solid = false
         guard let window else { return }
@@ -63,7 +74,7 @@ class CaretTextView: NSTextView {
 
     isolated deinit {
         if let monitor { NSEvent.removeMonitor(monitor) }
-        idleTimer?.cancel()
+        idleTimer?()
     }
 
     @objc private func cursorDidChange(_ notification: Notification) {
@@ -76,7 +87,7 @@ class CaretTextView: NSTextView {
             if !blockCaret { indicator?.displayMode = .automatic }
             restartIdleClock()
         } else {
-            idleTimer?.cancel()
+            idleTimer?()
             idleTimer = nil
             solid = false
         }
@@ -91,7 +102,7 @@ class CaretTextView: NSTextView {
 
     /// One timestamp and one one-shot timer: typing costs at most one wakeup per five seconds and idle costs none.
     private func restartIdleClock() {
-        lastInput = .now()
+        lastInput = Self.now()
         if solid {
             solid = false
             if !blockCaret { indicator?.displayMode = .automatic }
@@ -100,19 +111,13 @@ class CaretTextView: NSTextView {
     }
 
     private func armIdleTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: lastInput + 5, leeway: .milliseconds(500))
-        timer.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.idleTimerFired() }
-        }
-        timer.activate()
-        idleTimer = timer
+        idleTimer = Self.wake(lastInput + 5) { [weak self] in self?.idleTimerFired() }
     }
 
     private func idleTimerFired() {
-        idleTimer?.cancel()
+        idleTimer?()
         idleTimer = nil
-        if DispatchTime.now() < lastInput + 5 { return armIdleTimer() }
+        if Self.now() < lastInput + 5 { return armIdleTimer() }
         solid = window?.isKeyWindow == true && window?.firstResponder === self
         holdSolid()
     }

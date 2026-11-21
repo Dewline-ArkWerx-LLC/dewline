@@ -19,7 +19,6 @@ app/DewlineTests/QuickOpenTests.swift no-fixed-sleep 3
 app/DewlineTests/QuickOpenTests.swift no-wall-clock-asserts 2
 app/DewlineTests/ShellV4Tests.swift no-fixed-sleep 8
 app/DewlineTests/SourceModeTests.swift no-fixed-sleep 8
-app/DewlineTests/SourceModeTests.swift no-flake-masking 1
 app/DewlineTests/UpdatesTests.swift no-fixed-sleep 3
 core/crates/cli/src/control.rs no-wall-clock-asserts 1
 core/crates/cli/tests/notify.rs no-wall-clock-asserts 3

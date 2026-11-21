@@ -217,20 +217,25 @@ struct SourceModeTests {
         }
     }
 
-    @Test func atProsePitchSourceBaselinesSitWithinAPointOfProse() throws {
-        let text = "Plain words here.\nMore plain words.\n"
-        let editor = Editor(text, caret: text.utf16.count)
-        editor.view.styler.sourceLineHeight = 24
-        let lines = [0, 18]
-        let live = try lines.map { try #require(editor.view.baseline(at: $0)) - editor.line($0).minY }
-        editor.view.toggleSource(nil)
-        let source = try lines.map { try #require(editor.view.baseline(at: $0)) - editor.line($0).minY }
-        // Fixed-height lines sit glyphs on their descender, and Seravek's (0.30 em) is deeper than SF Mono's, so Source
-        // baselines land 2 pt low at prose pitch. Shipped Source lines are 22 pt, not prose pitch.
-        withKnownIssue("Seravek and SF Mono descenders differ by 2 pt") {
-            for (prose, mono) in zip(live, source) {
-                #expect(abs(prose - mono) <= 1, "baseline \(mono) pt into a Source line, \(prose) pt into a Live line")
-            }
+    @Test func atProsePitchEveryVisibleLineKeepsItsBaseline() throws {
+        let row = "Plain words here.\n"
+        let text = String(repeating: row, count: 120)
+        let editor = Editor(text, caret: 0)
+        let view = editor.view
+        view.styler.sourceLineHeight = ThemeStore.shared.bodyLineHeight
+        view.scrollRangeToVisible(NSRange(location: text.utf16.count / 2, length: 0))
+        editor.display()
+        let visible = view.visibleRect
+        let first = view.characterIndexForInsertion(at: visible.origin) / row.utf16.count + 1
+        let last = view.characterIndexForInsertion(at: NSPoint(x: visible.minX, y: visible.maxY)) / row.utf16.count - 1
+        let starts = (first...last).map { $0 * row.utf16.count }
+        #expect(starts.count > 10)
+        let live = try starts.map { try #require(view.baseline(at: $0)) - view.visibleRect.minY }
+        view.toggleSource(nil)
+        editor.display()
+        let source = try starts.map { try #require(view.baseline(at: $0)) - view.visibleRect.minY }
+        for (index, (prose, mono)) in zip(starts, zip(live, source)) {
+            #expect(abs(prose - mono) <= editor.pixel, "line at \(index): baseline \(prose) pt below the top in Live, \(mono) pt in Source")
         }
         editor.expectTextKitUnchanged()
     }

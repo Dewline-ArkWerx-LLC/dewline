@@ -98,7 +98,7 @@ final class LinkCards {
         let whole = NSRange(location: offset, length: styled.length)
         revealed = revealed.filter { !NSLocationInRange($0.location, whole) }
         guard let textView, let storage = textView.textStorage else { return }
-        let width = min((textView.textContainer?.size.width ?? 0) - 2 * (textView.textContainer?.lineFragmentPadding ?? 0), Self.maxWidth).rounded(.down)
+        let width = min((textView.textContainer?.column ?? 0) - 2 * (textView.textContainer?.lineFragmentPadding ?? 0), Self.maxWidth).rounded(.down)
         guard width > 0 else { return }
         for card in cards(in: whole, of: storage.mutableString) {
             let local = NSRange(location: card.range.location - offset, length: card.range.length)

@@ -19,6 +19,7 @@ A pure-Rust UI was ruled out: no Rust GUI framework offers VoiceOver for text, W
 - Snapshots live in `~/Library/Application Support/dev.arkwerx.dewline/`, never beside your files.
 - Nothing restyles or applies outside changes while an input method is composing text.
 - Nothing touches the text view's `layoutManager`, which would switch it to TextKit 1.
+- Prose lays out at the measure. Only fenced code lines and laid-out table rows run wider, to the text container's width: the window less its margins (`MeasureContainer`).
 - After five seconds without input, nothing runs: no timers, no animation, no blinking caret.
 
 ## Components

@@ -102,7 +102,7 @@ final class BlockFragment: NSTextLayoutFragment {
     }
 
     private var column: CGFloat {
-        textLayoutManager?.textContainer?.size.width ?? 0
+        textLayoutManager?.textContainer?.column ?? 0
     }
 
     private var textBottom: CGFloat {

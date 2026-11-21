@@ -4,9 +4,10 @@ import AppKit
 /// characters so each cell starts at its column; the delimiter row collapses to a rule under the head, so the head
 /// sits one row's pitch above the first row. A column left unaligned whose body cells all start with a digit aligns
 /// right. A row the selection touches, or the head with its delimiter row, shows its source.
-/// Columns are as wide as their widest cell, and only widen while the selection stays in the table. A table wider than
-/// the text shrinks its columns toward their least widths (a cell of 12 characters or fewer and a code span never
-/// wrap), gives the room left to its longest-text columns first, and its rows draw their cells wrapped in their columns.
+/// Columns are as wide as their widest cell, and only widen while the selection stays in the table. A table's rows run
+/// past the measure to the container's width; a table wider than that shrinks its columns toward their least widths (a
+/// cell of 12 characters or fewer and a code span never wrap), gives the room left to its longest-text columns first,
+/// and its rows draw their cells wrapped in their columns.
 @MainActor
 final class Tables {
     enum Alignment {

@@ -142,6 +142,14 @@ jobs:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Build the universal app and check it
         run: scripts/build-release.sh "$RUNNER_TEMP/release"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install dmgbuild 2.0.0
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmgbuild"
+          "$RUNNER_TEMP/dmgbuild/bin/pip" install --quiet --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r scripts/dmg/requirements.txt
+          echo "$RUNNER_TEMP/dmgbuild/bin" >> "$GITHUB_PATH"
       - name: Package it and sign a feed with a throwaway key
         run: scripts/release-dry.sh "$RUNNER_TEMP/release/Dewline.app" "$RUNNER_TEMP/dry"
 

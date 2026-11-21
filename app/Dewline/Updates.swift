@@ -115,7 +115,8 @@ final class Updates: NSObject, NSMenuItemValidation, SPUUpdaterDelegate, SPUStan
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkBundleOnDisk() }
         }
-        defaults.set(defaults.integer(forKey: Self.launchesKey) + 1, forKey: Self.launchesKey)
+        // A launch from a disk image doesn't count, so the copy that relaunches from Applications is the first.
+        if !HookSetup.misplaced() { defaults.set(defaults.integer(forKey: Self.launchesKey) + 1, forKey: Self.launchesKey) }
         guard Self.isDeveloperIDSigned else { return }
         let updater = SPUUpdater(
             hostBundle: .main, applicationBundle: .main,

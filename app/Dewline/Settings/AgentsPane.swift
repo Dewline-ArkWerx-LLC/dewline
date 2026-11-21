@@ -76,12 +76,81 @@ struct HookStatus: Equatable, Sendable {
     }
 }
 
+/// The `dewline` command on the PATH: a symlink to the app's helper in /usr/local/bin when this account can write there
+/// and Homebrew doesn't own it, else in ~/.local/bin, made if missing. Never Homebrew's prefix, never an admin prompt.
+@MainActor
+enum CommandLink {
+    /// ~/.local/bin when this launch made it, which the shell's PATH may not have yet.
+    private(set) static var madeFolder: URL?
+
+    static func folder(
+        home: URL = URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory), canUse: (String) -> Bool = CommandLink.canUse
+    ) -> URL {
+        canUse("/usr/local/bin") ? URL(filePath: "/usr/local/bin", directoryHint: .isDirectory) : home.appending(path: ".local/bin", directoryHint: .isDirectory)
+    }
+
+    /// A folder this account can write that Homebrew doesn't keep.
+    nonisolated static func canUse(_ path: String) -> Bool {
+        FileManager.default.isWritableFile(atPath: path) && !FileManager.default.fileExists(atPath: path + "/brew")
+    }
+
+    /// The file at the link's place that is not a symlink into a Dewline.app, which Add leaves alone.
+    static func taken(at folder: URL = folder()) -> URL? {
+        let link = folder.appending(path: "dewline")
+        if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) {
+            return destination.contains("Dewline.app/") ? nil : link
+        }
+        return FileManager.default.fileExists(atPath: link.path) ? link : nil
+    }
+
+    /// Links `command` as dewline in `folder`, replacing a link into any Dewline.app (an older copy, a gone disk image);
+    /// nil when another dewline is there.
+    @discardableResult
+    static func install(command: URL = HookSetup.command(), in folder: URL = folder()) throws -> URL? {
+        guard taken(at: folder) == nil else { return nil }
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            madeFolder = folder
+        }
+        let link = folder.appending(path: "dewline")
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil { try FileManager.default.removeItem(at: link) }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: command)
+        return link
+    }
+
+    /// "dewline is at ~/.local/bin/dewline.", saying to add the folder to the PATH when this launch made it.
+    static func status(_ path: String) -> String {
+        let shown = (path as NSString).abbreviatingWithTildeInPath
+        guard let made = madeFolder, path.hasPrefix(made.path + "/") else { return "dewline is at \(shown)." }
+        return "dewline is at \(shown). Add \((made.path as NSString).abbreviatingWithTildeInPath) to your PATH to run it by name."
+    }
+}
+
 struct AgentsPane: View {
     let store: ThemeStore
     @State private var hooks = HookStatus()
+    @State private var taken: URL?
 
     var body: some View {
         SettingsForm {
+            Section {
+                LabeledContent {
+                    if hooks.onPath == nil, taken == nil {
+                        Button("Add") {
+                            do {
+                                try CommandLink.install()
+                            } catch {
+                                NSApp.presentError(error)
+                            }
+                            Task { await refresh() }
+                        }
+                        .fixedSize()
+                    }
+                } label: {
+                    Text("dewline command")
+                    Text(hooks.onPath.map(CommandLink.status) ?? taken.map { "Another dewline is at \(($0.path as NSString).abbreviatingWithTildeInPath)." } ?? "Not on your PATH.")
+                }
+            }
             Section {
                 ForEach(hooks.agents) { agent in
                     row(agent)
@@ -113,6 +182,7 @@ struct AgentsPane: View {
 
     private func refresh() async {
         hooks = await Task.detached { HookStatus.read() }.value
+        taken = CommandLink.taken()
     }
 
     /// "Last named edit 16:10", or the date too before today: when the agent's hooks last named a write.

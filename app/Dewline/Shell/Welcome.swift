@@ -9,8 +9,8 @@ enum Welcome {
     static let shownKey = "DewlineWelcomeShown"
     /// The demo's two edits: a word it swaps in the paragraph under the link, and the paragraph it inserts after the one
     /// that says what Keep and Revert do.
-    static let replaced = "keep or revert it."
-    static let replacement = "keep or undo it."
+    static let replaced = "edits a note,"
+    static let replacement = "edits a file,"
     static let anchor = "Revert puts the old text back.\n"
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open. "
         + "With hooks set up, the stamp reads CLAUDE, CODEX or CURSOR.\n"
@@ -295,7 +295,7 @@ final class WelcomeGuide {
 
     static let sentences = [
         "Watch the note. A demo agent is about to edit it.",
-        "The agent swapped \u{201C}revert\u{201D} for \u{201C}undo.\u{201D} Put the old word back.",
+        "The agent swapped \u{201C}note\u{201D} for \u{201C}file.\u{201D} Revert it.",
         "It also added a paragraph you want. Keep it.",
     ]
     static let keys: [String?] = [nil, "\u{2325}\u{2318}\u{232B}", "\u{2318}\u{21A9}"]
@@ -427,6 +427,7 @@ final class GuideIsland: NSView {
     var onReturn: () -> Void = {}
     var onEscape: () -> Void = {}
     private(set) var sentence = ""
+    private weak var label: NSTextField?
 
     init() {
         super.init(frame: .zero)
@@ -485,14 +486,30 @@ final class GuideIsland: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        fitSentence()
         makeRoom(newSize.height + 16)
     }
 
-    /// Sets the editor's bottom inset to `height` more than it had before the island, 0 to give it back.
+    /// Wraps the beat's sentence at the width its row leaves it beside the keycap and buttons, so every word shows.
+    private func fitSentence() {
+        guard let label, let row = label.superview as? NSStackView else { return }
+        let others = row.arrangedSubviews.filter { $0 !== label }
+        let width = (bounds.width - stack.edgeInsets.left - stack.edgeInsets.right - others.reduce(0) { $0 + $1.fittingSize.width }
+            - row.spacing * CGFloat(others.count)).rounded(.down)
+        if width > 0, width != label.preferredMaxLayoutWidth { label.preferredMaxLayoutWidth = width }
+    }
+
+    /// Sets the editor's bottom inset to `height` more than it had before the island, 0 to give it back, and scrolls the
+    /// note by the difference, so the lines that showed above the island still do.
     private func makeRoom(_ height: CGFloat) {
         guard let scrollView, height != room else { return }
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets.bottom += height - room
+        let clip = scrollView.contentView
+        var bounds = clip.bounds
+        bounds.origin.y += height - room
+        clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
+        scrollView.reflectScrolledClipView(clip)
         room = height
         if room == 0 { scrollView.automaticallyAdjustsContentInsets = adjusted }
     }
@@ -530,7 +547,6 @@ final class GuideIsland: NSView {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = Chrome.label
         label.textColor = Chrome.color(.ink)
-        label.preferredMaxLayoutWidth = 380
         label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         let read = spoken.map { text + " " + $0 } ?? text
         label.setAccessibilityLabel(read)
@@ -541,6 +557,8 @@ final class GuideIsland: NSView {
         row.alignment = .centerY
         row.spacing = 10
         replace([row], buttons: buttons, animatedHeight: false)
+        self.label = label
+        fitSentence()
         sentence = text
         setProgress(progress)
         announce(read)
@@ -592,6 +610,7 @@ final class GuideIsland: NSView {
         foot.alignment = .centerY
         foot.spacing = 16
         views.append(foot)
+        label = nil
         replace(views, buttons: controls + buttons, animatedHeight: true)
         sentence = rows.map(\.title).joined(separator: ". ")
         setProgress(1)

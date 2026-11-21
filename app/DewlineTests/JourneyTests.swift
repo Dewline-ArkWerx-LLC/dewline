@@ -153,7 +153,7 @@ struct JourneyTests {
         let change = try #require(tab.marked.first)
         guard case .agent(.demo, _) = change.change.origin else { Issue.record("Demo didn't write it: \(change.change.origin)"); return }
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
-        #expect((tab.textView.string as NSString).substring(with: paragraph).hasSuffix(Welcome.replacement + "\n"))
+        #expect((tab.textView.string as NSString).substring(with: paragraph).contains(Welcome.replacement))
         #expect(tab.textView.string.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code"))
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         let stamp = try #require(Self.stamp(in: tab))
@@ -871,6 +871,49 @@ struct JourneyTests {
         #expect(guide.island.sentence == WelcomeGuide.closing)
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         #expect(tab.marked.isEmpty)
+    }
+
+    /// Every beat's sentence shows whole, wrapped beside its keycap and buttons, at Welcome window widths from 1000 to
+    /// 1600 pt. At every step the editor's bottom inset covers the island, and the setup list leaves the note's end in view.
+    @Test func j1EveryBeatShowsWholeAndTheNoteClearsTheIsland() async throws {
+        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        try Welcome.write(in: vault.notes)
+        let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
+        defer { tab.close() }
+        let guide = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        defer { guide.end() }
+        let island = guide.island
+        let scrollView = try #require(tab.textView.enclosingScrollView)
+        func fields(in view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { [$0 as? NSTextField].compactMap { $0 } + fields(in: $0) }
+        }
+        for width in stride(from: 1000, through: 1600, by: 100) {
+            tab.window.setContentSize(NSSize(width: CGFloat(width), height: 760))
+            for beat in 0...3 {
+                let text = beat < 3 ? WelcomeGuide.sentences[beat] : WelcomeGuide.closing
+                let buttons = (beat < 3 ? ["Skip"] : ["Done", "Set Up Dewline"]).map { ChromeButton($0) {} }
+                island.show(text, key: beat < 3 ? WelcomeGuide.keys[beat] : nil, spoken: nil, progress: 0, buttons: buttons)
+                tab.window.layoutIfNeeded()
+                let label = try #require(fields(in: island).first { $0.stringValue == text })
+                let cell = try #require(label.cell)
+                let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+                #expect(needed <= label.bounds.height + 0.5, "\(width) pt: \(text)")
+                #expect(scrollView.contentInsets.bottom >= island.frame.height + 16)
+            }
+        }
+
+        let clip = scrollView.contentView
+        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: NSPoint(x: 0, y: tab.textView.frame.height), size: clip.bounds.size)).origin)
+        scrollView.reflectScrolledClipView(clip)
+        let rows = await WelcomeGuide.setupRows(misplaced: false, status: HookStatus(), isDefault: false)
+        island.showSetup(rows, actions: rows.map { _ in {} }, footer: LaunchWindowController.emptyText, buttons: [ChromeButton("Done") {}])
+        tab.window.layoutIfNeeded()
+        #expect(scrollView.contentInsets.bottom >= island.frame.height + 16)
+        #expect(tab.textView.frame.maxY <= clip.bounds.maxY - scrollView.contentInsets.bottom + 0.5, "the note's end shows above the list")
     }
 
     /// Replay takes a kept demo's edits back out, so it plays again; ending it, as a quit does, keeps the demo's open

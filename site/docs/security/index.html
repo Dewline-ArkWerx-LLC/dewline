@@ -45,7 +45,7 @@
     <button type="button" class="search-open" aria-keyshortcuts="Meta+K /"><span>Search</span><kbd>⌘K</kbd></button>
     <nav class="dtop-links" aria-label="Site">
       <a href="/features/">Features</a>
-      <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest">Download</a>
+      <a href="/download">Download</a>
       <a href="https://github.com/Dewline-ArkWerx-LLC/dewline">Source</a>
     </nav>
   </div>
@@ -113,6 +113,9 @@
         <dd>Only while Settings &gt; Editor &gt; Link previews is on, which it is not by default. When a note shows a web link, Dewline asks that site for the page's title, icon and picture, as Messages does. It asks only for links on screen, only for http and https addresses, and never for addresses on your own network. The site sees your IP address and a request like a browser's. Previews are kept for 7 days in <code>~/Library/Caches/dev.arkwerx.dewline/LinkPreviews</code>. Turning previews off deletes the saved ones.</dd>
       </dl>
       <p>Images in a note load from relative paths on disk only; an image given as a URL is never fetched. Links you click open in your browser.</p>
+
+      <h2 id="website">What the website counts</h2>
+      <p>This site sets no cookies and runs no analytics script. It counts clicks on two kinds of link: <code>/download</code>, which starts the newest disk image, and short links that start with <code>/go/</code>, which go in posts and profiles. Each click stores the link's name, the host name of the page it came from (such as <code>t.co</code>, with no path) and the country Cloudflare gives for the request, with the time. Cloudflare Workers Analytics Engine keeps each record for three months. No IP address, user agent, cookie or full address is stored. A short link to a page on this site adds <code>utm_</code> fields to the address that name the post it was in. Cloudflare, which hosts the site, sees each request as any host does.</p>
 
       <h2 id="on-disk">What stays on disk</h2>
       <dl>

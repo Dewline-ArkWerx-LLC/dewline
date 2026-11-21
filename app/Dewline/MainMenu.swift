@@ -122,7 +122,7 @@ enum MainMenu {
         let keepSession = menu.addItem(withTitle: "Keep Session", action: #selector(ShellActions.keepSession(_:)), keyEquivalent: "\r")
         keepSession.keyEquivalentModifierMask = [.command, .control]
         let revertSession = menu.addItem(withTitle: "Revert Session", action: #selector(ShellActions.revertSession(_:)), keyEquivalent: "\u{8}")
-        revertSession.keyEquivalentModifierMask = [.command, .control, .option]
+        revertSession.keyEquivalentModifierMask = [.command, .control]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")

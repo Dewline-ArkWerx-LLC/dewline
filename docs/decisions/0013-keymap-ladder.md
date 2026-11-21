@@ -2,13 +2,13 @@
 
 Date: 2026-11-21. The owner delegated these to engineering on 21 Nov 2026.
 
-**The rule.** The base key acts on one change. Adding Shift acts on the whole note, adding Control on the whole session. Revert always carries Option.
+**The rule.** Return keeps, Delete reverts. Plain ⌘ acts on one change, adding ⇧ on the whole note, ⌃ in place of it on the whole session. Change- and note-level Revert carry ⌥, because ⌘⌫ deletes to the line start in text. The session level needs no ⌥, since ⌃⌘⌫ is free, and ⌃⌥ is avoided because it is VoiceOver's VO key.
 
 | Decision | Choice | Reopens if |
 |---|---|---|
 | Keep | ⌘↩ change, ⇧⌘↩ note, ⌃⌘↩ session (was ⌥⇧⌘↩) | |
-| Revert | ⌥⌘⌫ change, ⌥⇧⌘⌫ note, ⌃⌥⌘⌫ session (was ⌃⌘⌫) | VoiceOver users report the session revert as unreachable |
+| Revert | ⌥⌘⌫ change, ⌥⇧⌘⌫ note, ⌃⌘⌫ session (unchanged) | |
 | Quick Open | ⌘P, as in VS Code, Zed, Cursor and Sublime Text; ⇧⌘O is dropped, since nothing else used it | |
 | Print | ⌥⌘P | people miss ⌘P for Print |
 
-**Conflicts checked.** None of the new keys is on another menu item or in Apple's "Mac keyboard shortcuts" list. ⌥⌘P shows the path bar in Finder only. Print leaves the Mac's usual ⌘P, the price of putting Quick Open where code editors keep it. ⌃⌥⌘⌫ holds VoiceOver's VO keys (⌃⌥), so VoiceOver takes it while it runs; VoiceOver has no VO-Command-Delete command, and VO-Tab passes the next key to the app. It is the one ⌃⌥ shortcut `MainMenuTests` allows. Edit > Revert Session and the Changes list's Revert Session button stay reachable under VoiceOver.
+**Conflicts checked.** None of the new keys is on another menu item, in Apple's "Mac keyboard shortcuts" list or on VoiceOver's ⌃⌥. ⌥⌘P shows the path bar in Finder only. Print gives up the Mac's usual ⌘P so Quick Open can sit where code editors keep it.

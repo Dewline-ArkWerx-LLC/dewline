@@ -46,7 +46,7 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Keep All Changes | Edit | ⇧⌘↩ |
 | Revert All Changes | Edit | ⌥⇧⌘⌫ |
 | Keep Session | Edit | ⌃⌘↩ |
-| Revert Session | Edit | ⌃⌥⌘⌫ |
+| Revert Session | Edit | ⌃⌘⌫ |
 | Copy Relative Path | Edit | ⌥⇧⌘C |
 | Bold | Format | ⌘B |
 | Italic | Format | ⌘I |

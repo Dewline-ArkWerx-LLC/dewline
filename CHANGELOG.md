@@ -4,7 +4,7 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
-- Review keys follow one rule: Shift acts on the note, Control on the session, and Revert carries Option. Keep Session moves to ⌃⌘↩ and Revert Session to ⌃⌥⌘⌫ (decision 0013).
+- Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
 
 ## 0.6.1 (21 Nov 2026)

@@ -65,6 +65,9 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     weak var textView: EditorTextView? {
         didSet {
             NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification, object: nil)
+            NotificationCenter.default.removeObserver(self, name: LiveFile.changesDidChange, object: nil)
+            // A decision in another tab moves the stamp's count.
+            NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: LiveFile.changesDidChange, object: nil)
             guard let storage = textView?.textStorage else { return }
             NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: storage)
         }
@@ -153,8 +156,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         textView?.needsLayout = true
     }
 
-    /// Any edit, typing or styling, moves the lines the marks sit on: they lay out again on the text's next layout
-    /// pass, from the fragments that pass makes.
+    /// Any edit, typing or styling, moves the lines the marks sit on, and a decision anywhere in the window moves the
+    /// stamp's count: they lay out again on the text's next layout pass, from the fragments that pass makes.
     @objc private func storageEdited() {
         guard !changes.isEmpty else { return }
         dirty = true
@@ -335,27 +338,24 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     fill.frame = line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
                     group.addSublayer(fill)
+                    // Dashed for another app; a solid 1 pt line at 35% ink for a named writer, which no spelling or
+                    // grammar flag looks like.
                     let underline = CAShapeLayer()
-                    let y = line.frame.minY + line.baseline + rule + 1
+                    let width = writer.dashed ? rule : 1
+                    let y = line.frame.minY + line.baseline + (writer.dashed ? rule + 1 : 2.5)
                     let path = CGMutablePath()
                     path.move(to: CGPoint(x: line.frame.minX, y: y))
                     path.addLine(to: CGPoint(x: line.frame.maxX, y: y))
                     underline.path = path
-                    underline.strokeColor = color.cgColor
-                    underline.lineWidth = rule
-                    // Dotted, so it never reads as a link; dashed for another app.
-                    if writer.dashed {
-                        underline.lineDashPattern = [4, 3]
-                    } else {
-                        underline.lineCap = .round
-                        underline.lineDashPattern = [0, NSNumber(value: Double(rule) * 2)]
-                    }
+                    underline.strokeColor = writer.dashed ? color.cgColor : color.withAlphaComponent(0.35).cgColor
+                    underline.lineWidth = width
+                    if writer.dashed { underline.lineDashPattern = [4, 3] }
                     group.addSublayer(underline)
                     tips.append((line.frame, id))
                 }
             }
-            // One rule from the change's first row to its last.
-            let x = max(left - Self.ruleInset, 4)
+            // One rule from the change's first row to its last; in a quote, the quote's rule in the writer's ink.
+            let x = quoted(change.range.location) ? left : max(left - Self.ruleInset, 4)
             let span = rows.dropFirst().reduce(rows[0]) { $0.union($1) }
             let rules = [NSRect(x: x, y: span.minY + 2, width: ruleWidth, height: max(span.height - 4, 4))]
             if !change.conflict { ruled.append((Review.key(change.origin), rules, color)) }
@@ -393,7 +393,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             let spans = writer.filter { !$0.rules.isEmpty }.sorted { $0.rules[0].minY < $1.rules[0].minY }
             for (above, below) in zip(spans, spans.dropFirst()) {
                 let (top, bottom) = (above.rules.last!.maxY, below.rules[0].minY)
-                guard bottom > top, bottom - top <= near else { continue }
+                guard bottom > top, bottom - top <= near, above.rules[0].minX == below.rules[0].minX else { continue }
                 let join = CALayer()
                 join.frame = NSRect(x: below.rules[0].minX + (ruleWidth - 1) / 2, y: top, width: 1, height: bottom - top)
                 join.backgroundColor = above.color.withAlphaComponent(0.35).cgColor
@@ -411,6 +411,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         /// The segment's first character.
         let location: Int
         let length: Int
+    }
+
+    /// Whether the text at `index` sits in a quote that draws its rule at the column's left edge.
+    private func quoted(_ index: Int) -> Bool {
+        guard let textView, !textView.styler.showsSource, index < textView.textStorage!.length else { return false }
+        let storage = textView.textStorage!
+        return storage.attribute(.dewlineQuote, at: index, effectiveRange: nil) != nil
+            && storage.attribute(.dewlineCallout, at: index, effectiveRange: nil) == nil
     }
 
     /// `segments` without the blanks at either end of each, which a wash or underline would show as a nub.
@@ -674,9 +682,10 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         stamps[key] = (stamp, id)
         let group = group(of: id)
         let external = change.origin == .external
+        let place = live.map { Review.place(of: id, in: $0, window: textView.window) } ?? (index: 1, total: changes.count)
         stamp.show(
-            MarkWriter(change.origin), at: landed[id] ?? .now, count: group.count, external: external, shell: external && change.shell,
-            refused: group.contains { changes[$0]?.refused == true })
+            MarkWriter(change.origin), at: landed[id] ?? .now, index: place.index, of: place.total, external: external,
+            shell: external && change.shell, refused: group.contains { changes[$0]?.refused == true })
     }
 
     /// A stamp's first and second text baselines in the margin, beside the change in `range`.

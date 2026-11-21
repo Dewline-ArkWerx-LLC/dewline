@@ -52,7 +52,9 @@ struct GeneralPane: View {
                 }
             }
             Section {
-                Group {
+                if updates.updater == nil {
+                    Text("This build does not update itself.")
+                } else {
                     Toggle("Check automatically", isOn: Binding { updates.automaticChecks } set: { updates.setAutomaticChecks($0) })
                     Toggle(isOn: Binding { updates.beta } set: { updates.setBeta($0) }) {
                         Text("Beta builds")
@@ -67,7 +69,6 @@ struct GeneralPane: View {
                         }
                     }
                 }
-                .disabled(updates.updater == nil)
                 if let text = updates.stagedText {
                     Text(text)
                 }
@@ -75,7 +76,9 @@ struct GeneralPane: View {
                 Text("Updates")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(updates.updater == nil ? "This build does not update itself." : Updates.lineText)
+                    if updates.updater != nil {
+                        Text(Updates.lineText)
+                    }
                     if let error = updates.lastError {
                         Text(error)
                     }

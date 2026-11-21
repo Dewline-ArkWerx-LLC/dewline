@@ -130,21 +130,31 @@ final class BlockFragment: NSTextLayoutFragment {
         case .picture(let picture, _):
             let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y), size: picture.size)
             guard case .image = picture.art, NSAppearance.currentDrawing().isDark else { return picture.draw(in: frame, of: context) }
-            // On a dark page an embedded image draws at 90% brightness, and any image takes a faint 1 pt rim, so a
-            // light one reads as placed.
-            if picture.kind == .image {
-                context.beginTransparencyLayer(in: frame, auxiliaryInfo: nil)
-                picture.draw(in: frame, of: context)
-                context.setBlendMode(.sourceAtop)
-                context.setFillColor(CGColor(gray: 0, alpha: 0.1))
-                context.fill(frame)
-                context.endTransparencyLayer()
-            } else {
-                picture.draw(in: frame, of: context)
-            }
+            // On a dark page an embedded image draws at 88% brightness in 6 pt corners with a 1 px rim, and a link card
+            // takes a faint 1 pt rim, so a light one reads as placed.
             context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
-            context.setLineWidth(1)
-            context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
+            guard picture.kind == .image else {
+                picture.draw(in: frame, of: context)
+                context.setLineWidth(1)
+                return context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
+            }
+            let pixel = 1 / max(abs(context.convertToDeviceSpace(CGSize(width: 1, height: 1)).width), 1)
+            let radius = min(6, frame.width / 2, frame.height / 2)
+            context.saveGState()
+            context.addPath(CGPath(roundedRect: frame, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            context.clip()
+            context.beginTransparencyLayer(in: frame, auxiliaryInfo: nil)
+            picture.draw(in: frame, of: context)
+            context.setBlendMode(.sourceAtop)
+            context.setFillColor(CGColor(gray: 0, alpha: 0.12))
+            context.fill(frame)
+            context.endTransparencyLayer()
+            context.restoreGState()
+            let rim = frame.insetBy(dx: pixel / 2, dy: pixel / 2)
+            let inner = max(min(radius - pixel / 2, rim.width / 2, rim.height / 2), 0)
+            context.addPath(CGPath(roundedRect: rim, cornerWidth: inner, cornerHeight: inner, transform: nil))
+            context.setLineWidth(pixel)
+            context.strokePath()
         case .collapsed:
             break
         case .summary(let line):

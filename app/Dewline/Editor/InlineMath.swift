@@ -1,7 +1,7 @@
 import AppKit
 import MdCore
 
-/// `$...$` math drawn at the text's size on its baseline while the selection is outside it. The source stays in the
+/// `$...$` math drawn at the text's x-height on its baseline while the selection is outside it. The source stays in the
 /// storage, hidden; a kern on its first character holds the formula's width, and the view draws the formula there.
 /// Until the formula is drawn, and when its TeX fails, the source shows.
 @MainActor
@@ -13,6 +13,8 @@ final class InlineMath {
     private var formulas: [Request: Result<InlineFormula, RenderFailure>] = [:]
     private var pending: Set<Request> = []
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.inline-math", qos: .userInitiated)
+    /// RaTeX's x-height, in ems.
+    private static let xHeight: CGFloat = 0.431
 
     /// What a formula's picture depends on.
     struct Request: Hashable, Sendable {
@@ -62,7 +64,7 @@ final class InlineMath {
                 let font = styled.attribute(.font, at: local.content.location, effectiveRange: nil) as? NSFont ?? MarkdownStyler.bodyFont
                 let color = styled.attribute(.foregroundColor, at: local.content.location, effectiveRange: nil) as? NSColor
                 let request = Request(
-                    tex: styled.mutableString.substring(with: local.content), size: font.pointSize,
+                    tex: styled.mutableString.substring(with: local.content), size: (font.xHeight / Self.xHeight * 2).rounded() / 2,
                     color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
                 )
                 switch formulas[request] {

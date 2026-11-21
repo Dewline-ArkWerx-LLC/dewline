@@ -14,14 +14,14 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | New Window | File | ⌥⌘N |
 | Open… | File | ⌘O |
 | Open Folder… | File | ⌥⌘O |
-| Quick Open… | File | ⇧⌘O |
+| Quick Open… | File | ⌘P |
 | Reopen Closed Tab | File | ⇧⌘T |
 | Close | File | ⌘W |
 | Save | File | ⌘S |
 | Duplicate | File | ⇧⌘S |
 | Earlier Versions… | File | ⌥⌘Y |
 | Export… | File | ⇧⌘E |
-| Print… | File | ⌘P |
+| Print… | File | ⌥⌘P |
 | Undo | Edit | ⌘Z |
 | Redo | Edit | ⇧⌘Z |
 | Cut | Edit | ⌘X |
@@ -45,8 +45,8 @@ The shortcuts `app/Dewline/MainMenu.swift` puts in the menu bar, written here by
 | Revert Change | Edit | ⌥⌘⌫ |
 | Keep All Changes | Edit | ⇧⌘↩ |
 | Revert All Changes | Edit | ⌥⇧⌘⌫ |
-| Keep Session | Edit | ⌥⇧⌘↩ |
-| Revert Session | Edit | ⌃⌘⌫ |
+| Keep Session | Edit | ⌃⌘↩ |
+| Revert Session | Edit | ⌃⌥⌘⌫ |
 | Copy Relative Path | Edit | ⌥⇧⌘C |
 | Bold | Format | ⌘B |
 | Italic | Format | ⌘I |

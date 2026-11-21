@@ -65,7 +65,7 @@ enum MainMenu {
         let folder = menu.addItem(withTitle: "Open Folder\u{2026}", action: #selector(AppDelegate.openFolder(_:)), keyEquivalent: "o")
         folder.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = RecentMenu.menu()
-        menu.addItem(withTitle: "Quick Open\u{2026}", action: #selector(AppDelegate.quickOpen(_:)), keyEquivalent: "O")
+        menu.addItem(withTitle: "Quick Open\u{2026}", action: #selector(AppDelegate.quickOpen(_:)), keyEquivalent: "p")
         menu.addItem(withTitle: "Open Inbox", action: #selector(AppDelegate.openInbox(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Capture\u{2026}", action: #selector(AppDelegate.capture(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Reopen Closed Tab", action: #selector(ShellActions.reopenClosedTab(_:)), keyEquivalent: "T")
@@ -85,7 +85,8 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(NSDocumentController.shared.standardShareMenuItem())
         menu.addItem(withTitle: "Export\u{2026}", action: #selector(MarkdownDocument.exportDocument(_:)), keyEquivalent: "E").tag = Export.Format.pdf.rawValue
-        menu.addItem(withTitle: "Print\u{2026}", action: #selector(AppDelegate.printNote(_:)), keyEquivalent: "p")
+        let print = menu.addItem(withTitle: "Print\u{2026}", action: #selector(AppDelegate.printNote(_:)), keyEquivalent: "p")
+        print.keyEquivalentModifierMask = [.command, .option]
         return menu
     }
 
@@ -119,9 +120,9 @@ enum MainMenu {
         let revertAll = menu.addItem(withTitle: "Revert All Changes", action: #selector(EditorTextView.revertAllChanges(_:)), keyEquivalent: "\u{8}")
         revertAll.keyEquivalentModifierMask = [.command, .option, .shift]
         let keepSession = menu.addItem(withTitle: "Keep Session", action: #selector(ShellActions.keepSession(_:)), keyEquivalent: "\r")
-        keepSession.keyEquivalentModifierMask = [.command, .option, .shift]
+        keepSession.keyEquivalentModifierMask = [.command, .control]
         let revertSession = menu.addItem(withTitle: "Revert Session", action: #selector(ShellActions.revertSession(_:)), keyEquivalent: "\u{8}")
-        revertSession.keyEquivalentModifierMask = [.command, .control]
+        revertSession.keyEquivalentModifierMask = [.command, .control, .option]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy as Markdown", action: #selector(EditorTextView.copyAsMarkdown(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Copy as HTML", action: #selector(EditorTextView.copyAsHTML(_:)), keyEquivalent: "")

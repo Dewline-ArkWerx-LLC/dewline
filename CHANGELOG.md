@@ -2,6 +2,11 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Review keys follow one rule: Shift acts on the note, Control on the session, and Revert carries Option. Keep Session moves to ⌃⌘↩ and Revert Session to ⌃⌥⌘⌫ (decision 0013).
+- Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
+
 ## 0.6.0 (20 Nov 2026)
 
 Agent edits are easier to review from the keyboard and across a whole folder, uncommitted git changes show as marks, the window behaves more like a Mac app, and Typst and LaTeX files typeset in a sandbox.

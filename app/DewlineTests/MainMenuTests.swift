@@ -50,9 +50,20 @@ struct MainMenuTests {
         for shortcut in all {
             let item = "\(shortcut.path) › \(shortcut.title)"
             #expect(!Self.reserved.contains(shortcut.key.glyphs), "\(item) takes \(shortcut.key.glyphs) from macOS")
-            // VoiceOver's VO key is ⌃⌥, so every ⌃⌥ shortcut is a VoiceOver command.
-            #expect(!shortcut.key.modifiers.isSuperset(of: [.control, .option]), "\(item) takes \(shortcut.key.glyphs) from VoiceOver")
+            // VoiceOver's VO key is ⌃⌥, so every ⌃⌥ shortcut is a VoiceOver command. Revert Session's ⌃⌥⌘⌫ is the one
+            // exception (decision 0013): VoiceOver has no VO-Command-Delete command, and VO-Tab passes it through.
+            let voiceOver = shortcut.key.modifiers.isSuperset(of: [.control, .option]) && shortcut.key.glyphs != "⌃⌥⌘⌫"
+            #expect(!voiceOver, "\(item) takes \(shortcut.key.glyphs) from VoiceOver")
         }
+    }
+
+    /// Decision 0013: the base key acts on one change, Shift on the note, Control on the session, and Revert carries Option.
+    @Test func reviewKeysFollowTheLadder() {
+        let keys = Dictionary(shortcuts().map { ($0.title, $0.key.glyphs) }) { first, _ in first }
+        #expect(["Keep Change", "Keep All Changes", "Keep Session"].map { keys[$0] } == ["⌘↩", "⇧⌘↩", "⌃⌘↩"])
+        #expect(["Revert Change", "Revert All Changes", "Revert Session"].map { keys[$0] } == ["⌥⌘⌫", "⌥⇧⌘⌫", "⌃⌥⌘⌫"])
+        #expect(keys["Quick Open…"] == "⌘P")
+        #expect(keys["Print…"] == "⌥⌘P")
     }
 
     /// The Edit and Find items a Mac text app has, on the text view's own selectors and their standard keys.

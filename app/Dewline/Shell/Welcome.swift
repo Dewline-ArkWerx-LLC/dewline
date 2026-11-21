@@ -194,7 +194,7 @@ final class WelcomeGuide {
 
     private func attach() {
         guard let textView, let host = textView.enclosingScrollView?.superview, let window = textView.window else { return }
-        island.dock(in: host, under: textView.enclosingScrollView!)
+        island.dock(in: host, under: textView)
         island.onEscape = { [weak self] in self?.end() }
         after = textView.nextKeyView
         let center = NotificationCenter.default
@@ -295,12 +295,12 @@ final class WelcomeGuide {
 
     static let sentences = [
         "Watch the note. A demo agent is about to edit it.",
-        "The agent changed \u{201C}revert\u{201D} to \u{201C}undo\u{201D}. That edit is wrong. Revert it.",
-        "It also added a paragraph. That one is fine. Keep it.",
+        "The agent swapped \u{201C}revert\u{201D} for \u{201C}undo.\u{201D} Put the old word back.",
+        "It also added a paragraph you want. Keep it.",
     ]
     static let keys: [String?] = [nil, "\u{2325}\u{2318}\u{232B}", "\u{2318}\u{21A9}"]
     static let spoken: [String?] = [nil, "Option Command Delete.", "Command Return."]
-    static let closing = "That\u{2019}s the idea. Agents write, you keep or revert."
+    static let closing = "Every agent edit lands like those two."
 
     // MARK: Setup list
 
@@ -361,7 +361,7 @@ final class WelcomeGuide {
             } else if hooks.agents.allSatisfy({ $0.file == nil }) {
                 SetupRow(title: hooksTitle, status: "No Claude Code, Codex or Cursor found. Set this up later in Settings > Agents.")
             } else {
-                SetupRow(title: hooksTitle, status: "Without hooks, agent edits show as Another app.", button: "Set Up\u{2026}")
+                SetupRow(title: hooksTitle, status: "Without hooks, agent edits show as ANOTHER APP.", button: "Set Up\u{2026}")
             }
         let isDewline = isDefault ?? DefaultApp.isDewline
         let defaultRow = isDewline
@@ -373,7 +373,7 @@ final class WelcomeGuide {
             } else if let taken = CommandLink.taken() {
                 SetupRow(title: commandTitle, status: "Another dewline is at \((taken.path as NSString).abbreviatingWithTildeInPath).")
             } else {
-                SetupRow(title: commandTitle, status: "Opens notes from a terminal and works as your $EDITOR.", button: "Add")
+                SetupRow(title: commandTitle, status: "Opens notes from a terminal. dewline open --wait works as $EDITOR.", button: "Add")
             }
         return [hooksRow, defaultRow, commandRow]
     }
@@ -407,9 +407,10 @@ final class WelcomeGuide {
     }
 }
 
-/// The guide's island: Paper with the `strokeSubtle` edge at a 12 pt radius and a soft shadow, at most 520 pt wide,
-/// 16 pt above the bottom of the editor. A Signal hairline along its top edge fills by thirds. It holds a sentence, a
-/// keycap and its buttons, or the setup list. VoiceOver reads it as one group and hears each sentence as it changes.
+/// The guide's island: Paper with the `strokeSubtle` edge at a 12 pt radius and a soft shadow, as wide as the text
+/// column and 16 pt above the bottom of the editor, which scrolls the note clear of it. A Signal hairline along its top
+/// edge fills by thirds. It holds a sentence, a keycap and its buttons, or the setup list. VoiceOver reads it as one
+/// group and hears each sentence as it changes.
 @MainActor
 final class GuideIsland: NSView {
     private static let ease = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
@@ -417,6 +418,11 @@ final class GuideIsland: NSView {
     private let hairline = SignalHairline()
     private var bottom: NSLayoutConstraint?
     private var fill: NSLayoutConstraint?
+    private var column: NSLayoutConstraint?
+    private weak var scrollView: NSScrollView?
+    private var adjusted = true
+    /// The bottom inset the island adds to the editor.
+    private var room: CGFloat = 0
     private(set) var controls: [ChromeButton] = []
     var onReturn: () -> Void = {}
     var onEscape: () -> Void = {}
@@ -474,20 +480,40 @@ final class GuideIsland: NSView {
     @objc private func themeDidChange() {
         needsDisplay = true
         hairline.needsDisplay = true
+        column?.constant = ThemeStore.shared.measure
     }
 
-    /// Docks at the bottom center of `editor` in `host`, then fades in, rising 12 pt (opacity only under Reduce Motion).
-    func dock(in host: NSView, under editor: NSView) {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        makeRoom(newSize.height + 16)
+    }
+
+    /// Sets the editor's bottom inset to `height` more than it had before the island, 0 to give it back.
+    private func makeRoom(_ height: CGFloat) {
+        guard let scrollView, height != room else { return }
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets.bottom += height - room
+        room = height
+        if room == 0 { scrollView.automaticallyAdjustsContentInsets = adjusted }
+    }
+
+    /// Docks over the text column of `textView` in `host`, at the bottom of its scroll view, then fades in, rising
+    /// 12 pt (opacity only under Reduce Motion). The column is the measure, or the view less its 32 pt margins.
+    func dock(in host: NSView, under textView: NSTextView) {
+        guard let editor = textView.enclosingScrollView else { return }
+        scrollView = editor
+        adjusted = editor.automaticallyAdjustsContentInsets
         host.addSubview(self, positioned: .above, relativeTo: editor)
         let calm = Motion.current == .calm
         let bottom = bottomAnchor.constraint(equalTo: editor.bottomAnchor, constant: calm ? -4 : -16)
         self.bottom = bottom
-        let wide = widthAnchor.constraint(equalToConstant: 520)
-        wide.priority = .defaultLow
+        let column = widthAnchor.constraint(equalToConstant: ThemeStore.shared.measure)
+        column.priority = .defaultHigh
+        self.column = column
+        let margins = 2 * (32 + (textView.textContainer?.lineFragmentPadding ?? 0))
         NSLayoutConstraint.activate([
-            bottom, wide, centerXAnchor.constraint(equalTo: editor.centerXAnchor),
-            widthAnchor.constraint(lessThanOrEqualToConstant: 520),
-            widthAnchor.constraint(lessThanOrEqualTo: editor.widthAnchor, constant: -32),
+            bottom, column, centerXAnchor.constraint(equalTo: editor.contentView.centerXAnchor),
+            widthAnchor.constraint(lessThanOrEqualTo: editor.contentView.widthAnchor, constant: -margins),
         ])
         alphaValue = 0
         host.layoutSubtreeIfNeeded()
@@ -543,7 +569,7 @@ final class GuideIsland: NSView {
                 check.setAccessibilityElement(false)
                 trailing = check
             } else if let name = row.button {
-                let button = ChromeButton(name, label: "\(name.replacingOccurrences(of: "\u{2026}", with: "")) \(row.title)", action)
+                let button = ChromeButton(name, style: .bordered, label: "\(name.replacingOccurrences(of: "\u{2026}", with: "")) \(row.title)", action)
                 controls.append(button)
                 trailing = button
             } else {
@@ -631,8 +657,10 @@ final class GuideIsland: NSView {
         }
     }
 
-    /// Fades out, 150 ms, and leaves.
+    /// Gives the editor its inset back, fades out, 150 ms, and leaves.
     func dismiss() {
+        makeRoom(0)
+        scrollView = nil
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             animator().alphaValue = 0

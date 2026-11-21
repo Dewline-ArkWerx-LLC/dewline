@@ -1,7 +1,8 @@
 import AppKit
 
 /// The Move window, 480 by 300, shown alone when Dewline runs from a disk image or a translocated copy: the disk image's
-/// picture again (the app, a Signal line, Applications), a title and one sentence, and Not Now and Move to Applications.
+/// picture again (the app, its line, Applications), a title and one sentence centered under it, and Not Now and Move
+/// to Applications.
 /// Return moves; Esc, Command-W and the close button are Not Now. Move copies the app, quits, opens the copy and ejects
 /// the image, while the icon travels along the line into the folder.
 @MainActor
@@ -87,6 +88,7 @@ final class MoveWindowController: NSWindowController, NSWindowDelegate {
         let sentence = NSTextField(wrappingLabelWithString: Self.sentence(translocated: translocated, home: !target.path.hasPrefix("/Applications/")))
         sentence.font = Chrome.label
         sentence.textColor = Chrome.color(.ink2)
+        sentence.alignment = .center
         sentence.preferredMaxLayoutWidth = Self.size.width - 64
         let later = ChromeButton("Not Now") { [weak self] in self?.window?.performClose(nil) }
         let move = ChromeButton("Move to Applications", style: .filled) { [weak self] in self?.move() }
@@ -100,10 +102,10 @@ final class MoveWindowController: NSWindowController, NSWindowDelegate {
         }
         NSLayoutConstraint.activate([
             title.topAnchor.constraint(equalTo: root.topAnchor, constant: 176),
-            title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 32),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -32),
+            title.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            title.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 32),
             sentence.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
-            sentence.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            sentence.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 32),
             sentence.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -32),
             buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
@@ -189,7 +191,8 @@ private final class MoveWindow: NSWindow {
     }
 }
 
-/// The disk image's line: 1.5 pt of Signal with round caps and an open chevron at its right end, never a filled arrow.
+/// The disk image's line: 1.5 pt of the cursor orange, the disk image's Dawn, with round caps and an open chevron at its
+/// right end, never a filled arrow.
 final class SignalLine: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath()
@@ -203,7 +206,7 @@ final class SignalLine: NSView {
         path.lineWidth = 1.5
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
-        Chrome.color(.signal).setStroke()
+        Chrome.color(.cursor).setStroke()
         path.stroke()
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import DiskArbitration
 
 /// Set Up and Remove for agent hooks. Set Up shows the settings files `dewline doctor --install-hooks` would change and
 /// the entries it would add, and on Add Hooks runs it from the app's bundle, answering its questions yes. The command
@@ -59,36 +60,76 @@ enum HookSetup {
         }.joined(separator: "\n")
     }
 
+    /// Where a bundle sits, as the Move window asks: the original of a translocated copy, the volume holding a path,
+    /// and whether DiskArbitration calls a volume a disk image. Tests stand in their own.
+    struct Placement {
+        var original: (URL) -> URL? = HookSetup.translocatedOriginal
+        var volume: (URL) -> URL? = { try? $0.resourceValues(forKeys: [.volumeURLKey]).volume }
+        var isDiskImage: (URL) -> Bool = HookSetup.isDiskImage
+    }
+
     /// True when the app runs from a disk image or a copy macOS translocated: a hook set up from here calls a path
-    /// that is gone once the image ejects or the app quits.
-    static func misplaced(_ bundle: URL = Bundle.main.bundleURL) -> Bool {
-        let path = bundle.standardizedFileURL.path
-        return path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/")
+    /// that is gone once the image ejects or the app quits. An external drive or a share is where it belongs.
+    static func misplaced(_ bundle: URL = Bundle.main.bundleURL, placement: Placement = Placement()) -> Bool {
+        placement.original(bundle) != nil || diskImage(holding: bundle, placement: placement) != nil
     }
 
-    /// Asks to move the app into Applications and open it from there; Move copies it, quits, and opens the copy.
+    /// The disk image volume to eject after a move: the one holding the bundle, or a translocated copy's original.
+    static func diskImage(holding bundle: URL, placement: Placement = Placement()) -> URL? {
+        guard let volume = placement.volume(placement.original(bundle) ?? bundle), placement.isDiskImage(volume) else { return nil }
+        return volume
+    }
+
+    /// DiskArbitration's device model for a mounted image.
+    nonisolated static func isDiskImage(_ volume: URL) -> Bool {
+        guard let session = DASessionCreate(kCFAllocatorDefault), let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, volume as CFURL),
+            let description = DADiskCopyDescription(disk) as? [String: Any]
+        else { return false }
+        return (description[kDADiskDescriptionDeviceModelKey as String] as? String)?.trimmingCharacters(in: .whitespaces) == "Disk Image"
+    }
+
+    private typealias IsTranslocated = @convention(c) (CFURL, UnsafeMutablePointer<Bool>, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Bool
+    private typealias OriginalPath = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
+
+    /// The original of a copy macOS translocated, from Security's SecTranslocate calls, looked up at run time as Sparkle
+    /// does; nil for a bundle that runs where it is.
+    nonisolated static func translocatedOriginal(_ bundle: URL) -> URL? {
+        guard let security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+            let isSymbol = dlsym(security, "SecTranslocateIsTranslocatedURL"), let originalSymbol = dlsym(security, "SecTranslocateCreateOriginalPathForURL")
+        else { return nil }
+        var translocated = false
+        guard unsafeBitCast(isSymbol, to: IsTranslocated.self)(bundle as CFURL, &translocated, nil), translocated else { return nil }
+        return unsafeBitCast(originalSymbol, to: OriginalPath.self)(bundle as CFURL, nil)?.takeRetainedValue() as URL?
+    }
+
+    /// Where Move puts the app: Applications, or the one in the home folder when this account can't write there.
+    static func moveTarget(
+        for bundle: URL = Bundle.main.bundleURL, home: URL = URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory),
+        canWrite: (String) -> Bool = FileManager.default.isWritableFile(atPath:)
+    ) -> URL {
+        let folder = canWrite("/Applications") ? URL(filePath: "/Applications", directoryHint: .isDirectory) : home.appending(path: "Applications", directoryHint: .isDirectory)
+        return folder.appending(path: bundle.lastPathComponent)
+    }
+
+    /// The Move window, which moves the app into Applications and opens it from there.
     static func offerMove(on window: NSWindow?) {
-        let alert = NSAlert()
-        alert.messageText = "Move Dewline to Applications"
-        alert.informativeText = "Dewline is running from a disk image or a temporary copy. Agent hooks set up from here would stop working "
-            + "once it\u{2019}s gone, so set them up after the move."
-        alert.addButton(withTitle: "Move to Applications and Relaunch")
-        alert.addButton(withTitle: "Not Now")
-        present(alert, on: window) { response in
-            if response == .alertFirstButtonReturn { moveToApplications(on: window) }
-        }
+        MoveWindowController.show()
     }
 
-    /// Asks first when Applications already has a Dewline, and stops when that one is open.
-    private static func moveToApplications(on window: NSWindow?) {
+    /// Asks first when Applications already has a Dewline, and stops when that one is open. `moving` runs as the copy
+    /// starts and says how long its picture needs, which the quit waits for; `failed` runs when nothing moved.
+    static func moveToApplications(
+        on window: NSWindow?, moving: @escaping @MainActor () -> Duration = { .zero }, failed: @escaping @MainActor () -> Void = {}
+    ) {
         let source = Bundle.main.bundleURL
-        let target = URL(filePath: "/Applications", directoryHint: .isDirectory).appending(path: source.lastPathComponent)
-        guard FileManager.default.fileExists(atPath: target.path) else { return copy(source, to: target) }
+        let target = moveTarget(for: source)
+        let eject = diskImage(holding: source)
+        guard FileManager.default.fileExists(atPath: target.path) else { return copy(source, to: target, eject: eject, moving: moving, failed: failed) }
         let alert = NSAlert()
         if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.standardizedFileURL == target.standardizedFileURL }) {
             alert.messageText = "Dewline is open from Applications"
             alert.informativeText = "Quit it, then move this copy."
-            return present(alert, on: window) { _ in }
+            return present(alert, on: window) { _ in failed() }
         }
         let installed = Updates.versionOnDisk(at: target)?.version ?? "another version"
         let this = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "another version"
@@ -97,15 +138,20 @@ enum HookSetup {
         alert.addButton(withTitle: "Replace")
         alert.addButton(withTitle: "Cancel")
         present(alert, on: window) { response in
-            if response == .alertFirstButtonReturn { copy(source, to: target, replacing: true) }
+            guard response == .alertFirstButtonReturn else { return failed() }
+            copy(source, to: target, replacing: true, eject: eject, moving: moving, failed: failed)
         }
     }
 
-    /// Copies the app off the main thread, quits, and opens the copy.
-    private static func copy(_ source: URL, to target: URL, replacing: Bool = false) {
+    /// Copies the app off the main thread, quits, and opens the copy, then ejects `eject`, the disk image it ran from.
+    private static func copy(
+        _ source: URL, to target: URL, replacing: Bool = false, eject: URL?, moving: @MainActor () -> Duration, failed: @escaping @MainActor () -> Void
+    ) {
+        let shown = ContinuousClock.now + moving()
         Task {
             do {
                 try await Task.detached {
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if replacing { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
                     try FileManager.default.copyItem(at: source, to: target)
                     // The copy keeps the download's quarantine, which would translocate it again.
@@ -116,18 +162,21 @@ enum HookSetup {
                     clear.waitUntilExit()
                 }.value
                 // Opens the copy once this app has quit, so the two never hold the control socket at once. Gives up after
-                // a minute, so a canceled quit doesn't open it later.
+                // a minute, so a canceled quit doesn't open it later. Then ejects the disk image, retrying once when it is
+                // busy (Spotlight holds a fresh mount), and gives up quietly.
                 let relaunch = Process()
                 relaunch.executableURL = URL(filePath: "/bin/sh")
                 relaunch.arguments = [
-                    "-c", "i=0; while /bin/kill -0 \"$1\" 2>/dev/null; do [ $i -lt 300 ] || exit 0; /bin/sleep 0.2; i=$((i+1)); done; /usr/bin/open \"$2\"",
-                    "sh", String(getpid()), target.path,
+                    "-c", "i=0; while /bin/kill -0 \"$1\" 2>/dev/null; do [ $i -lt 300 ] || exit 0; /bin/sleep 0.2; i=$((i+1)); done; /usr/bin/open \"$2\"; "
+                        + "[ -n \"$3\" ] || exit 0; /usr/sbin/diskutil eject \"$3\" >/dev/null 2>&1 || { /bin/sleep 1; /usr/sbin/diskutil eject \"$3\" >/dev/null 2>&1; }",
+                    "sh", String(getpid()), target.path, eject?.path ?? "",
                 ]
                 try relaunch.run()
             } catch {
                 NSApp.presentError(error)
-                return
+                return failed()
             }
+            try? await Task.sleep(until: shown)
             NSApp.terminate(nil)
         }
     }
@@ -140,13 +189,16 @@ enum HookSetup {
     private static let declinedKey = "DewlineDeclinedHookSetup"
     /// The folders doctor is checking now.
     private static var checking: Set<String> = []
+    /// Folders opened from the guide's setup list, whose hooks row already asked this launch.
+    static var askedThisLaunch: Set<String> = []
 
     /// Offers Set Up on `window` if an agent's hooks are missing, once for each folder that holds an agent's files;
     /// doctor reads `folder`'s project settings too. A folder counts as checked once doctor has run and found nothing
     /// missing or the sheet has shown, so Not Now holds for that folder only.
     static func offer(on window: NSWindow, in folder: URL) {
         let key = folder.path
-        guard !checking.contains(key), !UserDefaults.standard.bool(forKey: declinedKey),
+        // While the guide runs it is the one thing asking; a later window offers.
+        guard WelcomeGuide.running == nil, !checking.contains(key), !askedThisLaunch.contains(key), !UserDefaults.standard.bool(forKey: declinedKey),
             !(UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(key),
             ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
             agentNames.contains(where: { FileManager.default.fileExists(atPath: folder.appending(path: $0).path) })

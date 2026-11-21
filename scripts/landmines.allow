@@ -7,12 +7,10 @@ app/DewlineTests/PerfTests.swift exempt times launch, open and scroll for script
 app/DewlineTests/SourceModeMeasurements.swift exempt times source-mode layout for scripts/perf.sh
 app/DewlineTests/BlockMapTests.swift no-fixed-sleep 1
 app/DewlineTests/CaretSpikeTests.swift no-fixed-sleep 6
-app/DewlineTests/CaretTests.swift no-fixed-sleep 4
-app/DewlineTests/CaretTests.swift no-wall-clock-asserts 2
+app/DewlineTests/CaretTests.swift no-fixed-sleep 2
 app/DewlineTests/CodeFilesTests.swift no-fixed-sleep 2
 app/DewlineTests/CollaborationTests.swift no-fixed-sleep 8
 app/DewlineTests/ConstructTests.swift no-fixed-sleep 2
-app/DewlineTests/EditRestyleTests.swift no-fixed-sleep 1
 app/DewlineTests/FlowsTests.swift no-fixed-sleep 10
 app/DewlineTests/HideSyntaxTests.swift no-fixed-sleep 5
 app/DewlineTests/LinkPreviewTests.swift no-fixed-sleep 11
@@ -28,7 +26,4 @@ core/crates/cli/tests/notify.rs no-wall-clock-asserts 3
 core/crates/cli/tests/open.rs no-fixed-sleep 2
 core/crates/cli/tests/open.rs no-wall-clock-asserts 1
 core/crates/core/src/highlight.rs no-fixed-sleep 1
-core/crates/core/src/highlight.rs no-wall-clock-asserts 1
 core/crates/core/src/merge.rs no-wall-clock-asserts 1
-core/crates/sync/src/tests.rs no-fixed-sleep 11
-core/crates/sync/src/tests.rs no-wall-clock-asserts 1

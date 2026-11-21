@@ -48,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launched = false
     /// Whether application(_:open:) was handed anything before launch finished.
     private var openedBeforeLaunch = false
+    /// The app runs from a disk image or a translocated copy: the Move window shows first and alone, until Not Now.
+    /// Read before AppKit asks for an untitled file, which it does before launch finishes.
+    private var misplaced = false
 
     /// Whether `arguments` hold a path besides `-Key value` pairs, which are defaults.
     private nonisolated static func namesFile(_ arguments: ArraySlice<String>) -> Bool {
@@ -66,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         FlowStatus.start()
         guard !isTestHost else { return }
+        misplaced = HookSetup.misplaced()
         session = Session.load(from: defaults) ?? Session(windows: [])
     }
 
@@ -107,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launched = true
         // A launch to open something that application(_:open:) never saw is a Markdown file on its way.
         if notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool == false, !openedBeforeLaunch { opensFile = true }
+        let opensFile = opensFile
         // Before AppKit decides whether to show the launch window, which it shows only when nothing reopened.
         if opensFile, session != nil {
             // A file that never shows (the dewline command gives up after 10 s) leaves the session to reopen then.
@@ -130,12 +135,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let failure = MarkdownDocument.engineFailure { Tracking.report(.noEngine(failure)) }
         Export.publishPreviewStylesheet()
         CodeHighlights.publishForPreview()
-        NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: nil, queue: .main) { _ in
+        NotificationCenter.default.addObserver(forName: ThemeStore.didChange, object: ThemeStore.shared, queue: .main) { _ in
             MainActor.assumeIsolated { Export.publishPreviewStylesheet() }
         }
-        if !defaults.bool(forKey: Welcome.shownKey) {
-            defaults.set(true, forKey: Welcome.shownKey)
-            // Opened before AppKit asks for an untitled file, so the guide shows in place of the launch window.
+        // The Move window alone, then on Not Now what this launch would have shown in this copy; else the guide, in place
+        // of the launch window.
+        if misplaced {
+            MoveWindowController.show { [weak self] in
+                guard let self else { return }
+                misplaced = false
+                if Welcome.due(opensFile: opensFile, defaults: defaults) {
+                    firstLaunch()
+                } else if applicationShouldOpenUntitledFile(NSApp) {
+                    showWelcome(nil)
+                }
+            }
+        } else if Welcome.due(opensFile: opensFile, defaults: defaults) {
             firstLaunch()
         }
         let engine = MarkdownDocument.sharedEngine
@@ -167,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        WelcomeGuide.running?.end()
         LiveFile.keepAllMarks()
         control?.stop()
         if !isTestHost { MainWindowController.session().save(to: defaults) }
@@ -278,14 +294,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The first launch: Welcome.md, kept in Dewline's own folder, open in a window without a folder and with the caret
-    /// at its end, and the move to Applications offered when the app runs from a disk image. No folder of the user's is
-    /// made or opened until they ask.
+    /// at its end, and the guide on it. No folder of the user's is made or opened until they ask.
     func firstLaunch() {
         do {
             try Welcome.write()
             let welcome = Self.welcomeWindow(at: Welcome.url())
             welcome.showWindow(nil)
-            if HookSetup.misplaced() { HookSetup.offerMove(on: welcome.window) }
+            if let document = welcome.document as? MarkdownDocument { WelcomeGuide.start(in: welcome, document: document, url: Welcome.url()) }
         } catch {
             NSApp.presentError(error)
         }
@@ -301,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
-    /// Help > Replay the Demo: Welcome.md again if it is gone, then Demo's change to it.
+    /// Help > Replay the Demo: Welcome.md again if it is gone, then the guide on it.
     @objc func replayDemo(_ sender: Any?) {
         do {
             try Welcome.write()
@@ -311,10 +326,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// `dewline://demo`, the link in Welcome.md: Demo extends the paragraph that holds it.
+    /// `dewline://demo`, the link in Welcome.md: the guide again, with the last demo's edits taken back out first.
     func playDemo(at url: URL) {
         do {
-            WelcomeDemo.play(try openMarkdown(at: url), at: url)
+            let document = try openMarkdown(at: url)
+            guard let controller = document.windowControllers.first as? MainWindowController else { return }
+            WelcomeGuide.start(in: controller, document: document, url: url, delay: .milliseconds(400))
         } catch {
             NSApp.presentError(error)
         }
@@ -322,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // AppKit asks at launch when nothing opens or restores, and when the Dock icon is clicked with no windows.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        !isTestHost && !opensFile && mainWindows == 0
+        !isTestHost && !opensFile && mainWindows == 0 && !misplaced
     }
 
     /// Main windows on screen or in the Dock.

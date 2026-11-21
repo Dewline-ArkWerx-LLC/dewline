@@ -267,7 +267,7 @@ struct LinkShots {
 
         A link on its own line becomes a card:
 
-        https://github.com/ark-232/dewline
+        https://github.com/Dewline-ArkWerx-LLC/dewline
 
         https://www.apple.com/macos/
 

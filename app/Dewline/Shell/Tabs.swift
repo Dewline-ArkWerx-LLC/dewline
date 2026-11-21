@@ -107,19 +107,23 @@ final class WindowState {
 
 /// The tab strip in the title row: one 26 pt pill per tab, SF Pro body, radius 6, at most 200 pt, its file name with
 /// the extension in `ink2`. The selected tab is the brightest pill; a tab with unsaved edits shows a dot 3 pt into it,
-/// which turns into the close x under the pointer. Other tabs sit on the chrome with 16 pt padding and a 1 px divider at
-/// 10%, hidden beside the selected or hovered tab. Tabs keep their width; those past the strip's end go into a "+N"
-/// pop-up, and the selected tab always shows. Dragging a tab along the strip moves it, its neighbors sliding aside as it
-/// passes; dragging it out of the strip drags its file. Command-click shows the note's path. A tab whose note has
-/// changes waiting carries the sidebar's writer badge after its name: a 3 x 10 rule in the ink of the writer with the
-/// most of them and the count of all of them, on that ink at 14%. Tabs whose notes share a name add the shortest parent
+/// which turns into the close x under the pointer. Other tabs sit on the chrome, the name 16 pt in and 8 pt from the end, with a 1 px divider at
+/// 10%, hidden beside the selected or hovered tab. Tabs narrow to fit, down to 72 pt, a name too long for its tab losing
+/// its extension and then its middle; those past the strip's end go into a "+N" pop-up, in the writer's ink when one of
+/// them has changes waiting, and the selected tab always shows. Dragging a tab along the strip moves it, its neighbors
+/// sliding aside as it passes; dragging it out of the strip drags its file. Command-click shows the note's path. A tab
+/// whose note has changes waiting carries the sidebar's writer badge after its name, as its row in "+N" does. Tabs
+/// whose notes share a name add the shortest parent
 /// path that tells them apart ("spec.md · api"). A window whose one tab has no note shows no tab. A tab's tooltip says
 /// what is waiting, when its note was saved, how many words it has and its Option-Command key; its context menu renames
 /// or moves the note, or copies its path. Under Full Keyboard Access the strip takes the focus: the arrow keys move the
 /// system's focus ring between tabs and Space or Return selects one.
 final class TabStrip: NSView {
     private static let height: CGFloat = 26
-    private static let padding: CGFloat = 16
+    /// The name's inset: past the close x on the leading side, 8 pt on the trailing.
+    private static let leading: CGFloat = 16
+    private static let end: CGFloat = 8
+    private static let narrowest: CGFloat = 72
     private static let gap: CGFloat = 4
     private static let widest: CGFloat = 200
     private static let close = NSRect(x: 3, y: 7, width: 12, height: 12)
@@ -212,14 +216,16 @@ final class TabStrip: NSView {
         return name
     }
 
-    /// The title, its extension and parent path in `ink2`.
-    private static func name(_ tab: MainWindowController, _ title: String) -> NSAttributedString {
+    /// The title, its extension and parent path in `ink2`; without the extension when asked.
+    private static func name(_ tab: MainWindowController, _ title: String, withExtension: Bool = true) -> NSAttributedString {
         let file = tab.tabFileName as NSString
         let ext = file.pathExtension.isEmpty ? 0 : file.pathExtension.utf16.count + 1
+        var title = title as NSString
+        if !withExtension { title = title.replacingCharacters(in: NSRange(location: file.length - ext, length: ext), with: "") as NSString }
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byTruncatingMiddle
         let name = NSMutableAttributedString(
-            string: title, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
+            string: title as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
         name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - ext, length: name.length - file.length + ext))
         return name
     }
@@ -228,31 +234,23 @@ final class TabStrip: NSView {
         tab.window?.isDocumentEdited == true
     }
 
-    /// The writer with the most changes waiting in the tab's note, and the count of all of them.
-    private static func waiting(_ tab: MainWindowController) -> WaitingCount? {
-        var counts: [String: (writer: MarkWriter, count: Int)] = [:]
+    /// Each writer's changes waiting in the tab's note, most first.
+    private static func waiting(_ tab: MainWindowController) -> [WaitingCount] {
+        var counts: [WaitingCount] = []
         for change in (tab.document as? MarkdownDocument)?.live?.changes.values.filter(\.marked) ?? [] {
-            let writer = MarkWriter(change.origin)
-            counts[writer.name, default: (writer, 0)].count += 1
+            counts.add(MarkWriter(change.origin), 1)
         }
-        let total = counts.values.reduce(0) { $0 + $1.count }
-        return counts.values.max { $0.count < $1.count }.map { WaitingCount(writer: $0.writer, count: total) }
-    }
-
-    private static let badgeFont = Chrome.mono(11, weight: .medium)
-
-    /// The badge's width: 4 pt, the rule, 4 pt, the count, 5 pt.
-    private static func badgeWidth(_ waiting: WaitingCount) -> CGFloat {
-        11 + ceil(("\(waiting.count ?? 0)" as NSString).size(withAttributes: [.font: badgeFont]).width) + 5
+        return counts
     }
 
     /// Room after the name for the writer badge.
     private static func trailing(_ tab: MainWindowController) -> CGFloat {
-        waiting(tab).map { badgeWidth($0) + 6 } ?? 0
+        let width = WaitingBadge.width(waiting(tab))
+        return width > 0 ? width + 6 : 0
     }
 
     private static func width(_ tab: MainWindowController, _ title: String) -> CGFloat {
-        min(ceil(name(tab, title).size().width) + padding * 2 + trailing(tab), widest)
+        min(ceil(name(tab, title).size().width) + leading + end + trailing(tab), widest)
     }
 
     private static func moreWidth(_ count: Int) -> CGFloat {
@@ -265,7 +263,22 @@ final class TabStrip: NSView {
         var all = tabs?.tabs ?? []
         if all.count == 1, all[0].document == nil { all = [] }
         let titles = all.map { Self.title($0, among: all) }
-        let widths = all.indices.map { Self.width(all[$0], titles[$0]) }
+        var widths = all.indices.map { Self.width(all[$0], titles[$0]) }
+        // Too wide together: the widest narrow to one cap, no narrower than `narrowest`, until they fit.
+        let free = bounds.width - Self.gap * CGFloat(max(all.count - 1, 0))
+        if widths.reduce(0, +) > free {
+            var left = free
+            var cap = Self.narrowest
+            for (index, width) in widths.sorted().enumerated() {
+                let share = left / CGFloat(widths.count - index)
+                if width > share {
+                    cap = max(floor(share), Self.narrowest)
+                    break
+                }
+                left -= width
+            }
+            widths = widths.map { min($0, cap) }
+        }
         let y = floor((bounds.height - Self.height) / 2)
         var shown = Array(all.indices)
         if widths.reduce(0, +) + Self.gap * CGFloat(max(all.count - 1, 0)) > bounds.width {
@@ -327,9 +340,20 @@ final class TabStrip: NSView {
         if let more {
             context.setAlpha(othersAlpha)
             let path = NSBezierPath(roundedRect: more.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-            Chrome.color(.rule).setStroke()
+            var waiting: [WaitingCount] = []
+            for (tab, _) in overflow {
+                for count in Self.waiting(tab) { waiting.add(count.writer, count.count) }
+            }
+            if let writer = waiting.first?.writer {
+                writer.color.withAlphaComponent(0.14).setFill()
+                path.fill()
+                writer.color.setStroke()
+            } else {
+                Chrome.color(.rule).setStroke()
+            }
             path.stroke()
-            let label = NSAttributedString(string: "+\(overflow.count)", attributes: [.font: Chrome.mono(12, weight: .medium), .foregroundColor: Chrome.color(.ink2)])
+            let ink = waiting.first?.writer.color ?? Chrome.color(.ink2)
+            let label = NSAttributedString(string: "+\(overflow.count)", attributes: [.font: Chrome.mono(12, weight: .medium), .foregroundColor: ink])
             let size = label.size()
             label.draw(at: NSPoint(x: more.midX - size.width / 2, y: more.midY - size.height / 2))
         }
@@ -365,24 +389,21 @@ final class TabStrip: NSView {
             Chrome.color(.ink2).setFill()
             NSBezierPath(ovalIn: NSRect(x: box.midX - 3, y: box.midY - 3, width: 6, height: 6)).fill()
         }
-        let name = NSMutableAttributedString(attributedString: Self.name(slot.tab, slot.title))
+        let room = frame.width - Self.leading - Self.end - Self.trailing(slot.tab)
+        var full = Self.name(slot.tab, slot.title)
+        if ceil(full.size().width) > room { full = Self.name(slot.tab, slot.title, withExtension: false) }
+        let name = NSMutableAttributedString(attributedString: full)
         if !selected, !hovering {
             name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: name.length))
         }
         let height = ceil(name.size().height)
-        let room = frame.width - Self.padding * 2 - Self.trailing(slot.tab)
         name.draw(
-            with: NSRect(x: frame.minX + Self.padding, y: frame.midY - height / 2, width: max(room, 0), height: height),
+            with: NSRect(x: frame.minX + Self.leading, y: frame.midY - height / 2, width: max(room, 0), height: height),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        if let waiting = Self.waiting(slot.tab) {
-            let badge = NSRect(x: frame.minX + Self.padding + max(room, 0) + 6, y: frame.midY - 8, width: Self.badgeWidth(waiting), height: 16)
-            let ink = waiting.writer.color
-            ink.withAlphaComponent(0.14).setFill()
-            NSBezierPath(roundedRect: badge, xRadius: 4, yRadius: 4).fill()
-            ink.setFill()
-            NSBezierPath(roundedRect: NSRect(x: badge.minX + 4, y: badge.midY - 5, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
-            let count = NSAttributedString(string: "\(waiting.count ?? 0)", attributes: [.font: Self.badgeFont, .foregroundColor: Chrome.color(.ink)])
-            count.draw(at: NSPoint(x: badge.minX + 11, y: badge.midY - count.size().height / 2))
+        let waiting = Self.waiting(slot.tab)
+        let width = WaitingBadge.width(waiting)
+        if width > 0 {
+            WaitingBadge.draw(waiting, in: NSRect(x: frame.minX + Self.leading + max(room, 0) + 6, y: frame.midY - WaitingBadge.height / 2, width: width, height: WaitingBadge.height))
         }
     }
 
@@ -575,6 +596,17 @@ final class TabStrip: NSView {
         for (tab, title) in overflow {
             let item = menu.addItem(withTitle: title, action: #selector(NSWindowController.showWindow(_:)), keyEquivalent: "")
             item.target = tab
+            let waiting = Self.waiting(tab)
+            if let badge = WaitingBadge.image(waiting) {
+                let attachment = NSTextAttachment()
+                attachment.image = badge
+                let font = NSFont.menuFont(ofSize: 0)
+                attachment.bounds = NSRect(x: 0, y: (font.capHeight - badge.size.height) / 2, width: badge.size.width, height: badge.size.height)
+                let line = NSMutableAttributedString(string: title + "  ", attributes: [.font: font])
+                line.append(NSAttributedString(attachment: attachment))
+                item.attributedTitle = line
+                item.toolTip = WaitingBadge.tip(waiting)
+            }
         }
         menu.popUp(positioning: nil, at: NSPoint(x: more.minX, y: more.maxY + 4), in: self)
     }
@@ -589,7 +621,7 @@ final class TabStrip: NSView {
         let all = tabs?.tabs ?? []
         elements = slots.filter { othersAlpha > 0 || $0.tab === tabs?.selected }.flatMap { slot -> [NSAccessibilityElement] in
             let index = (all.firstIndex { $0 === slot.tab } ?? 0) + 1
-            let state = (Self.waiting(slot.tab).map { ", " + $0.spoken } ?? "") + (slot.tab.savedState.map { ", " + $0 } ?? "")
+            let state = Self.waiting(slot.tab).map { ", " + $0.spoken }.joined() + (slot.tab.savedState.map { ", " + $0 } ?? "")
             let tab = TabElement(slot.tab) { $0.showWindow(nil) }
             tab.setAccessibilityRole(.radioButton)
             tab.setAccessibilityLabel("\(slot.title), tab \(index) of \(all.count)\(state)")
@@ -623,7 +655,7 @@ extension TabStrip: NSViewToolTipOwner {
         guard let tab = slot(at: point)?.tab, othersAlpha > 0 || tab === tabs?.selected else { return "" }
         let title = slots.first { $0.tab === tab }?.title ?? tab.tabFileName
         let key = (tabs?.tabs.firstIndex { $0 === tab }).flatMap { $0 < 9 ? "Show with \u{2325}\u{2318}\($0 + 1)" : nil }
-        return ([title, Self.waiting(tab)?.tip, tab.savedState, tab.wordCount, key] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }
+        return ([title, WaitingBadge.tip(Self.waiting(tab)), tab.savedState, tab.wordCount, key] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
 }

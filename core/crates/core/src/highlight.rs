@@ -1144,14 +1144,28 @@ mod tests {
         let before = format!("a = 1\n{body}");
         highlighter.highlight(9, "py", &before).unwrap();
         let after = format!("a = 2\n{body}");
-        let started = Instant::now();
         let spans = read(&after, &highlighter.highlight(9, "py", &after).unwrap());
-        let reused = started.elapsed();
-        let started = Instant::now();
         let fresh = read(&after, &highlighter.highlight(10, "py", &after).unwrap());
-        let parsed = started.elapsed();
         assert_eq!(spans, fresh);
-        assert!(reused * 4 < parsed, "{reused:?} against {parsed:?}");
+        // Only the edited line is parsed again: every other line keeps a mark put in its cached spans.
+        let mut worker = Worker::new(
+            PathBuf::from(DUMP),
+            Arc::new(Mutex::new(HashMap::from([(9, 1)]))),
+        );
+        let python = Source::Fence("py".into());
+        worker.highlight(9, 1, &python, &before).unwrap();
+        let mark = vec![Span {
+            start: 0,
+            end: 0,
+            class: Class::Heading,
+        }];
+        for line in &mut worker.blocks.get_mut(&9).unwrap().lines {
+            line.spans = mark.clone();
+        }
+        worker.highlight(9, 1, &python, &after).unwrap();
+        let lines = &worker.blocks[&9].lines;
+        assert_eq!(lines.len(), 2_001);
+        assert_eq!(lines.iter().filter(|line| line.spans != mark).count(), 1);
         // An edit that opens a string changes every line after it, and closing it changes them back.
         let opened = format!("a = \"\"\"\n{body}");
         let spans = read(&opened, &highlighter.highlight(9, "py", &opened).unwrap());

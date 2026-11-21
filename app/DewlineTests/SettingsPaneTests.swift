@@ -89,6 +89,15 @@ struct SettingsPaneTests {
         }
     }
 
+    /// A store other than the shared one, as Restore Defaults' factory and these tests make, leaves open editors alone.
+    @Test func aSecondThemeStoreLeavesOpenEditorsAlone() throws {
+        let view = try #require(EditorTextView.scrollView().documentView as? EditorTextView)
+        let probe = NSColor(red: 1, green: 0, blue: 1, alpha: 1)
+        view.backgroundColor = probe
+        withDefaults { ThemeStore(defaults: $0).bodySize += 1 }
+        #expect(view.backgroundColor == probe)
+    }
+
     /// Every pane is a grouped form the window's width, as tall as its settings and no taller than the window allows.
     @Test func panesSizeToTheirContent() {
         for pane in SettingsPane.allCases {

@@ -34,7 +34,7 @@ private final class ActionButton: NSButton {
         toolTip = shortcut.map { "\(title) (\($0))" }
         setAccessibilityLabel(label)
         paint()
-        NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -214,9 +214,9 @@ final class ConflictCard: NSView, Hanging {
     }
 }
 
-/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · saved · 1 of 3 ⌃⌘↓" sits on the change's first text baseline
+/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 3 of 4" sits on the change's first text baseline
 /// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column; a narrower margin takes
-/// the compact stamp, "CLAUDE · 1 of 3" over Revert and Keep as icons. Only where the margin is narrower than the
+/// the compact stamp, "CLAUDE · 3 of 4" over Revert and Keep in 11 pt text. Only where the margin is narrower than the
 /// compact stamp plus that 26 pt and a 24 pt gutter does it fold into a 30 pt bar under the block holding the change,
 /// on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. Revert and Keep share
 /// one width. Keep and Revert show on the stamp of the change at the caret and on a stamp under the pointer. No cursor
@@ -233,19 +233,15 @@ final class ChangeStamp: NSView {
     static let duringShell = "During Claude Code\u{2019}s shell command"
     /// What a change says once Revert finds text typed inside it; Revert then asks before it puts the old text back.
     static let typedInside = "You edited inside it"
-    /// Whether a change was ever kept or reverted, after which the stamp shows Next Change's keys.
-    private static var decided: Bool {
-        get { UserDefaults.standard.bool(forKey: "DecidedAChange") }
-        set { if newValue != decided { UserDefaults.standard.set(newValue, forKey: "DecidedAChange") } }
-    }
-
     private let revert: StampButton
     private let keep: StampButton
     private let setUp: StampButton
     private let note = NSTextField(labelWithString: duringShell)
     private var writer: MarkWriter?
     private var time = ""
-    private var count = 0
+    /// The stamped change's place among the window's waiting changes, in the order Next Change walks them.
+    private var index = 0
+    private var total = 0
     private var external = false
     private var shell = false
     private(set) var folded = false
@@ -254,10 +250,7 @@ final class ChangeStamp: NSView {
         didSet { showButtons() }
     }
     private var hovering = false {
-        didSet {
-            showButtons()
-            if !Self.decided { needsDisplay = true }
-        }
+        didSet { showButtons() }
     }
     private var flags: Any?
     /// Line 1's baseline and left edge, in this view.
@@ -281,14 +274,6 @@ final class ChangeStamp: NSView {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.handler = {
-            Self.decided = true
-            revert()
-        }
-        self.keep.handler = {
-            Self.decided = true
-            keep()
-        }
         self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All (\u{2325}\u{21E7}\u{2318}\u{232B})"
         self.keep.toolTip = "Already saved; Keep clears the mark. Keep (\u{2318}\u{21A9}). Option-click: Keep All (\u{21E7}\u{2318}\u{21A9})"
         setUp.toolTip = "Name this writer: set up agent hooks"
@@ -301,7 +286,7 @@ final class ChangeStamp: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: ThemeStore.shared)
         NotificationCenter.default.addObserver(self, selector: #selector(revertRefused(_:)), name: LiveFile.revertRefused, object: nil)
     }
 
@@ -356,24 +341,24 @@ final class ChangeStamp: NSView {
         resized()
     }
 
-    /// Shows `writer`'s `count` changes from its session in the note, the stamped one landed at `time`, during Claude
-    /// Code's shell command when `shell`, and why Revert left one when `refused`; Keep and Revert decide the stamped one,
-    /// "Keep 1 of 3" when the session has more.
-    func show(_ writer: MarkWriter, at time: Date, count: Int, external: Bool, shell: Bool, refused: Bool) {
+    /// Shows `writer`'s change that landed at `time`, `index` of the window's `total` waiting changes, during Claude
+    /// Code's shell command when `shell`, and why Revert left one when `refused`; Keep and Revert decide it, "Keep 3 of 4"
+    /// when the window has more.
+    func show(_ writer: MarkWriter, at time: Date, index: Int, of total: Int, external: Bool, shell: Bool, refused: Bool) {
         let time = time.formatted(date: .omitted, time: .shortened)
-        let changed = writer != self.writer || time != self.time || count != self.count
-        if writer == self.writer, count < self.count { Self.decided = true }
+        let changed = writer != self.writer || time != self.time || index != self.index || total != self.total
         self.writer = writer
         self.time = time
-        self.count = count
+        self.index = index
+        self.total = total
         self.external = external
         self.shell = shell
         note.stringValue = refused ? Self.typedInside : Self.duringShell
         note.isHidden = !(shell || refused)
-        setAccessibilityLabel("\(writer.name), \(time), \(count) \(count == 1 ? "change" : "changes")" + (note.isHidden ? "" : ", \(note.stringValue)"))
-        let of = count == 1 ? "" : " 1 of \(count)"
-        revert.setAccessibilityLabel("Revert \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
-        keep.setAccessibilityLabel("Keep \(writer.possessive) change" + (count == 1 ? "" : ",\(of)"))
+        setAccessibilityLabel("\(writer.name), \(time), saved, \(index) of \(total)" + (note.isHidden ? "" : ", \(note.stringValue)"))
+        let of = total == 1 ? "" : ", \(index) of \(total)"
+        revert.setAccessibilityLabel("Revert \(writer.possessive) change" + of)
+        keep.setAccessibilityLabel("Keep \(writer.possessive) change" + of)
         // Set Up names no shell command's change, so a change during one doesn't offer it.
         setUp.isHidden = !(offering && external && !shell)
         if changed { needsDisplay = true }
@@ -408,7 +393,6 @@ final class ChangeStamp: NSView {
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
-            Self.decided = true
             textView.history.perform("Revert Change") {
                 for (id, change) in refused where live.changes[id] != nil {
                     live.keep(id)
@@ -433,14 +417,13 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · saved · 1 of 3 ⌃⌘↓": the writer in small capitals in its ink, the time with fixed-width digits,
-    /// that it is on disk, the count and Next Change's keys, which take their room but show only under the pointer or
-    /// once a change was decided; "CLAUDE · 1 of 3" in the compact stamp.
+    /// "CLAUDE 3:25 PM · 3 of 4": the writer in small capitals in its ink, the time with fixed-width digits and the
+    /// change's place in the window; "CLAUDE · 3 of 4" in the compact stamp.
     private var line: NSAttributedString {
-        line(compact: keep.compact && !folded)
+        line(compact: keep.form != .full && !folded)
     }
 
-    private func line(compact: Bool, chord: Bool = true) -> NSAttributedString {
+    private func line(compact: Bool) -> NSAttributedString {
         guard let writer else { return NSAttributedString() }
         let ink2 = ThemeStore.shared.color(.ink2)
         let line = NSMutableAttributedString(attributedString: writer.stamp)
@@ -452,14 +435,7 @@ final class ChangeStamp: NSView {
         if !compact {
             line.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ink2]))
         }
-        line.append(NSAttributedString(string: (compact ? "" : " \u{00B7} saved") + " \u{00B7} 1 of \(count)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2,
-        ]))
-        if !compact {
-            line.append(NSAttributedString(string: "  \u{2303}\u{2318}\u{2193}", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: chord ? ink2 : .clear,
-            ]))
-        }
+        line.append(NSAttributedString(string: " \u{00B7} \(index) of \(total)", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: ink2]))
         return line
     }
 
@@ -467,30 +443,30 @@ final class ChangeStamp: NSView {
         ceil(max(MarkWriter.stampFont.ascender, NSFont.systemFont(ofSize: 11).ascender))
     }
 
-    private func buttonsWidth(compact: Bool) -> CGFloat {
-        2 * buttonWidth(compact: compact) + Self.gap
+    private func buttonsWidth(_ form: StampButton.Form) -> CGFloat {
+        2 * buttonWidth(form) + Self.gap
     }
 
     /// Revert's and Keep's one width.
-    private func buttonWidth(compact: Bool) -> CGFloat {
-        max(revert.width(compact: compact), keep.width(compact: compact))
+    private func buttonWidth(_ form: StampButton.Form) -> CGFloat {
+        max(revert.width(form), keep.width(form))
     }
 
-    /// The width the stamp takes in the margin with Keep and Revert as icons: the least margin that holds it.
+    /// The width the compact stamp takes in the margin: the least margin that holds it.
     var marginWidth: CGFloat {
         width(compact: true)
     }
 
     private func width(compact: Bool) -> CGFloat {
         ceil(max(
-            line(compact: compact).size().width, buttonsWidth(compact: compact), setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
+            line(compact: compact).size().width, buttonsWidth(compact ? .short : .full), setUp.isHidden ? 0 : setUp.intrinsicContentSize.width,
             note.isHidden ? 0 : note.intrinsicContentSize.width))
     }
 
-    /// Keep and Revert collapse to icons where their titles don't fit.
+    /// Where their full titles don't fit, Keep and Revert take short ones in the margin and icons in the folded bar.
     private func setCompact(_ compact: Bool) {
-        keep.compact = compact
-        revert.compact = compact
+        keep.form = compact ? (folded ? .icon : .short) : .full
+        revert.form = keep.form
     }
 
     /// In the margin, its right edge at `right`: line 1 on `first`, the buttons' labels on `second`, both baselines
@@ -498,13 +474,13 @@ final class ChangeStamp: NSView {
     func placeInMargin(right: CGFloat, first: CGFloat, second: CGFloat) {
         folded = false
         setCompact(width(compact: false) > right - Self.gutter)
-        let width = width(compact: keep.compact)
+        let width = width(compact: keep.form != .full)
         let top = first - ascent
         baseline = ascent
         textX = width - ceil(line.size().width)
         // The buttons clear line 1's descent even when the second baseline sits close under the first.
         let buttons = max(second - StampButton.labelBaseline, first + 4) - top
-        let buttonWidth = buttonWidth(compact: keep.compact)
+        let buttonWidth = buttonWidth(keep.form)
         keep.frame = NSRect(x: width - buttonWidth, y: buttons, width: buttonWidth, height: StampButton.height)
         revert.frame = NSRect(x: keep.frame.minX - Self.gap - buttonWidth, y: buttons, width: buttonWidth, height: StampButton.height)
         var bottom = keep.frame.maxY
@@ -530,8 +506,8 @@ final class ChangeStamp: NSView {
         textX = 10
         let y = (Self.barHeight - StampButton.height) / 2
         let noted = note.isHidden ? 0 : ceil(note.intrinsicContentSize.width) + 8
-        setCompact(textX + ceil(line.size().width) + 8 + noted + buttonsWidth(compact: false) + y > rect.width)
-        let buttonWidth = buttonWidth(compact: keep.compact)
+        setCompact(textX + ceil(line.size().width) + 8 + noted + buttonsWidth(.full) + y > rect.width)
+        let buttonWidth = buttonWidth(keep.form)
         keep.frame = NSRect(x: rect.width - y - buttonWidth, y: y, width: buttonWidth, height: StampButton.height)
         revert.frame = NSRect(x: keep.frame.minX - Self.gap - buttonWidth, y: y, width: buttonWidth, height: StampButton.height)
         if !note.isHidden {
@@ -552,7 +528,7 @@ final class ChangeStamp: NSView {
             writer.color.withAlphaComponent(0.08).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
-        line(compact: keep.compact && !folded, chord: hovering || Self.decided).draw(at: NSPoint(x: textX, y: baseline - ascent))
+        line.draw(at: NSPoint(x: textX, y: baseline - ascent))
     }
 }
 
@@ -574,13 +550,15 @@ func readOnlyText(_ text: NSAttributedString) -> NSScrollView {
 
 /// Revert (outlined), Keep (filled with the theme's accent, set in paper) and a quiet link, each with its keys in one
 /// `Keycap`: ⌥⌘⌫ for Revert, ⌘↩ for Keep. Its width holds its title and its Option title, so holding Option moves
-/// nothing; `compact` shows its symbol alone.
+/// nothing; the short form sets the title alone at 11 pt, the icon form its symbol alone.
 @MainActor
 final class StampButton: NSButton {
     enum Style { case outlined, filled, link }
+    enum Form { case full, short, icon }
 
     static let height: CGFloat = 22
     private static let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    private static let shortFont = NSFont.systemFont(ofSize: 11, weight: .medium)
     /// From the button's top to its label's baseline.
     static let labelBaseline = ((height + font.capHeight) / 2).rounded()
 
@@ -593,8 +571,8 @@ final class StampButton: NSButton {
     var optionDown = false {
         didSet { if optionDown != oldValue, alternate != nil { needsDisplay = true } }
     }
-    var compact = false {
-        didSet { if compact != oldValue { needsDisplay = true } }
+    var form = Form.full {
+        didSet { if form != oldValue { needsDisplay = true } }
     }
 
     init(
@@ -630,12 +608,13 @@ final class StampButton: NSButton {
         optionDown ? alternate?.title ?? title : title
     }
 
-    private func label(_ title: String) -> NSAttributedString {
+    private func label(_ title: String, _ form: Form = .full) -> NSAttributedString {
         let store = ThemeStore.shared
         if style == .link {
             return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
         }
-        return NSAttributedString(string: title, attributes: [.font: Self.font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
+        let font = form == .short ? Self.shortFont : Self.font
+        return NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
     }
 
     private static func caps(_ keys: String) -> [String] {
@@ -648,20 +627,20 @@ final class StampButton: NSButton {
         return symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config) }
     }
 
-    /// The label and keys' width for `title`.
-    private func content(_ title: String, _ keys: String) -> CGFloat {
-        label(title).size().width + (keys.isEmpty ? 0 : 5 + Keycap.width(Self.caps(keys)))
+    /// The label and keys' width for `title` in `form`; the short form drops the keys.
+    private func content(_ title: String, _ keys: String, _ form: Form) -> CGFloat {
+        label(title, form).size().width + (keys.isEmpty || form == .short ? 0 : 5 + Keycap.width(Self.caps(keys)))
     }
 
-    /// The button's width, as icons when `compact`.
-    func width(compact: Bool) -> CGFloat {
+    /// The button's width in `form`.
+    func width(_ form: Form) -> CGFloat {
         if style == .link { return ceil(label(title).size().width) }
-        if compact, symbolImage != nil { return 26 }
-        return ceil(8 + max(content(title, keys), alternate.map { content($0.title, $0.keys) } ?? 0) + 7)
+        if form == .icon, symbolImage != nil { return 26 }
+        return ceil(8 + max(content(title, keys, form), alternate.map { content($0.title, $0.keys, form) } ?? 0) + 7)
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: width(compact: compact), height: style == .link ? 18 : Self.height)
+        NSSize(width: width(form), height: style == .link ? 18 : Self.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -683,19 +662,20 @@ final class StampButton: NSButton {
             label(title).draw(at: .zero)
             return
         }
-        if compact, let image = symbolImage {
+        if form == .icon, let image = symbolImage {
             let rect = NSRect(
                 x: ((bounds.width - image.size.width) / 2).rounded(), y: ((bounds.height - image.size.height) / 2).rounded(),
                 width: image.size.width, height: image.size.height)
             image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             return
         }
-        let baseline = Self.labelBaseline
+        let font = form == .short ? Self.shortFont : Self.font
+        let baseline = ((Self.height + font.capHeight) / 2).rounded()
         let title = shownTitle
-        let shownKeys = optionDown ? alternate?.keys ?? keys : keys
-        let text = label(title)
-        let x = ((bounds.width - content(title, shownKeys)) / 2).rounded()
-        text.draw(at: NSPoint(x: x, y: baseline - Self.font.ascender))
+        let shownKeys = form == .short ? "" : optionDown ? alternate?.keys ?? keys : keys
+        let text = label(title, form)
+        let x = ((bounds.width - content(title, shownKeys, form)) / 2).rounded()
+        text.draw(at: NSPoint(x: x, y: baseline - font.ascender))
         Keycap.draw(Self.caps(shownKeys), x: x + text.size().width + 5, midY: bounds.midY, onFill: style == .filled)
     }
 }

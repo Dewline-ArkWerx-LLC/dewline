@@ -1,8 +1,9 @@
 #!/bin/bash
-# Signs Dewline.app inside out, notarizes and staples it, packs it into a ULMO disk image, then signs, notarizes and
-# staples that, so the app inside passes Gatekeeper offline and syspolicy_check distribution. Each
-# stage runs only when its inputs exist and otherwise prints a line saying it was skipped, so with no Developer ID the
-# result is an unsigned DMG. Signing never uses --deep. Fails when the DMG is over 20 MB.
+# Signs Dewline.app inside out, notarizes and staples it, packs it with dmgbuild into a ULMO disk image laid out by
+# scripts/dmg/settings.py, then signs, notarizes and staples that, so the app inside passes Gatekeeper offline and
+# syspolicy_check distribution. Each stage runs only when its inputs exist and otherwise prints a line saying it was
+# skipped, so with no Developer ID the result is an unsigned DMG. Signing never uses --deep. Fails when the DMG is over
+# 20 MB.
 #   SIGN_IDENTITY                            the Developer ID Application identity, in a keychain on the search list
 #   ASC_KEY_PATH, ASC_KEY_ID, ASC_ISSUER_ID  an App Store Connect API key for notarytool
 # Writes notarytool's JSON result beside the DMG as <name>.notarization.json.
@@ -60,9 +61,11 @@ else
     echo "sign.sh: skipped code signing: SIGN_IDENTITY is not set, so the app and the DMG stay unsigned"
 fi
 
-ln -s /Applications "$work/Applications"
+dmgdir=$(cd "$(dirname "$0")/dmg" && pwd)
+command -v dmgbuild > /dev/null \
+    || { echo "sign.sh: dmgbuild is not on the PATH (pip install --require-hashes -r scripts/dmg/requirements.txt)" >&2; exit 1; }
 rm -f "$dmg"
-hdiutil create -quiet -format ULMO -volname Dewline -srcfolder "$work" "$dmg"
+dmgbuild -s "$dmgdir/settings.py" -D app="$app" -D bg="$dmgdir/background.png" Dewline "$dmg"
 
 if [[ -z $identity ]]; then
     echo "sign.sh: skipped notarization and stapling: the DMG is unsigned"

@@ -110,7 +110,7 @@ jobs:
         with:
           toolchain: 1.99.1
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-cyclonedx@0.5.9
       - name: Build the universal app
@@ -176,6 +176,14 @@ jobs:
           echo "$EXPECTED  Dewline-unsigned.zip" | shasum -a 256 -c -
           ditto -x -k Dewline-unsigned.zip .
           "$GITHUB_WORKSPACE/scripts/check-app.sh" Dewline.app
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install dmgbuild 2.0.0
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmgbuild"
+          "$RUNNER_TEMP/dmgbuild/bin/pip" install --quiet --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r scripts/dmg/requirements.txt
+          echo "$RUNNER_TEMP/dmgbuild/bin" >> "$GITHUB_PATH"
       - name: Write the signing keys
         id: keys
         env:
@@ -223,6 +231,9 @@ jobs:
           codesign --verify --strict --deep -vv "$mount/Dewline.app"
           scripts/check-app.sh "$mount/Dewline.app"
           syspolicy_check distribution "$mount/Dewline.app"
+          [[ -f $mount/.DS_Store && -f $mount/.background.tiff && -f $mount/.VolumeIcon.icns ]]
+          ! grep -qa pBBk "$mount/.DS_Store"
+          ! grep -qa -e /Users/ -e "$RUNNER_TEMP" "$mount/.DS_Store"
           key=$(plutil -extract SUPublicEDKey raw "$mount/Dewline.app/Contents/Info.plist")
           hdiutil detach "$mount"
           {
@@ -330,7 +341,7 @@ jobs:
           cp updates/appcast.xml "$archives/appcast.xml"
           awk -v v="$VERSION" '$1 == "##" { if (on) exit; on = ($2 == v) } on' CHANGELOG.md | tail -n +2 > "$archives/Dewline-$VERSION.md"
           flags=(--download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/"
-            --full-release-notes-url https://github.com/ark-232/dewline/releases --embed-release-notes
+            --full-release-notes-url "https://github.com/$GITHUB_REPOSITORY/releases" --embed-release-notes
             --maximum-deltas 0 --maximum-versions 26 --phased-rollout-interval 43200)
           if [[ $CHANNEL == beta ]]; then flags+=(--channel beta); fi
           if [[ $CRITICAL == true ]]; then flags+=(--critical-update-version "$BUILD"); fi

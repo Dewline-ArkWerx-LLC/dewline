@@ -1,9 +1,20 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.svg">
-  <img src="docs/brand/lockup.svg" alt="Dewline" width="320">
-</picture>
+<p align="center">
+  <a href="https://dewline.arkwerx.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.svg">
+      <img src="docs/brand/lockup.svg" alt="Dewline" width="320">
+    </picture>
+  </a>
+</p>
 
-**Notes you can grep.**
+<p align="center"><strong>Notes you can grep.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest"><img src="https://img.shields.io/github/v/release/Dewline-ArkWerx-LLC/dewline?label=release&color=C9482A" alt="Latest release"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-4A5A58" alt="License: FSL-1.1-ALv2"></a>
+  <img src="https://img.shields.io/badge/macOS-26%2B-4A5A58" alt="macOS 26 or later">
+  <a href="https://github.com/Dewline-ArkWerx-LLC/dewline/actions/workflows/ci.yml"><img src="https://github.com/Dewline-ArkWerx-LLC/dewline/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+</p>
 
 Dewline is a native Markdown editor for Mac. It opens the .md files you already keep, in any folder or Obsidian vault, and saves them exactly as you wrote them.
 
@@ -21,7 +32,7 @@ macOS 26+ · Free to start · No account, no telemetry
 
 **Files and saves.** Edits save in place as plain Markdown. When something else changes the open file (git, a sync app, a script or a coding agent), Dewline marks each change and lets you keep or revert it. It snapshots the file before an outside change lands, and File > Earlier Versions… restores any snapshot.
 
-**Finding your way.** The sidebar starts at your folder, with + for a new note. Tabs, Quick Open (⇧⌘O), find in files (⇧⌘F) and a command palette for files, commands and settings (⇧⌘P).
+**Finding your way.** The sidebar starts at your folder, with + for a new note. Tabs, Quick Open (⌘P), find in files (⇧⌘F) and a command palette for files, commands and settings (⇧⌘P).
 
 **Looks.** Four themes, two light and two dark, and any font on your Mac for the body, headings and code.
 
@@ -69,7 +80,7 @@ The app carries a `dewline` command in `Dewline.app/Contents/Helpers`; the Homeb
 brew install --cask ark-232/tap/dewline
 ```
 
-or download the DMG from [Releases](https://github.com/ark-232/dewline/releases). Dewline updates itself.
+or download the DMG from [Releases](https://github.com/Dewline-ArkWerx-LLC/dewline/releases). Dewline updates itself.
 
 ## Build
 

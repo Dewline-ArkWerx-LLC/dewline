@@ -55,6 +55,15 @@ struct MainMenuTests {
         }
     }
 
+    /// Decision 0013: Return keeps, Delete reverts; ⌘ acts on one change, ⇧ on the note, ⌃ on the session.
+    @Test func reviewKeysFollowTheLadder() {
+        let keys = Dictionary(shortcuts().map { ($0.title, $0.key.glyphs) }) { first, _ in first }
+        #expect(["Keep Change", "Keep All Changes", "Keep Session"].map { keys[$0] } == ["⌘↩", "⇧⌘↩", "⌃⌘↩"])
+        #expect(["Revert Change", "Revert All Changes", "Revert Session"].map { keys[$0] } == ["⌥⌘⌫", "⌥⇧⌘⌫", "⌃⌘⌫"])
+        #expect(keys["Quick Open…"] == "⌘P")
+        #expect(keys["Print…"] == "⌥⌘P")
+    }
+
     /// The Edit and Find items a Mac text app has, on the text view's own selectors and their standard keys.
     @Test func editAndFindCarryTheStandardItems() {
         let all = shortcuts()

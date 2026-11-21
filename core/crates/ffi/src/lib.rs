@@ -196,6 +196,13 @@ static FONTS: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
     Arc::new(fonts)
 });
 
+// ratex builds its symbol tables and loads its fonts on the first formula,
+// which can take the whole budget on a loaded machine; the budget is for the
+// formula.
+static MATH_FONTS: LazyLock<()> = LazyLock::new(|| {
+    let _ = math_outlines(r"\frac{x}{1}", 20.0, 0);
+});
+
 // mermaid-rs-renderer scans the system fonts on its first text measurement,
 // which takes about the whole budget; the budget is for the diagram.
 static MERMAID_FONTS: LazyLock<()> = LazyLock::new(|| {
@@ -523,24 +530,27 @@ pub fn draw_math(tex: String, size: f32, color: u32) -> Result<Drawing, RenderEr
     if tex.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
     }
-    within_budget(BUDGET, move || {
-        let list = typeset(&tex, color)?;
-        let options = ratex_svg::SvgOptions {
-            font_size: f64::from(size),
-            padding: 0.0,
-            embed_glyphs: true,
-            ..Default::default()
-        };
-        let svg = ratex_svg::render_to_svg(&list, &options);
-        let tree = usvg::Tree::from_str(&svg, &usvg::Options::default())
-            .map_err(|error| error.to_string())?;
-        Ok(outlines(
-            &tree,
-            list.width as f32 * size,
-            list.total_height() as f32 * size,
-            list.depth as f32 * size,
-        ))
-    })
+    LazyLock::force(&MATH_FONTS);
+    within_budget(BUDGET, move || math_outlines(&tex, size, color))
+}
+
+fn math_outlines(tex: &str, size: f32, color: u32) -> Result<Drawing, String> {
+    let list = typeset(tex, color)?;
+    let options = ratex_svg::SvgOptions {
+        font_size: f64::from(size),
+        padding: 0.0,
+        embed_glyphs: true,
+        ..Default::default()
+    };
+    let svg = ratex_svg::render_to_svg(&list, &options);
+    let tree =
+        usvg::Tree::from_str(&svg, &usvg::Options::default()).map_err(|error| error.to_string())?;
+    Ok(outlines(
+        &tree,
+        list.width as f32 * size,
+        list.total_height() as f32 * size,
+        list.depth as f32 * size,
+    ))
 }
 
 fn typeset(tex: &str, color: u32) -> Result<DisplayList, String> {
@@ -561,6 +571,7 @@ fn render_math(tex: String, size: f32, scale: f32, color: u32) -> Result<Vec<u8>
     if tex.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
     }
+    LazyLock::force(&MATH_FONTS);
     within_budget(BUDGET, move || {
         let list = typeset(&tex, color)?;
         let options = ratex_render::RenderOptions {

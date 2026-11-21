@@ -13,7 +13,7 @@ out=${1:?usage: scripts/sparkle-tools.sh <folder>}
 grep -qx "    exactVersion: $version" "$root/app/project.yml" \
     || { echo "sparkle-tools.sh: app/project.yml does not pin Sparkle $version" >&2; exit 1; }
 mkdir -p "$out"
-curl -fsSL -A "dewline-build (https://github.com/ark-232/dewline)" -o "$out/Sparkle-$version.tar.xz" \
+curl -fsSL -A "dewline-build (https://github.com/Dewline-ArkWerx-LLC/dewline)" -o "$out/Sparkle-$version.tar.xz" \
     "https://github.com/sparkle-project/Sparkle/releases/download/$version/Sparkle-$version.tar.xz"
 echo "$sha256  $out/Sparkle-$version.tar.xz" | shasum -a 256 -c - > /dev/null
 tar -xf "$out/Sparkle-$version.tar.xz" -C "$out"

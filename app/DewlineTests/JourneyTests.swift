@@ -942,7 +942,7 @@ struct JourneyTests {
     }
 
     /// The dewline command links into /usr/local/bin when this account can use it, else ~/.local/bin, made if missing;
-    /// a link into any Dewline.app is replaced, and anything else there is left alone.
+    /// a link that resolves to this app's command is replaced, and anything else there is left alone.
     @Test func j1TheCommandLinksIntoAFolderOnThePath() throws {
         let vault = try Vault([:])
         defer { vault.remove() }
@@ -955,9 +955,11 @@ struct JourneyTests {
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == command.path)
         #expect(CommandLink.status(link.path).hasSuffix("to your PATH to run it by name."))
 
+        let hop = home.appending(path: "hop")
+        try FileManager.default.createSymbolicLink(at: hop, withDestinationURL: command)
         try FileManager.default.removeItem(at: link)
-        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/Volumes/Dewline/Dewline.app/Contents/Helpers/dewline")
-        #expect(CommandLink.taken(at: folder) == nil)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../../hop")
+        #expect(CommandLink.taken(at: folder) == nil, "a link that resolves to this app's command")
         #expect(try CommandLink.install(command: command, in: folder) == link)
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == command.path)
 
@@ -969,6 +971,35 @@ struct JourneyTests {
         try Data("#!/bin/sh\n".utf8).write(to: link)
         #expect(try CommandLink.install(command: command, in: folder) == nil)
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil, "a file of someone else's stays")
+    }
+
+    /// The command links only from a copy that stays put: never while the app is misplaced, never to a command on a
+    /// volume or in a translocated copy, and a link counts as this app's only when it resolves to this app's command.
+    @Test func j1TheCommandLinksOnlyACopyThatStays() throws {
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        let folder = vault.root.appending(path: "bin", directoryHint: .isDirectory)
+        let link = folder.appending(path: "dewline")
+        let command = HookSetup.command()
+        #expect(try CommandLink.install(command: command, in: folder, misplaced: true) == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path), "nothing is made while the app is misplaced")
+        let image = URL(filePath: "/Volumes/Dewline/Dewline.app/Contents/Helpers/dewline")
+        let translocated = URL(filePath: "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app/Contents/Helpers/dewline")
+        #expect(CommandLink.unstable(image) && CommandLink.unstable(translocated) && !CommandLink.unstable(command))
+        #expect(try CommandLink.install(command: image, in: folder, misplaced: false) == nil)
+        #expect(try CommandLink.install(command: translocated, in: folder, misplaced: false) == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for other in [image.path, "/usr/local/evil/Dewline.app/Contents/Helpers/dewline", command.path + "-not"] {
+            try? FileManager.default.removeItem(at: link)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: other)
+            #expect(CommandLink.taken(at: folder, command: command) == link, "\(other) is not this app's command")
+            #expect(try CommandLink.install(command: command, in: folder) == nil)
+        }
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: command.deletingLastPathComponent().path + "/./dewline")
+        #expect(CommandLink.taken(at: folder, command: command) == nil, "the same command, written another way")
     }
 
     /// Set Up reads which settings files lack hooks, and the entries each would gain, from `dewline doctor`, and runs

@@ -330,11 +330,7 @@ final class WelcomeGuide {
             case Self.hooksTitle: { [weak self] in HookSetup.install(from: self?.textView?.window) { _ in self?.refreshSetup() } }
             case Self.defaultTitle: { [weak self] in Task { _ = await DefaultApp.make(); self?.refreshSetup() } }
             default: { [weak self] in
-                do {
-                    try CommandLink.install()
-                } catch {
-                    NSApp.presentError(error)
-                }
+                CommandLink.add(on: self?.textView?.window)
                 self?.refreshSetup()
             }
             }

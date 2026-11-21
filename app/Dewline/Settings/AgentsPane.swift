@@ -94,20 +94,41 @@ enum CommandLink {
         FileManager.default.isWritableFile(atPath: path) && !FileManager.default.fileExists(atPath: path + "/brew")
     }
 
-    /// The file at the link's place that is not a symlink into a Dewline.app, which Add leaves alone.
-    static func taken(at folder: URL = folder()) -> URL? {
+    /// The file at the link's place unless it is a link that resolves to `command`, which Add leaves alone.
+    static func taken(at folder: URL = folder(), command: URL = HookSetup.command()) -> URL? {
         let link = folder.appending(path: "dewline")
-        if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) {
-            return destination.contains("Dewline.app/") ? nil : link
+        guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) else {
+            return FileManager.default.fileExists(atPath: link.path) ? link : nil
         }
-        return FileManager.default.fileExists(atPath: link.path) ? link : nil
+        return resolved(URL(filePath: destination, relativeTo: folder)) == resolved(command) ? nil : link
     }
 
-    /// Links `command` as dewline in `folder`, replacing a link into any Dewline.app (an older copy, a gone disk image);
-    /// nil when another dewline is there.
+    private static func resolved(_ url: URL) -> String {
+        url.absoluteURL.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// True when `command` sits where a link to it breaks or can be swapped: on a volume, or in a copy macOS translocated.
+    static func unstable(_ command: URL) -> Bool {
+        let path = resolved(command)
+        return path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/")
+    }
+
+    /// Settings > Agents and the setup list's Add: the Move window while the app runs from a disk image, a translocated
+    /// copy or another volume, as Set Up does, else the link.
+    static func add(on window: NSWindow?) {
+        guard !HookSetup.misplaced(), !unstable(HookSetup.command()) else { return HookSetup.offerMove(on: window) }
+        do {
+            try install()
+        } catch {
+            NSApp.presentError(error)
+        }
+    }
+
+    /// Links `command` as dewline in `folder`; nil when the app is `misplaced`, `command` is unstable or another
+    /// dewline is there.
     @discardableResult
-    static func install(command: URL = HookSetup.command(), in folder: URL = folder()) throws -> URL? {
-        guard taken(at: folder) == nil else { return nil }
+    static func install(command: URL = HookSetup.command(), in folder: URL = folder(), misplaced: Bool = HookSetup.misplaced()) throws -> URL? {
+        guard !misplaced, !unstable(command), taken(at: folder, command: command) == nil else { return nil }
         if !FileManager.default.fileExists(atPath: folder.path) {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             madeFolder = folder
@@ -137,11 +158,7 @@ struct AgentsPane: View {
                 LabeledContent {
                     if hooks.onPath == nil, taken == nil {
                         Button("Add") {
-                            do {
-                                try CommandLink.install()
-                            } catch {
-                                NSApp.presentError(error)
-                            }
+                            CommandLink.add(on: NSApp.keyWindow)
                             Task { await refresh() }
                         }
                         .fixedSize()

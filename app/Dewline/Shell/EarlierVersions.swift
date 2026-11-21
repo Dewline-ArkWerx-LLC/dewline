@@ -2,8 +2,9 @@ import AppKit
 import MdCore
 
 /// File > Earlier Versions…: a sheet listing the note's snapshots, newest first ("Today, 9:41 AM · Claude Code"),
-/// with a pin on each, and beside the list what restoring the selected one would change in the current text.
-/// Restore is one undoable edit; Open as Copy writes it to a new note beside this one.
+/// with a pin on each, and beside the list what restoring the selected one would change in the current text. It opens
+/// on the newest that differs from the text, and keeps its selection as the list rereads. Restore is one undoable edit; Open as Copy writes it to a new note beside
+/// this one; neither runs for a version that is the text.
 @MainActor
 final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private static var open: EarlierVersions?
@@ -15,7 +16,7 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private let diff = NSTextView()
     private let heading = NSTextField(labelWithString: "")
     private let empty = NSTextField(labelWithString: "No earlier versions yet.")
-    private let restore = NSButton(title: "Restore", target: nil, action: nil)
+    let restore = NSButton(title: "Restore", target: nil, action: nil)
     private let copy = NSButton(title: "Open as Copy", target: nil, action: nil)
     /// The selected snapshot's text, once read.
     private(set) var text: String?
@@ -43,8 +44,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     private func build() {
         let column = NSTableColumn(identifier: .init("Version"))
+        column.title = "Version"
+        column.resizingMask = .autoresizingMask
+        let pins = NSTableColumn(identifier: .init("Pinned"))
+        pins.title = "Pinned"
+        pins.width = 52
+        pins.resizingMask = []
         table.addTableColumn(column)
-        table.headerView = nil
+        table.addTableColumn(pins)
+        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.style = .inset
         table.rowHeight = 32
         table.dataSource = self
@@ -102,46 +110,58 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
         sheet.initialFirstResponder = table
     }
 
-    var snapshots: [ChangeEngine.Snapshot] {
-        live.snapshots
-    }
+    /// The list's rows, newest first: snapshots of the same bytes taken within a second of each other are one row.
+    private(set) var rows: [[ChangeEngine.Snapshot]] = []
 
     private func reload() {
-        let selected = table.selectedRow
+        let selected = self.selected?.id
+        rows = Self.merged(live.snapshots)
         table.reloadData()
-        empty.isHidden = !snapshots.isEmpty
-        if !snapshots.isEmpty { table.selectRowIndexes([max(min(selected, snapshots.count - 1), 0)], byExtendingSelection: false) }
+        empty.isHidden = !rows.isEmpty
+        if !rows.isEmpty {
+            let buffer = Data((document?.textView?.string ?? "").utf8)
+            let row = rows.firstIndex { $0.contains { $0.id == selected } } ?? rows.firstIndex { !$0[0].holds(buffer) } ?? 0
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        }
         selectionChanged()
     }
 
     // MARK: Table
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        snapshots.count
+        rows.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let snapshot = snapshots[row]
-        let seconds = snapshots.contains { $0.id != snapshot.id && Calendar.current.isDate($0.time, equalTo: snapshot.time, toGranularity: .minute) }
-        let title = NSTextField(labelWithString: Self.title(of: snapshot, seconds: seconds))
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let snapshot = Self.credited(rows[row])
+        guard tableColumn?.identifier.rawValue == "Pinned" else {
+            let seconds = rows.contains { $0[0].id != rows[row][0].id && Calendar.current.isDate($0[0].time, equalTo: snapshot.time, toGranularity: .minute) }
+            let title = NSTextField(labelWithString: Self.title(of: snapshot, seconds: seconds))
+            title.lineBreakMode = .byTruncatingTail
+            title.translatesAutoresizingMaskIntoConstraints = false
+            let cell = NSTableCellView()
+            cell.addSubview(title)
+            NSLayoutConstraint.activate([
+                title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                title.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+                title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
         let pin = NSButton(image: NSImage(systemSymbolName: "pin", accessibilityDescription: "Pin") ?? NSImage(), target: self, action: #selector(pinChanged(_:)))
         pin.setButtonType(.toggle)
         pin.alternateImage = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")
         pin.isBordered = false
         pin.contentTintColor = .secondaryLabelColor
-        pin.state = snapshot.pinned ? .on : .off
+        pin.state = rows[row].contains(where: \.pinned) ? .on : .off
         pin.tag = row
         pin.toolTip = "A pinned version is kept until you unpin it."
+        pin.translatesAutoresizingMaskIntoConstraints = false
         let cell = NSTableCellView()
-        let stack = NSStackView(views: [title, NSView(), pin])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(stack)
+        cell.addSubview(pin)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-            stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            pin.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+            pin.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
     }
@@ -151,12 +171,12 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     @objc private func pinChanged(_ sender: NSButton) {
-        guard snapshots.indices.contains(sender.tag) else { return }
-        live.pin(snapshots[sender.tag], sender.state == .on)
+        guard rows.indices.contains(sender.tag) else { return }
+        for snapshot in rows[sender.tag] { live.pin(snapshot, sender.state == .on) }
     }
 
     var selected: ChangeEngine.Snapshot? {
-        snapshots.indices.contains(table.selectedRow) ? snapshots[table.selectedRow] : nil
+        rows.indices.contains(table.selectedRow) ? Self.credited(rows[table.selectedRow]) : nil
     }
 
     /// Reads the selected version's text off the main thread. The engine snapshots the current text first, as Restore
@@ -173,14 +193,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
             let text = await Task.detached { try? engine.restore(doc, snapshot: snapshot, buffer: buffer) }.value
             guard let self, !Task.isCancelled, let text else { return }
             self.text = text
-            restore.isEnabled = true
-            copy.isEnabled = true
+            restore.isEnabled = text != buffer
+            copy.isEnabled = text != buffer
             diff.textStorage?.setAttributedString(Self.difference(from: buffer, to: text))
         }
     }
 
     /// Selects the version at `index` and waits for its text, through any reread the list starts meanwhile.
     func select(_ index: Int) async {
+        guard rows.indices.contains(index) else { return }
         table.selectRowIndexes([index], byExtendingSelection: false)
         var waited: Task<Void, Never>?
         while let current = reading, current != waited {
@@ -215,6 +236,36 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
 }
 
 extension EarlierVersions {
+    /// `snapshots`, newest first, with each run of the same bytes taken within a second of the one before as one row.
+    static func merged(_ snapshots: [ChangeEngine.Snapshot]) -> [[ChangeEngine.Snapshot]] {
+        var rows: [[ChangeEngine.Snapshot]] = []
+        for snapshot in snapshots {
+            if let last = rows.last?.last, let bytes = hash(of: snapshot), bytes == hash(of: last), abs(last.time.timeIntervalSince(snapshot.time)) < 1 {
+                rows[rows.count - 1].append(snapshot)
+            } else {
+                rows.append([snapshot])
+            }
+        }
+        return rows
+    }
+
+    /// The bytes' hash MdCore keeps in each snapshot without making it public.
+    private static func hash(of snapshot: ChangeEngine.Snapshot) -> Data? {
+        Mirror(reflecting: snapshot).descendant("hash") as? Data
+    }
+
+    /// The row's snapshot that names its writer: an agent, git or a collaborator before you, and you before Another app.
+    static func credited(_ row: [ChangeEngine.Snapshot]) -> ChangeEngine.Snapshot {
+        func rank(_ origin: ChangeEngine.Origin) -> Int {
+            switch origin {
+            case .external: 2
+            case .user: 1
+            default: 0
+            }
+        }
+        return row.min { rank($0.origin) < rank($1.origin) }!
+    }
+
     /// "Today, 9:41 AM · Claude Code", with seconds when another snapshot shares its minute.
     static func title(of snapshot: ChangeEngine.Snapshot, seconds: Bool = false) -> String {
         let day = DateFormatter()
@@ -241,7 +292,8 @@ extension EarlierVersions {
     }
 
     /// What restoring `old` over `current` does, line by line, in full: lines it brings back after + on the theme's
-    /// git-added tint, lines it removes struck after − on its code-deleted tint, the rest in ink 2.
+    /// git-added tint, lines it removes struck after − on its code-deleted tint, the rest in ink 2. The same text shows
+    /// all in ink 2.
     static func difference(from current: String, to old: String) -> NSAttributedString {
         func lines(_ text: String) -> [String] {
             let lines = text.components(separatedBy: "\n")
@@ -272,9 +324,6 @@ extension EarlierVersions {
                 i += 1
                 j += 1
             }
-        }
-        guard lines.contains(where: { $0.1 != .same }) else {
-            return NSAttributedString(string: "Same as the current text.", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor])
         }
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         func tint(_ token: Token, _ alpha: CGFloat) -> NSColor {

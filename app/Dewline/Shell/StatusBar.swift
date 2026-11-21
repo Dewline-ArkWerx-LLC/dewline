@@ -2,7 +2,8 @@ import AppKit
 
 /// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: one message at a
 /// time with its buttons, a problem's after a red octagon. With no message it is hidden and takes no height unless
-/// `reserved`, so a message never moves the editor. Results and problems are read out to VoiceOver. Nothing in it blinks.
+/// `reserved`, so a message never moves the editor. With none, it shows `idle`, which a click copies. Results and
+/// problems are read out to VoiceOver. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
@@ -48,6 +49,10 @@ final class StatusBar: NSView {
     /// Keeps the line's height with no message, as a folder window does.
     var reserved = false {
         didSet { if reserved != oldValue { rebuild() } }
+    }
+    /// Where the caret is in the note, "docs/spec.md:12:4", shown while no message is.
+    var idle: String? {
+        didSet { if idle != oldValue { rebuild() } }
     }
     private let line = NSStackView()
     private var messages: [Message] = []
@@ -124,9 +129,20 @@ final class StatusBar: NSView {
 
     private func rebuild() {
         for view in line.arrangedSubviews { view.removeFromSuperview() }
-        isHidden = shown == nil && !reserved
+        isHidden = shown == nil && idle == nil && !reserved
         heightConstraint.constant = isHidden ? 0 : Self.height
-        guard let message = shown else { return }
+        guard let message = shown else {
+            if let idle {
+                let place = NSButton(title: idle, target: self, action: #selector(copyIdle))
+                place.isBordered = false
+                place.attributedTitle = NSAttributedString(string: idle, attributes: [.font: Chrome.status, .foregroundColor: Chrome.color(.ink2)])
+                place.lineBreakMode = .byTruncatingHead
+                place.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                place.toolTip = "Click to copy"
+                line.addArrangedSubview(place)
+            }
+            return
+        }
         if message.kind == .problem, let symbol = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: "Problem") {
             let icon = NSImageView(image: symbol.withSymbolConfiguration(.init(pointSize: 11, weight: .regular)) ?? symbol)
             icon.contentTintColor = .systemRed
@@ -141,6 +157,13 @@ final class StatusBar: NSView {
         for action in message.actions {
             line.addArrangedSubview(ActionButton(action))
         }
+    }
+
+    @objc func copyIdle() {
+        guard let idle else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(idle, forType: .string)
+        post(.init(id: "place", kind: .result, text: "Copied \(idle)", untilTyping: true))
     }
 }
 

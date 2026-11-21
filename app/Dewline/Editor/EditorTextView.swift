@@ -89,7 +89,7 @@ final class EditorTextView: CaretTextView {
     private let content: NSObject
 
     init() {
-        let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        let container = MeasureContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         let layout = NSTextLayoutManager()
         layout.textContainer = container
         let storage = NSTextContentStorage()
@@ -163,7 +163,6 @@ final class EditorTextView: CaretTextView {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.autoresizingMask = .width
-        textView.textContainer?.widthTracksTextView = true
         return scrollView
     }
 
@@ -176,6 +175,7 @@ final class EditorTextView: CaretTextView {
         isAutomaticSpellingCorrectionEnabled = false
         isHorizontallyResizable = true
         textContainer?.widthTracksTextView = false
+        (textContainer as? MeasureContainer)?.prose = .greatestFiniteMagnitude
         textContainer?.size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         enclosingScrollView?.hasHorizontalScroller = true
         showLineNumbers(true)
@@ -236,8 +236,8 @@ final class EditorTextView: CaretTextView {
         super.setFrameSize(NSSize(width: newSize.width, height: max(newSize.height, marks.reach)))
     }
 
-    /// Centers the column at the measure, with margins of at least 32 pt; a narrower view fills. Typewriter lets the
-    /// first and last lines scroll to the middle.
+    /// Centers the column at the measure, with margins of at least 32 pt; a narrower view fills. Code blocks and tables
+    /// run on to 32 pt from the right edge. Typewriter lets the first and last lines scroll to the middle.
     private func fitColumn(to width: CGFloat) {
         // Code starts at the line numbers, room left for the margin rules of changes.
         if styler.code != nil {
@@ -251,6 +251,14 @@ final class EditorTextView: CaretTextView {
         if textContainerInset != NSSize(width: margin, height: height) {
             textContainerInset = NSSize(width: margin, height: height)
         }
+        if let container = textContainer as? MeasureContainer {
+            let prose = max(width - 2 * margin, 0)
+            let wide = max(width - margin - 32, prose)
+            if container.prose != prose || container.size.width != wide {
+                container.prose = prose
+                container.size = NSSize(width: wide, height: .greatestFiniteMagnitude)
+            }
+        }
         placeMeta()
     }
 
@@ -259,7 +267,7 @@ final class EditorTextView: CaretTextView {
         guard let meta, metaLine != nil else { return }
         let padding = textContainer?.lineFragmentPadding ?? 0
         let size = meta.fittingSize
-        let width = max((textContainer?.size.width ?? 0) - 2 * padding, 0)
+        let width = max((textContainer?.column ?? 0) - 2 * padding, 0)
         meta.frame = NSRect(x: textContainerInset.width + padding, y: textContainerInset.height - Self.metaRoom + 4, width: min(size.width, width), height: size.height)
     }
 
@@ -345,7 +353,7 @@ final class EditorTextView: CaretTextView {
             switch (value as? BlockLine)?.role {
             case .picture(let picture, let label)?:
                 let line = firstRect(forCharacterRange: NSRange(location: range.location, length: 0), actualRange: nil)
-                let x = line.minX + picture.x(in: textContainer?.size.width ?? 0)
+                let x = line.minX + picture.x(in: textContainer?.column ?? 0)
                 let frame = NSRect(x: x, y: line.maxY - picture.size.height, width: picture.size.width, height: picture.size.height)
                 children.append(NSAccessibilityElement.element(withRole: .image, frame: frame, label: label, parent: self))
             case .task(let task)?:
@@ -956,6 +964,44 @@ extension EditorTextView: VimHost {
 private final class Snapshot: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
+    }
+}
+
+/// The text container, as wide as the view less its margins on the left and 32 pt on the right. A fenced code
+/// block's lines and a laid-out table's rows take its width; every other paragraph wraps at the measure, so it keeps
+/// to `prose`, the column the margins center.
+final class MeasureContainer: NSTextContainer {
+    var prose = CGFloat.greatestFiniteMagnitude
+
+    /// Sets each paragraph of `styled` but a fenced code block's and a laid-out table row's to wrap `measure` points
+    /// from the column's start; a narrower container wraps it at its own width.
+    static func keepProse(_ styled: NSMutableAttributedString, to measure: CGFloat) {
+        let text = styled.mutableString
+        var narrowed: [NSParagraphStyle: NSParagraphStyle] = [:]
+        var at = 0
+        while at < styled.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+            at = NSMaxRange(paragraph)
+            if styled.attribute(.dewlineCode, at: paragraph.location, effectiveRange: nil) != nil { continue }
+            if case .table = (styled.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) as? BlockLine)?.role { continue }
+            styled.enumerateAttribute(.paragraphStyle, in: paragraph) { value, run, _ in
+                let style = value as? NSParagraphStyle ?? .default
+                let narrow = narrowed[style] ?? {
+                    let copy = style.mutableCopy() as! NSMutableParagraphStyle
+                    copy.tailIndent = measure
+                    narrowed[style] = copy
+                    return copy
+                }()
+                styled.addAttribute(.paragraphStyle, value: narrow, range: run)
+            }
+        }
+    }
+}
+
+extension NSTextContainer {
+    /// The width prose lays out in: the measure's column, which code blocks and tables may run past.
+    var column: CGFloat {
+        min((self as? MeasureContainer)?.prose ?? size.width, size.width)
     }
 }
 

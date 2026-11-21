@@ -513,6 +513,7 @@ extension MarkdownStyler {
             math.style(styled, at: paragraphs.location, selection: selection)
             cards.style(styled, at: paragraphs.location, selection: selection)
         }
+        if code == nil { MeasureContainer.keepProse(styled, to: store.measure) }
         for fold in folds {
             let hidden = NSIntersectionRange(fold, paragraphs)
             guard hidden.length > 0 else { continue }

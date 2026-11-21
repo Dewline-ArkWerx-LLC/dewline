@@ -4,6 +4,7 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.
 - Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
 

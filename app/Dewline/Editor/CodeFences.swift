@@ -1,8 +1,8 @@
 import AppKit
 
-/// Fenced code in Live: the block sits in a `codeBackground` well, and its fence lines shrink to the well's top and
-/// bottom padding, hidden, while the selection is off them. A folded block keeps its fences. A Mermaid block is
-/// `RenderedBlocks`'.
+/// Fenced code in Live: the block sits in a `codeBackground` well, as wide as the column or its widest line, up to the
+/// container's width, and its fence lines shrink to the well's top and bottom padding, hidden, while the selection is
+/// off them. A folded block keeps its fences. A Mermaid block is `RenderedBlocks`'.
 @MainActor
 final class CodeFences {
     private let map: BlockMap
@@ -56,10 +56,13 @@ final class CodeFences {
                 let local = fence.shifted(by: -offset)
                 guard local.range.location >= 0, NSMaxRange(local.range) <= styled.length else { continue }
                 let well = text.paragraphRange(for: local.range)
-                styled.addAttribute(.dewlineCode, value: fence.range.location, range: well)
                 styled.enumerateAttribute(.paragraphStyle, in: well) { value, run, _ in
                     styled.addAttribute(.paragraphStyle, value: indent(value as? NSParagraphStyle ?? .default), range: run)
                 }
+                let code = styled.attributedSubstring(from: local.content)
+                let lead = code.length > 0 ? (code.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.firstLineHeadIndent ?? 0 : 0
+                let widest = code.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin).width
+                styled.addAttribute(.dewlineCode, value: CodeWell(start: fence.range.location, width: (lead + widest + Self.padding).rounded(.up)), range: well)
                 Self.hang(local.content, in: styled)
                 let lines = Self.lines(local, in: text)
                 if lines.contains(where: { Self.touches($0, selection) }) || folds.contains(where: { NSIntersectionRange($0, fence.range).length > 0 }) {
@@ -140,25 +143,36 @@ extension EditorTextView {
     /// Fills each fenced code block in `visible` with its well.
     func drawCodeWells(in visible: NSRange, line: (Int) -> NSRect) {
         let storage = textStorage!
-        let padding = textContainer?.lineFragmentPadding ?? 0
-        let left = textContainerOrigin.x + padding
-        let width = (textContainer?.size.width ?? 0) - 2 * padding
         var drawn = Set<Int>()
         ThemeStore.shared.color(.codeBackground).setFill()
         storage.enumerateAttribute(.dewlineCode, in: visible) { value, range, _ in
-            guard value != nil else { return }
+            guard let code = value as? CodeWell else { return }
             var whole = NSRange()
             storage.attribute(.dewlineCode, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
             guard drawn.insert(whole.location).inserted else { return }
-            let top = line(whole.location)
-            let bottom = line(max(NSMaxRange(whole) - 1, whole.location))
-            let well = NSRect(x: left, y: top.minY, width: width, height: bottom.maxY - top.minY)
+            let well = codeWell(code, top: line(whole.location), bottom: line(max(NSMaxRange(whole) - 1, whole.location)))
             NSBezierPath(roundedRect: well, xRadius: CodeFences.radius, yRadius: CodeFences.radius).fill()
         }
     }
+
+    /// The well of `code` from the line at `top` to the one at `bottom`: from the column's start, as wide as the column or
+    /// the block's widest line, up to the container's width.
+    func codeWell(_ code: CodeWell, top: NSRect, bottom: NSRect) -> NSRect {
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let room = (textContainer?.size.width ?? 0) - 2 * padding
+        let width = min(max((textContainer?.column ?? 0) - 2 * padding, code.width), room)
+        return NSRect(x: textContainerOrigin.x + padding, y: top.minY, width: width, height: bottom.maxY - top.minY)
+    }
+}
+
+/// The value of `.dewlineCode`: the block's start, so neighboring blocks stay apart, and how wide its widest line draws,
+/// with the well's padding.
+struct CodeWell: Hashable {
+    let start: Int
+    let width: CGFloat
 }
 
 extension NSAttributedString.Key {
-    /// A fenced code block's lines, with the block's start, so neighboring blocks stay apart.
+    /// A fenced code block's lines, as a `CodeWell`.
     static let dewlineCode = NSAttributedString.Key("DewlineCode")
 }

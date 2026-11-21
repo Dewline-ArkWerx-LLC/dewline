@@ -176,6 +176,14 @@ jobs:
           echo "$EXPECTED  Dewline-unsigned.zip" | shasum -a 256 -c -
           ditto -x -k Dewline-unsigned.zip .
           "$GITHUB_WORKSPACE/scripts/check-app.sh" Dewline.app
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install dmgbuild 2.0.0
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmgbuild"
+          "$RUNNER_TEMP/dmgbuild/bin/pip" install --quiet --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r scripts/dmg/requirements.txt
+          echo "$RUNNER_TEMP/dmgbuild/bin" >> "$GITHUB_PATH"
       - name: Write the signing keys
         id: keys
         env:
@@ -223,6 +231,9 @@ jobs:
           codesign --verify --strict --deep -vv "$mount/Dewline.app"
           scripts/check-app.sh "$mount/Dewline.app"
           syspolicy_check distribution "$mount/Dewline.app"
+          [[ -f $mount/.DS_Store && -f $mount/.background.tiff && -f $mount/.VolumeIcon.icns ]]
+          ! grep -qa pBBk "$mount/.DS_Store"
+          ! grep -qa -e /Users/ -e "$RUNNER_TEMP" "$mount/.DS_Store"
           key=$(plutil -extract SUPublicEDKey raw "$mount/Dewline.app/Contents/Info.plist")
           hdiutil detach "$mount"
           {

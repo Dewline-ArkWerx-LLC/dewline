@@ -1,13 +1,13 @@
 import AppKit
 import MdCore
 
-/// Git's state of a file in the tree: a letter on the row ("M" and "R" in `gitModified`, "A" in `gitAdded`, the rest in
-/// `ink2`), the word for VoiceOver.
+/// Git's state of a file in the tree: a letter on the row in `ink3` ("?" untracked, "A" staged, "U" in conflict in red),
+/// the word for VoiceOver.
 extension GitFileState {
     var letter: String {
         switch self {
         case .modified: "M"
-        case .new: "A"
+        case .new(let staged): staged ? "A" : "?"
         case .deleted: "D"
         case .renamed: "R"
         case .conflicted: "U"
@@ -17,7 +17,7 @@ extension GitFileState {
     var word: String {
         switch self {
         case .modified: "modified"
-        case .new: "new"
+        case .new(let staged): staged ? "added" : "untracked"
         case .deleted: "deleted"
         case .renamed: "renamed"
         case .conflicted: "conflicted"
@@ -27,38 +27,43 @@ extension GitFileState {
     var tip: String {
         switch self {
         case .modified: "Modified since the last commit. Click to review the changes."
-        case .new: "New, not yet committed"
+        case .new(let staged): staged ? "Added, not yet committed" : "Untracked"
         case .deleted: "Deleted since the last commit"
         case .renamed: "Renamed since the last commit"
         case .conflicted: "In conflict"
         }
     }
 
-    var token: Token {
-        switch self {
-        case .modified, .renamed: .gitModified
-        case .new: .gitAdded
-        case .deleted, .conflicted: .ink2
-        }
+    @MainActor var color: NSColor {
+        self == .conflicted ? .systemRed : Chrome.color(.ink3)
     }
 }
 
-/// One writer's undecided changes in a note. The count is nil for a note changed while closed, whose changes are
-/// counted when it opens, and for a closed folder's roll-up.
+/// One writer's undecided changes in a note, or in the notes under a closed folder.
 struct WaitingCount {
     let writer: MarkWriter
-    let count: Int?
+    var count: Int
 
-    /// "Codex: 2 changes waiting", "Codex: changes waiting".
+    /// "Codex: 2 changes waiting".
     var tip: String {
-        guard let count else { return "\(writer.name): changes waiting" }
-        return "\(writer.name): \(count) \(count == 1 ? "change" : "changes") waiting"
+        "\(writer.name): \(count) \(count == 1 ? "change" : "changes") waiting"
     }
 
     /// "2 Codex changes waiting".
     var spoken: String {
-        guard let count else { return "\(writer.name) changes waiting" }
-        return "\(count) \(writer.name) \(count == 1 ? "change" : "changes") waiting"
+        "\(count) \(writer.name) \(count == 1 ? "change" : "changes") waiting"
+    }
+}
+
+extension [WaitingCount] {
+    /// Adds `count` changes from `writer`, keeping the writer with the most first.
+    mutating func add(_ writer: MarkWriter, _ count: Int) {
+        if let index = firstIndex(where: { $0.writer.name == writer.name }) {
+            self[index].count += count
+        } else {
+            append(WaitingCount(writer: writer, count: count))
+        }
+        sort { $0.count > $1.count }
     }
 }
 
@@ -119,8 +124,8 @@ final class SidebarHeader: NSView {
     }
 }
 
-/// "tidepool main ↑2 · 7 changed ⌄": the folder's name in body semibold `ink`, its branch and the commits it is ahead
-/// of its upstream in SF Mono 12 `ink2`, how many files differ from the last commit in `ink2`, all on one baseline,
+/// "tidepool main ↑2 ↓1 · 7 uncommitted ⌄": the folder's name in body semibold `ink`, its branch and the commits it is
+/// ahead of and behind its upstream in SF Mono 12 `ink2`, how many files differ from the last commit in `ink2`, all on one baseline,
 /// then a chevron in `ink3`, on a 22 pt pill that fills on hover. Text sits 6 pt in, in the same inks whether or not
 /// the window is key. Under Full Keyboard Access it takes the focus, with the system's ring, and Space or Return opens it.
 final class FolderPicker: NSView {
@@ -129,6 +134,7 @@ final class FolderPicker: NSView {
     private var branch: String?
     private var changed = 0
     private var ahead = 0
+    private var behind = 0
     private var hovering = false {
         didSet { needsDisplay = true }
     }
@@ -147,14 +153,16 @@ final class FolderPicker: NSView {
 
     override var isFlipped: Bool { true }
 
-    func show(_ name: String, branch: String?, changed: Int, ahead: Int, openKey: String) {
+    func show(_ name: String, branch: String?, changed: Int, ahead: Int, behind: Int, openKey: String) {
         self.name = name
         self.branch = branch
         self.changed = changed
         self.ahead = ahead
+        self.behind = behind
         toolTip = openKey.isEmpty ? "Open Folder, Open Recent" : "Open Folder, Open Recent (\(openKey))"
         let state = (ahead > 0 ? ["\(ahead) \(ahead == 1 ? "commit" : "commits") ahead"] : [])
-            + (changed > 0 ? ["\(changed) changed \(changed == 1 ? "file" : "files")"] : [])
+            + (behind > 0 ? ["\(behind) \(behind == 1 ? "commit" : "commits") behind"] : [])
+            + (changed > 0 ? ["\(changed) uncommitted \(changed == 1 ? "file" : "files")"] : [])
         setAccessibilityLabel(([branch.map { "Folder \(name) on branch \($0)" } ?? "Folder \(name)"] + state).joined(separator: ", "))
         invalidateIntrinsicContentSize()
         needsDisplay = true
@@ -166,12 +174,12 @@ final class FolderPicker: NSView {
         line.lineBreakMode = .byTruncatingTail
         let ink2 = Chrome.color(.ink2)
         let text = NSMutableAttributedString(string: name, attributes: [.font: Chrome.labelStrong, .foregroundColor: Chrome.color(.ink)])
-        let mono = [branch, ahead > 0 ? "\u{2191}\(ahead)" : nil].compactMap { $0 }
+        let mono = [branch, ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }
         if !mono.isEmpty {
             text.append(NSAttributedString(string: " " + mono.joined(separator: " "), attributes: [.font: Chrome.mono(12), .foregroundColor: ink2]))
         }
         if changed > 0 {
-            text.append(NSAttributedString(string: " \u{00B7} \(changed) changed", attributes: [.font: Chrome.small, .foregroundColor: ink2]))
+            text.append(NSAttributedString(string: " \u{00B7} \(changed) uncommitted", attributes: [.font: Chrome.small, .foregroundColor: ink2]))
         }
         text.addAttribute(.paragraphStyle, value: line, range: NSRange(location: 0, length: text.length))
         return text
@@ -261,8 +269,8 @@ final class SidebarRowView: StationRowView {
 }
 
 /// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), and on the trailing
-/// edge the writer badge, then git's letter in SF Mono 11 in a 14 pt column; a closed folder holding changed files
-/// shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle. A file gone from
+/// edge the writer badge, then git's letter in SF Mono 11 `ink3` in a 14 pt column; a closed folder holding changed
+/// files shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle. A file gone from
 /// disk is struck through. On the focused list's selection everything is `paper`.
 final class SidebarFileCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("file")
@@ -314,7 +322,7 @@ final class SidebarFileCell: NSTableCellView {
         self.holdsChanges = word == nil && holdsChanges
         chevron.isHidden = !entry.isFolder
         setExpanded(expanded)
-        badge.show(waiting, dots: entry.isFolder)
+        badge.show(waiting)
         git.stringValue = word?.letter ?? (self.holdsChanges ? "\u{2022}" : "")
         git.toolTip = word?.tip ?? (self.holdsChanges ? "Holds files changed since the last commit" : nil)
         git.isHidden = git.stringValue.isEmpty
@@ -370,7 +378,7 @@ final class SidebarFileCell: NSTableCellView {
 
     private func paint() {
         setExpanded(expanded)
-        git.textColor = Chrome.color(onAccent ? .paper : word?.token ?? .gitModified)
+        git.textColor = onAccent ? Chrome.color(.paper) : word?.color ?? Chrome.color(.ink3)
         badge.needsDisplay = true
     }
 
@@ -426,24 +434,20 @@ final class SidebarFileCell: NSTableCellView {
     }
 }
 
-/// The writer badge: a 16 pt capsule, radius 4, in the writer's ink at 14%, holding a 3 x 10 rule in that ink and the
-/// count in SF Mono 11 medium `ink`. The count is every undecided change in the note; the ink is the writer with most.
-/// Without a count it is the rule alone for a note changed while closed, and a 6 pt dot for a closed folder holding
-/// changes, one per writer.
+/// The writer badge: a 16 pt capsule in the ink of the writer with the most changes waiting at 14%, holding that
+/// writer's initial in its ink and the count of all of them in SF Mono 11 `ink`: "C 3". A note counts its own changes,
+/// a closed folder the sum of the notes under it; the tooltip names each writer. The tabs and their "+N" menu draw the
+/// same badge.
 final class WaitingBadge: NSView {
     static let height: CGFloat = 16
     private static let font = Chrome.mono(11, weight: .medium)
     private var waiting: [WaitingCount] = []
-    private var dots = false
 
     var isEmpty: Bool { waiting.isEmpty }
-    private var counted: Bool { waiting.allSatisfy { $0.count != nil } }
-    private var count: String { "\(waiting.reduce(0) { $0 + ($1.count ?? 0) })" }
 
-    func show(_ waiting: [WaitingCount], dots: Bool = false) {
+    func show(_ waiting: [WaitingCount]) {
         self.waiting = waiting
-        self.dots = dots
-        toolTip = waiting.isEmpty ? nil : waiting.map(\.tip).joined(separator: "\n")
+        toolTip = Self.tip(waiting)
         invalidateIntrinsicContentSize()
         needsDisplay = true
     }
@@ -451,31 +455,49 @@ final class WaitingBadge: NSView {
     override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        guard counted else { return NSSize(width: CGFloat(waiting.count) * (dots ? 9 : 6) - 3, height: Self.height) }
-        return NSSize(width: 4 + 3 + 4 + ceil((count as NSString).size(withAttributes: [.font: Self.font]).width) + 5, height: Self.height)
+        NSSize(width: Self.width(waiting), height: Self.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let first = waiting.first else { return }
-        let appearance = effectiveAppearance
-        guard counted else {
-            for (index, writer) in waiting.enumerated() {
-                writer.writer.color.resolved(for: appearance).setFill()
-                if dots {
-                    NSBezierPath(ovalIn: NSRect(x: CGFloat(index) * 9, y: (bounds.height - 6) / 2, width: 6, height: 6)).fill()
-                } else {
-                    NSBezierPath(roundedRect: NSRect(x: CGFloat(index) * 6, y: (bounds.height - 10) / 2, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
-                }
-            }
-            return
-        }
-        let ink = first.writer.color.resolved(for: appearance)
+        Self.draw(waiting, in: bounds)
+    }
+
+    static func tip(_ waiting: [WaitingCount]) -> String? {
+        waiting.isEmpty ? nil : waiting.map(\.tip).joined(separator: "\n")
+    }
+
+    /// The initial and the count, set, and the writer's ink.
+    private static func parts(_ waiting: [WaitingCount]) -> (initial: NSAttributedString, count: NSAttributedString, ink: NSColor)? {
+        guard let first = waiting.max(by: { $0.count < $1.count }) else { return nil }
+        let ink = first.writer.color
+        let initial = NSAttributedString(string: first.writer.writer.initial, attributes: [.font: Chrome.mono(11, weight: .semibold), .foregroundColor: ink])
+        let total = waiting.reduce(0) { $0 + $1.count }
+        let count = NSAttributedString(string: "\(total)", attributes: [.font: font, .foregroundColor: Chrome.color(.ink)])
+        return (initial, count, ink)
+    }
+
+    /// 5 pt, the initial, 3 pt, the count, 5 pt; 0 when nothing waits.
+    static func width(_ waiting: [WaitingCount]) -> CGFloat {
+        guard let (initial, count, _) = parts(waiting) else { return 0 }
+        return 5 + ceil(initial.size().width) + 3 + ceil(count.size().width) + 5
+    }
+
+    static func draw(_ waiting: [WaitingCount], in rect: NSRect) {
+        guard let (initial, count, ink) = parts(waiting) else { return }
         ink.withAlphaComponent(0.14).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
-        ink.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 4, y: (bounds.height - 10) / 2, width: 3, height: 10), xRadius: 1, yRadius: 1).fill()
-        let attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: Chrome.color(.ink).resolved(for: appearance)]
-        let size = (count as NSString).size(withAttributes: attributes)
-        (count as NSString).draw(at: NSPoint(x: 11, y: (bounds.height - size.height) / 2), withAttributes: attributes)
+        NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+        let x = rect.minX + 5 + ceil(initial.size().width) + 3
+        initial.draw(at: NSPoint(x: rect.minX + 5, y: rect.midY - initial.size().height / 2))
+        count.draw(at: NSPoint(x: x, y: rect.midY - count.size().height / 2))
+    }
+
+    /// The badge as an image, for a menu row.
+    static func image(_ waiting: [WaitingCount]) -> NSImage? {
+        let width = width(waiting)
+        guard width > 0 else { return nil }
+        return NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
+            draw(waiting, in: rect)
+            return true
+        }
     }
 }

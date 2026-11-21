@@ -8,7 +8,8 @@ use crate::{Panicked, contained};
 #[derive(uniffi::Enum)]
 pub enum GitState {
     Modified,
-    New,
+    Added,
+    Untracked,
     Deleted,
     Renamed,
     Conflicted,
@@ -26,9 +27,10 @@ pub struct GitStatus {
     /// The folder that holds the repository's index and HEAD.
     pub gitdir: String,
     pub files: Vec<GitFile>,
-    /// Commits on HEAD's branch that its upstream lacks; None without an
-    /// upstream.
+    /// Commits on HEAD's branch that its upstream lacks, and on the upstream
+    /// that the branch lacks; None without an upstream.
     pub ahead: Option<u32>,
+    pub behind: Option<u32>,
 }
 
 /// The files under `folder` that differ from HEAD or the index. An untracked
@@ -48,7 +50,8 @@ pub fn git_status(folder: String) -> Result<Option<GitStatus>, Panicked> {
                     path: path.to_string_lossy().into_owned(),
                     state: match status {
                         Status::Modified => GitState::Modified,
-                        Status::New => GitState::New,
+                        Status::Added => GitState::Added,
+                        Status::Untracked => GitState::Untracked,
                         Status::Deleted => GitState::Deleted,
                         Status::Renamed => GitState::Renamed,
                         Status::Conflicted => GitState::Conflicted,
@@ -56,6 +59,7 @@ pub fn git_status(folder: String) -> Result<Option<GitStatus>, Panicked> {
                 })
                 .collect(),
             ahead: found.ahead,
+            behind: found.behind,
         })
     })
 }

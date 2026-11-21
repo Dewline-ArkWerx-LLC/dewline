@@ -93,10 +93,11 @@ final class FileSearch {
     }
 }
 
-/// Find in Files in the sidebar (synthesis 2.7): a search field and a close button back to Files, Match Case, Whole Word
-/// and Regular Expression under it, a replace field, a line counting the matches, then the matches grouped by file, each
-/// on its line with the match marked. A `path:` term in the query searches only the files whose path in the folder
-/// holds it.
+/// Find in Files in the sidebar (synthesis 2.7): a disclosure for Replace and a search field, Match Case, Whole Word and
+/// Regular Expression under it with the close button back to Files, the replace field while Replace is disclosed, a line
+/// counting the matches, then the matches grouped by file, each on up to two lines with the match marked and a note's
+/// markup in `ink3`. Every row ends 16 pt from the trailing edge. It searches the open tabs, then the folder's notes,
+/// then its code. A `path:` term in the query searches only the files whose path in the folder holds it.
 final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Opens a file from the results, at a match when there is one, in a new tab when asked.
     var reveal: (URL, TextMatch?, _ newTab: Bool) -> Void = { _, _, _ in }
@@ -108,6 +109,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private let search = FileSearch()
     private let field = NSSearchField()
     private let options = NSSegmentedControl()
+    private let replaceToggle = NSButton()
     private let replacement = NSTextField()
     private let replaceButton = NSButton(title: "Replace All", target: nil, action: nil)
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -123,6 +125,9 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private var wasSearching = false
     /// What the last search looked for, in which files, for Replace All.
     private var searched = (query: "", options: SearchOptions(), files: [URL]())
+    /// The status line's top, under the options or under the replace field.
+    private var statusUnderOptions: NSLayoutConstraint?
+    private var statusUnderReplace: NSLayoutConstraint?
 
     init(folder: Folder) {
         self.folder = folder
@@ -144,16 +149,22 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         options.trackingMode = .selectAny
         options.segmentCount = 3
-        let segments = [("textformat", "Match Case"), ("character.textbox", "Whole Word")]
-        for (segment, (symbol, name)) in segments.enumerated() {
-            options.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: name), forSegment: segment)
-        }
+        options.setImage(NSImage(systemSymbolName: "textformat", accessibilityDescription: "Match Case"), forSegment: 0)
+        options.setLabel("Word", forSegment: 1)
         options.setLabel(".*", forSegment: 2)
         options.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
         for (segment, name) in Self.optionNames.enumerated() {
             options.setToolTip(name, forSegment: segment)
-            options.setWidth(28, forSegment: segment)
+            options.setWidth(segment == 1 ? 0 : 28, forSegment: segment)
         }
+        replaceToggle.bezelStyle = .disclosure
+        replaceToggle.setButtonType(.pushOnPushOff)
+        replaceToggle.title = ""
+        replaceToggle.state = .off
+        replaceToggle.toolTip = "Replace"
+        replaceToggle.setAccessibilityLabel("Replace")
+        replaceToggle.target = self
+        replaceToggle.action = #selector(toggleReplace)
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Back to Files")
         closeButton.bezelStyle = .accessoryBarAction
         closeButton.isBordered = false
@@ -206,27 +217,33 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         scrollView.autohidesScrollers = true
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
-        for view in [field, closeButton, options, replacement, replaceButton, status, scrollView, clearOptions] as [NSView] {
+        for view in [replaceToggle, field, closeButton, options, replacement, replaceButton, status, scrollView, clearOptions] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
         let safe = root.safeAreaLayoutGuide
+        let statusUnderOptions = status.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 6)
+        self.statusUnderOptions = statusUnderOptions
+        statusUnderReplace = status.topAnchor.constraint(equalTo: replacement.bottomAnchor, constant: 6)
         NSLayoutConstraint.activate([
+            replaceToggle.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 6),
+            replaceToggle.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             field.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
-            field.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 10),
-            closeButton.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 4),
-            closeButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -8),
-            closeButton.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            field.leadingAnchor.constraint(equalTo: replaceToggle.trailingAnchor, constant: 2),
+            field.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
             options.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
             options.leadingAnchor.constraint(equalTo: field.leadingAnchor),
+            closeButton.leadingAnchor.constraint(greaterThanOrEqualTo: options.trailingAnchor, constant: 6),
+            closeButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
+            closeButton.centerYAnchor.constraint(equalTo: options.centerYAnchor),
             replacement.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 6),
             replacement.leadingAnchor.constraint(equalTo: field.leadingAnchor),
             replaceButton.leadingAnchor.constraint(equalTo: replacement.trailingAnchor, constant: 6),
-            replaceButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -10),
+            replaceButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
             replaceButton.centerYAnchor.constraint(equalTo: replacement.centerYAnchor),
-            status.topAnchor.constraint(equalTo: replacement.bottomAnchor, constant: 6),
+            statusUnderOptions,
             status.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 2),
-            status.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -10),
+            status.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
             clearOptions.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 4),
             clearOptions.leadingAnchor.constraint(equalTo: status.leadingAnchor, constant: -2),
             scrollView.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
@@ -234,6 +251,8 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
+        replacement.isHidden = true
+        replaceButton.isHidden = true
         view = root
         search.changed = { [weak self] replaced in self?.resultsChanged(replaced: replaced) }
         NotificationCenter.default.addObserver(self, selector: #selector(indexChanged(_:)), name: FolderIndex.changed, object: index)
@@ -264,10 +283,14 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             matchCase: options.isSelected(forSegment: 0), wholeWord: options.isSelected(forSegment: 1),
             regex: options.isSelected(forSegment: 2)
         )
-        let files = (index.files ?? []).map(\.url).filter { url in
-            let path = folder.relativePath(of: url) ?? url.path
+        let open = Set(NSDocumentController.shared.documents.compactMap { $0.fileURL?.standardizedFileURL.path })
+        let listed = (index.files ?? []).filter { file in
+            let path = folder.relativePath(of: file.url) ?? file.url.path
             return paths.allSatisfy { path.localizedCaseInsensitiveContains($0) }
         }
+        let tabs = listed.filter { open.contains($0.url.standardizedFileURL.path) }
+        let rest = listed.filter { !open.contains($0.url.standardizedFileURL.path) }
+        let files = (tabs + rest.filter { !$0.isCode } + rest.filter(\.isCode)).map(\.url)
         waitsForFiles = !query.isEmpty && index.files == nil
         pending = true
         searched = (query, chosen, files)
@@ -397,6 +420,16 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         leave()
     }
 
+    /// Shows or hides the replace field and Replace All.
+    @objc private func toggleReplace() {
+        let shows = replaceToggle.state == .on
+        replacement.isHidden = !shows
+        replaceButton.isHidden = !shows
+        statusUnderOptions?.isActive = !shows
+        statusUnderReplace?.isActive = shows
+        if shows { view.window?.makeFirstResponder(replacement) }
+    }
+
     /// The field's clear button ends the search.
     @objc private func clear() {
         field.stringValue = ""
@@ -456,7 +489,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         let found = "\(matches.formatted()) \(matches == 1 ? "match" : "matches") in \(count.formatted()) \(count == 1 ? "file" : "files")"
         replaceButton.isEnabled = matches > 0 && !search.isSearching && !pending
         status.stringValue = if field.stringValue.isEmpty {
-            "Search the notes in \(FileManager.default.displayName(atPath: folder.url.path))."
+            "Search the \(CodeFile.isOn ? "notes and code" : "notes") in \(FileManager.default.displayName(atPath: folder.url.path))."
         } else if let problem = search.problem {
             "Not a valid pattern: \(problem)"
         } else if waitsForFiles {
@@ -482,10 +515,10 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         Self.optionNames.indices.filter { options.isSelected(forSegment: $0) }.map { Self.optionNames[$0] }
     }
 
-    /// "No matches for “kafka” in 9 notes in relay, with Whole Word on. Files .gitignore hides are skipped."
+    /// "No matches for “kafka” in 9 files in relay, with Whole Word on. Files .gitignore hides are skipped."
     private var noMatches: String {
         let (query, _) = Self.scope(field.stringValue)
-        var line = "No matches for \u{201C}\(query)\u{201D} in \(Self.count(searched.files.count, "note")) in "
+        var line = "No matches for \u{201C}\(query)\u{201D} in \(Self.count(searched.files.count, "file")) in "
             + FileManager.default.displayName(atPath: folder.url.path)
         let on = chosenOptions
         if !on.isEmpty { line += ", with " + ListFormatter.localizedString(byJoining: on) + " on" }
@@ -520,7 +553,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        item is ResultFile ? 26 : 22
+        item is ResultFile ? 26 : 36
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
@@ -536,7 +569,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         let line = item as! ResultLine
         let cell = outlineView.makeView(withIdentifier: LineResultCell.identifier, owner: nil) as? LineResultCell ?? LineResultCell()
-        cell.show(line.match)
+        cell.show(line.match, markup: FolderEntry(url: line.url, isFolder: false).isMarkdown)
         cell.setAccessibilityCustomActions([NSAccessibilityCustomAction(name: "Go to Match") { [weak self] in
             self?.reveal(line.url, line.match, false)
             return true
@@ -628,7 +661,7 @@ private final class FileResultCell: NSTableCellView {
             folder.leadingAnchor.constraint(equalTo: name.trailingAnchor, constant: 6),
             folder.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
             folder.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -6),
-            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             count.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: nil)
@@ -659,21 +692,24 @@ private final class FileResultCell: NSTableCellView {
     }
 }
 
-/// A match's row: its line number in `ink2`, then the line in `ink` with the match on the theme's find highlight, all
-/// `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
+/// A match's row: its line number in `ink2`, then the line on up to two lines in `ink`, a note's markup in `ink3`, with
+/// the match on the theme's find highlight, all `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
 /// dropping the highlight.
 private final class LineResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchLine")
 
     private let number = NSTextField(labelWithString: "")
-    private let line = NSTextField(labelWithString: "")
+    private let line = NSTextField(wrappingLabelWithString: "")
     private var match: TextMatch?
+    private var markup = false
 
     init() {
         super.init(frame: .zero)
         identifier = Self.identifier
         number.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
         number.alignment = .right
+        line.maximumNumberOfLines = 2
+        line.cell?.truncatesLastVisibleLine = true
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for view in [number, line] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -684,8 +720,8 @@ private final class LineResultCell: NSTableCellView {
             number.widthAnchor.constraint(equalToConstant: 30),
             number.firstBaselineAnchor.constraint(equalTo: line.firstBaselineAnchor),
             line.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 6),
-            line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
-            line.centerYAnchor.constraint(equalTo: centerYAnchor),
+            line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            line.topAnchor.constraint(equalTo: topAnchor, constant: 3),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(render), name: ThemeStore.didChange, object: nil)
     }
@@ -698,8 +734,14 @@ private final class LineResultCell: NSTableCellView {
         didSet { render() }
     }
 
-    func show(_ match: TextMatch) {
+    override func layout() {
+        line.preferredMaxLayoutWidth = max(bounds.width - 36 - 16, 0)
+        super.layout()
+    }
+
+    func show(_ match: TextMatch, markup: Bool) {
         self.match = match
+        self.markup = markup
         number.stringValue = String(match.line)
         render()
         setAccessibilityLabel("Line \(match.line): \(match.preview)")
@@ -711,12 +753,18 @@ private final class LineResultCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         number.textColor = Chrome.color(selected ? .paper : .ink2)
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
+        style.lineBreakMode = .byWordWrapping
         let ink = Chrome.color(selected ? .paper : .ink)
         let (preview, range) = Self.centered(match.preview, on: match.previewRange)
         let text = NSMutableAttributedString(string: preview, attributes: [
             .font: Chrome.small, .foregroundColor: ink, .paragraphStyle: style,
         ])
+        if markup, !selected {
+            for found in Self.markup.matches(in: preview, range: NSRange(location: 0, length: text.length)) {
+                text.addAttribute(.foregroundColor, value: Chrome.color(.ink3), range: found.range)
+            }
+            text.addAttribute(.foregroundColor, value: ink, range: range)
+        }
         text.addAttributes([
             .backgroundColor: selected ? ink.withAlphaComponent(0.25) : Self.findMatch,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
@@ -736,6 +784,11 @@ private final class LineResultCell: NSTableCellView {
         start = text.rangeOfComposedCharacterSequence(at: start).location
         return ("\u{2026}" + text.substring(from: start), NSRange(location: match.location - start + 1, length: match.length))
     }
+
+    /// Markdown's markup: a heading's hashes, a quote's or list's marker at the line's start, emphasis and code marks,
+    /// brackets and link targets.
+    private static let markup = try! NSRegularExpression(
+        pattern: #"^\s{0,3}(?:#{1,6}(?=\s)|>|[-*+](?=\s)|\d+[.)](?=\s))|\*\*|__|~~|`+|\]\([^)\s]*\)|[\[\]]|(?<![\w*])[*_](?=\S)|(?<=\S)[*_](?![\w*])"#)
 
     /// Signal at 12%, the most a signal fill takes; the match's underline carries it.
     private static var findMatch: NSColor {

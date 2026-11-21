@@ -119,7 +119,8 @@ struct JourneyTests {
         #expect(try Welcome.write(in: folder))
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
-        #expect(guide.hasPrefix("# Welcome to Dewline\n\nTry it: [Show me a change](dewline://demo)\n\nWhen Claude Code, Codex or Cursor edits a note"))
+        #expect(guide.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code, Codex or Cursor edits a note"))
+        #expect(guide.contains("[Show me a change](dewline://demo), or choose Help > Replay the Demo."))
         #expect(guide.contains("[Settings > Agents](dewline://setup-hooks)"))
         #expect(guide.contains(Welcome.replaced))
         #expect(guide.contains(Welcome.anchor))
@@ -152,8 +153,8 @@ struct JourneyTests {
         let change = try #require(tab.marked.first)
         guard case .agent(.demo, _) = change.change.origin else { Issue.record("Demo didn't write it: \(change.change.origin)"); return }
         let paragraph = (tab.textView.string as NSString).paragraphRange(for: change.change.range)
-        #expect((tab.textView.string as NSString).substring(with: paragraph).hasSuffix(Welcome.replacement + "\n"))
-        #expect(tab.textView.string.contains("(dewline://demo)\n\nWhen Claude Code"))
+        #expect((tab.textView.string as NSString).substring(with: paragraph).contains(Welcome.replacement))
+        #expect(tab.textView.string.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code"))
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         let stamp = try #require(Self.stamp(in: tab))
         #expect(stamp.accessibilityLabel()?.hasSuffix(", 2 changes") == true)
@@ -777,6 +778,273 @@ struct JourneyTests {
         #expect(!Launch.shouldShowLaunchWindow(session: nil, openWindows: 1))
     }
 
+    // MARK: J1 Install: the Move window and the guide
+
+    /// A disk image is what DiskArbitration calls one, never any path under /Volumes: an external drive is where an app
+    /// may belong, and only a disk image ejects, the one holding the bundle or a translocated copy's original.
+    @Test func j1MisplacedMeansADiskImageOrATranslocatedCopy() {
+        let image = URL(filePath: "/Volumes/Dewline", directoryHint: .isDirectory)
+        let drive = URL(filePath: "/Volumes/Work", directoryHint: .isDirectory)
+        let translocated = URL(filePath: "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app")
+        func placement(original: URL?) -> HookSetup.Placement {
+            HookSetup.Placement(
+                original: { $0 == translocated ? original : nil },
+                volume: { url in [image, drive].first { url.path.hasPrefix($0.path + "/") } ?? URL(filePath: "/") },
+                isDiskImage: { $0 == image })
+        }
+        let fromImage = placement(original: image.appending(path: "Dewline.app"))
+        #expect(HookSetup.misplaced(image.appending(path: "Dewline.app"), placement: fromImage))
+        #expect(HookSetup.diskImage(holding: image.appending(path: "Dewline.app"), placement: fromImage) == image)
+        #expect(!HookSetup.misplaced(drive.appending(path: "Apps/Dewline.app"), placement: fromImage))
+        #expect(HookSetup.diskImage(holding: drive.appending(path: "Apps/Dewline.app"), placement: fromImage) == nil)
+        #expect(!HookSetup.misplaced(URL(filePath: "/Applications/Dewline.app"), placement: fromImage))
+        #expect(HookSetup.misplaced(translocated, placement: fromImage))
+        #expect(HookSetup.diskImage(holding: translocated, placement: fromImage) == image)
+        let fromDesktop = placement(original: URL(filePath: "/Users/a/Desktop/Dewline.app"))
+        #expect(HookSetup.misplaced(translocated, placement: fromDesktop))
+        #expect(HookSetup.diskImage(holding: translocated, placement: fromDesktop) == nil, "a dragged copy's volume is never ejected")
+        #expect(!HookSetup.misplaced(Bundle.main.bundleURL), "the test host runs from a build folder")
+    }
+
+    /// Move puts the app in Applications, or in the home folder's when this account can't write there, never asking
+    /// for an admin password; the sentence says which.
+    @Test func j1MoveTargetsApplicationsElseTheHomeFolders() {
+        let bundle = URL(filePath: "/Volumes/Dewline/Dewline.app")
+        let home = URL(filePath: "/Users/a", directoryHint: .isDirectory)
+        #expect(HookSetup.moveTarget(for: bundle, home: home) { _ in true }.path == "/Applications/Dewline.app")
+        #expect(HookSetup.moveTarget(for: bundle, home: home) { _ in false }.path == "/Users/a/Applications/Dewline.app")
+        #expect(MoveWindowController.sentence(translocated: false, home: false)
+            == "Dewline is running from the disk image. Updates and agent hooks need it in Applications.")
+        #expect(MoveWindowController.sentence(translocated: true, home: true).hasPrefix("Dewline is running from a temporary copy."))
+        #expect(MoveWindowController.sentence(translocated: true, home: true).hasSuffix("goes in the one in your home folder."))
+    }
+
+    /// The guide runs once: a launch that opens a file leaves it for the next plain launch, and once it has started no
+    /// launch runs it again, which is where every upgraded copy already is.
+    @Test func j1TheGuideRunsOnceAndNotOnALaunchThatOpensAFile() async throws {
+        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(!Welcome.due(opensFile: true, defaults: defaults))
+        #expect(defaults.object(forKey: Welcome.shownKey) == nil, "the file opened alone")
+        #expect(Welcome.due(opensFile: false, defaults: defaults))
+
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        try Welcome.write(in: vault.notes)
+        let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
+        defer { tab.close() }
+        let guide = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        defer { guide.end() }
+        #expect(!Welcome.due(opensFile: false, defaults: defaults), "a second launch shows the launch window")
+        defaults.set(true, forKey: Welcome.shownKey)
+        #expect(!Welcome.due(opensFile: false, defaults: defaults), "an upgraded copy carries the flag")
+    }
+
+    /// Beat 1 lands the demo's two changes and puts the caret in the first; reverting it moves to the second, and
+    /// keeping that one reaches the closing beat. The island's sentence follows each beat.
+    @Test func j1TheGuideAdvancesOnRevertThenKeep() async throws {
+        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        try Welcome.write(in: vault.notes)
+        let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
+        defer { tab.close() }
+        let guide = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        defer { guide.end() }
+        #expect(guide.island.sentence == WelcomeGuide.sentences[0])
+        #expect(guide.island.superview != nil)
+        await waitForMain { guide.beat == .revert }
+        #expect(guide.island.sentence == WelcomeGuide.sentences[1])
+        await waitForMain { tab.textView.selectedRange().location == tab.live.changes[guide.demo[0]]?.range.location }
+        #expect(tab.textView.string.contains(Welcome.replacement))
+        #expect(tab.textView.nextKeyView === guide.island.controls.first, "Control-Tab reaches Skip")
+
+        tab.textView.decide(guide.demo[0], keep: false)
+        #expect(guide.beat == .keep)
+        #expect(guide.island.sentence == WelcomeGuide.sentences[2])
+        #expect(tab.textView.string.contains(Welcome.replaced))
+        tab.textView.decide(guide.demo[1], keep: true)
+        #expect(guide.beat == .done)
+        #expect(guide.island.sentence == WelcomeGuide.closing)
+        #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
+        #expect(tab.marked.isEmpty)
+    }
+
+    /// Every beat's sentence shows whole, wrapped beside its keycap and buttons, at Welcome window widths from 1000 to
+    /// 1600 pt. At every step the editor's bottom inset covers the island, and the setup list leaves the note's end in view.
+    @Test func j1EveryBeatShowsWholeAndTheNoteClearsTheIsland() async throws {
+        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        try Welcome.write(in: vault.notes)
+        let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
+        defer { tab.close() }
+        let guide = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        defer { guide.end() }
+        let island = guide.island
+        let scrollView = try #require(tab.textView.enclosingScrollView)
+        func fields(in view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { [$0 as? NSTextField].compactMap { $0 } + fields(in: $0) }
+        }
+        for width in stride(from: 1000, through: 1600, by: 100) {
+            tab.window.setContentSize(NSSize(width: CGFloat(width), height: 760))
+            for beat in 0...3 {
+                let text = beat < 3 ? WelcomeGuide.sentences[beat] : WelcomeGuide.closing
+                let buttons = (beat < 3 ? ["Skip"] : ["Done", "Set Up Dewline"]).map { ChromeButton($0) {} }
+                island.show(text, key: beat < 3 ? WelcomeGuide.keys[beat] : nil, spoken: nil, progress: 0, buttons: buttons)
+                tab.window.layoutIfNeeded()
+                let label = try #require(fields(in: island).first { $0.stringValue == text })
+                let cell = try #require(label.cell)
+                let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+                #expect(needed <= label.bounds.height + 0.5, "\(width) pt: \(text)")
+                #expect(scrollView.contentInsets.bottom >= island.frame.height + 16)
+            }
+        }
+
+        let clip = scrollView.contentView
+        clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: NSPoint(x: 0, y: tab.textView.frame.height), size: clip.bounds.size)).origin)
+        scrollView.reflectScrolledClipView(clip)
+        let rows = await WelcomeGuide.setupRows(misplaced: false, status: HookStatus(), isDefault: false)
+        island.showSetup(rows, actions: rows.map { _ in {} }, footer: LaunchWindowController.emptyText, buttons: [ChromeButton("Done") {}])
+        tab.window.layoutIfNeeded()
+        #expect(scrollView.contentInsets.bottom >= island.frame.height + 16)
+        #expect(tab.textView.frame.maxY <= clip.bounds.maxY - scrollView.contentInsets.bottom + 0.5, "the note's end shows above the list")
+    }
+
+    /// Replay takes a kept demo's edits back out, so it plays again; ending it, as a quit does, keeps the demo's open
+    /// changes without asking and takes the island away.
+    @Test func j1ReplayAfterAKeptDemoAndAQuitMidGuideAsksNothing() async throws {
+        let suite = "dev.arkwerx.dewline.tests.journey.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        try Welcome.write(in: vault.notes)
+        let bundled = try String(contentsOf: Welcome.bundled, encoding: .utf8)
+        let tab = try Tab(Welcome.url(in: vault.notes), engine: vault.engine)
+        defer { tab.close() }
+        let first = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        await waitForMain { first.beat == .revert }
+        tab.textView.keepAllChanges(nil)
+        #expect(first.beat == .done)
+        first.end()
+        #expect(WelcomeGuide.running == nil)
+
+        let replay = try #require(WelcomeGuide.start(in: tab.controller, document: tab.document, url: tab.url, defaults: defaults, delay: .zero))
+        defer { replay.end() }
+        #expect(tab.textView.string == bundled, "the kept demo's edits are back out")
+        await waitForMain { replay.beat == .revert }
+        #expect(tab.marked.count == 2)
+        replay.end()
+        #expect(tab.marked.isEmpty)
+        #expect(tab.window.attachedSheet == nil)
+        #expect(WelcomeGuide.running == nil)
+        await waitForMain { replay.island.superview == nil }
+    }
+
+    /// Typing in the note ends the guide; the shortcuts that decide a change, and Control-Tab, do not.
+    @Test func j1TypingEndsTheGuide() throws {
+        func key(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        }
+        #expect(WelcomeGuide.isTyping(try key("a", code: 0)))
+        #expect(WelcomeGuide.isTyping(try key("\r", code: 36)))
+        #expect(!WelcomeGuide.isTyping(try key("\r", code: 36, flags: .command)))
+        #expect(!WelcomeGuide.isTyping(try key("\u{8}", code: 51, flags: [.command, .option])))
+        #expect(!WelcomeGuide.isTyping(try key("\t", code: 48, flags: .control)))
+    }
+
+    /// The setup list reads real state: on a disk image only the move; else hooks, the default app and the command,
+    /// each done once it is, and the hooks row says so when no agent is on this Mac.
+    @Test func j1SetupListReadsEachRowsState() async {
+        let moved = await WelcomeGuide.setupRows(misplaced: true, status: HookStatus(), isDefault: false)
+        #expect(moved.map(\.title) == [WelcomeGuide.moveTitle])
+        let none = await WelcomeGuide.setupRows(misplaced: false, status: HookStatus(), isDefault: false)
+        #expect(none.map(\.title) == [WelcomeGuide.hooksTitle, WelcomeGuide.defaultTitle, WelcomeGuide.commandTitle])
+        #expect(none[0].status.hasPrefix("No Claude Code, Codex or Cursor found.") && none[0].button == nil)
+        #expect(none[1].button == "Use Dewline" && !none[1].done)
+        var status = HookStatus()
+        status.agents[0].installed = true
+        status.agents[0].file = "/Users/a/.claude/settings.json"
+        status.agents[1].file = "/Users/a/.codex/hooks.json"
+        status.onPath = "/opt/homebrew/bin/dewline"
+        let done = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
+        #expect(done.allSatisfy { $0.done })
+        #expect(done[0].status == "Hooks are set up for Claude Code.")
+        #expect(done[2].status == "dewline is at /opt/homebrew/bin/dewline.")
+        status.agents[0].installed = false
+        let missing = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
+        #expect(missing[0].button == "Set Up\u{2026}")
+    }
+
+    /// The dewline command links into /usr/local/bin when this account can use it, else ~/.local/bin, made if missing;
+    /// a link that resolves to this app's command is replaced, and anything else there is left alone.
+    @Test func j1TheCommandLinksIntoAFolderOnThePath() throws {
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        let home = vault.root
+        #expect(CommandLink.folder(home: home) { _ in true }.path == "/usr/local/bin")
+        let folder = CommandLink.folder(home: home) { _ in false }
+        #expect(folder.path == home.appending(path: ".local/bin").path)
+        let command = HookSetup.command()
+        let link = try #require(try CommandLink.install(command: command, in: folder))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == command.path)
+        #expect(CommandLink.status(link.path).hasSuffix("to your PATH to run it by name."))
+
+        let hop = home.appending(path: "hop")
+        try FileManager.default.createSymbolicLink(at: hop, withDestinationURL: command)
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../../hop")
+        #expect(CommandLink.taken(at: folder) == nil, "a link that resolves to this app's command")
+        #expect(try CommandLink.install(command: command, in: folder) == link)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == command.path)
+
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/usr/bin/true")
+        #expect(CommandLink.taken(at: folder) == link)
+        #expect(try CommandLink.install(command: command, in: folder) == nil)
+        try FileManager.default.removeItem(at: link)
+        try Data("#!/bin/sh\n".utf8).write(to: link)
+        #expect(try CommandLink.install(command: command, in: folder) == nil)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil, "a file of someone else's stays")
+    }
+
+    /// The command links only from a copy that stays put: never while the app is misplaced, never to a command on a
+    /// volume or in a translocated copy, and a link counts as this app's only when it resolves to this app's command.
+    @Test func j1TheCommandLinksOnlyACopyThatStays() throws {
+        let vault = try Vault([:])
+        defer { vault.remove() }
+        let folder = vault.root.appending(path: "bin", directoryHint: .isDirectory)
+        let link = folder.appending(path: "dewline")
+        let command = HookSetup.command()
+        #expect(try CommandLink.install(command: command, in: folder, misplaced: true) == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path), "nothing is made while the app is misplaced")
+        let image = URL(filePath: "/Volumes/Dewline/Dewline.app/Contents/Helpers/dewline")
+        let translocated = URL(filePath: "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app/Contents/Helpers/dewline")
+        #expect(CommandLink.unstable(image) && CommandLink.unstable(translocated) && !CommandLink.unstable(command))
+        #expect(try CommandLink.install(command: image, in: folder, misplaced: false) == nil)
+        #expect(try CommandLink.install(command: translocated, in: folder, misplaced: false) == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for other in [image.path, "/usr/local/evil/Dewline.app/Contents/Helpers/dewline", command.path + "-not"] {
+            try? FileManager.default.removeItem(at: link)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: other)
+            #expect(CommandLink.taken(at: folder, command: command) == link, "\(other) is not this app's command")
+            #expect(try CommandLink.install(command: command, in: folder) == nil)
+        }
+        try FileManager.default.removeItem(at: link)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: command.deletingLastPathComponent().path + "/./dewline")
+        #expect(CommandLink.taken(at: folder, command: command) == nil, "the same command, written another way")
+    }
+
     /// Set Up reads which settings files lack hooks, and the entries each would gain, from `dewline doctor`, and runs
     /// the install on a terminal of its own, answering yes.
     @Test func hookSetupListsTheFilesAndAnswersOnATerminal() async throws {
@@ -790,9 +1058,6 @@ struct JourneyTests {
             )
         ])
         #expect(HookSetup.summary(missing) == "Claude Code: PreToolUse to name the agent behind each edit; Stop to mark where each turn ends.")
-        #expect(HookSetup.misplaced(URL(filePath: "/Volumes/Dewline/Dewline.app")))
-        #expect(HookSetup.misplaced(URL(filePath: "/private/var/folders/x/T/AppTranslocation/1F2E/d/Dewline.app")))
-        #expect(!HookSetup.misplaced(URL(filePath: "/Applications/Dewline.app")))
         let vault = try Vault([:])
         defer { vault.remove() }
         let script = vault.root.appending(path: "asks.sh")

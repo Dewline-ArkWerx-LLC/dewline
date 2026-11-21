@@ -456,7 +456,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     }
 
     private static var findPlaceholder: String {
-        CodeFile.isOn ? "Find a note or code file. Type > for commands." : "Find a note. Type > for commands."
+        "Find a note or code file. Type > for commands."
     }
 
     /// With nothing typed: open tabs, then recents, then pins.
@@ -587,7 +587,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case .folderHeadings: return folder == nil ? "Open a folder to find headings across it." : "No headings match."
         case .fileHeadings: return "No heading matches in that file."
         case .files(let text) where text.allSatisfy(\.isWhitespace):
-            if let folder { return "Type a name to find \(CodeFile.isOn ? "notes and code" : "notes") in \(FileManager.default.displayName(atPath: folder.url.path))." }
+            if let folder { return "Type a name to find notes and code in \(FileManager.default.displayName(atPath: folder.url.path))." }
             return "Type a name to find a file you opened or pinned."
         case .files(let text), .fileLine(let text, _):
             return index != nil && index?.files == nil ? "Listing files…" : "No files match \(Self.quoted(text))."

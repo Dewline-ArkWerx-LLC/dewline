@@ -35,8 +35,6 @@ final class Preferences {
     #endif
     /// Cards and hover previews for web links, which ask each site for its title and picture.
     var linkPreviews: Bool { didSet { save(linkPreviews, "DewlineLinkPreviews") } }
-    /// Source and config files list in the sidebar and Quick Open and open as highlighted code (`CodeFile`).
-    var opensCodeFiles: Bool { didSet { save(opensCodeFiles, CodeFile.key) } }
 
     init(defaults: UserDefaults, home: URL = URL(filePath: NSHomeDirectory(), directoryHint: .isDirectory)) {
         self.defaults = defaults
@@ -53,7 +51,8 @@ final class Preferences {
         sharedFolder = path("DewlineSharedFolder") ?? documents.appending(path: "Dewline Shared", directoryHint: .isDirectory)
         #endif
         linkPreviews = defaults.bool(forKey: "DewlineLinkPreviews")
-        opensCodeFiles = defaults.bool(forKey: CodeFile.key)
+        // Open code files, a setting until code files always opened.
+        defaults.removeObject(forKey: "DewlineOpenCodeFiles")
     }
 
     /// AppKit brings back the last windows only while NSQuitAlwaysKeepsWindows holds; the system's

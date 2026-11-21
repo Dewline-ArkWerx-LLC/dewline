@@ -1,10 +1,7 @@
 import AppKit
 
-/// Source and config files, which open as highlighted code while Settings > Editor's "Open code files" is on. Off,
-/// they list and open as they always did.
+/// Source and config files, which open as highlighted code.
 enum CodeFile {
-    static let key = "DewlineOpenCodeFiles"
-
     /// The highlighting pack's 51 languages by extension, Markdown aside, with JSON, YAML, TOML and INI. Launch
     /// Services gets the same list from project.yml.
     static let extensions: Set<String> = [
@@ -22,11 +19,6 @@ enum CodeFile {
         "cmakelists.txt": "cmake",
     ]
 
-    /// Whether code files open, read from the defaults so a listing off the main thread can ask.
-    static var isOn: Bool {
-        UserDefaults.standard.bool(forKey: key)
-    }
-
     /// The language `url` is highlighted as: its extension, or "dockerfile" for a Dockerfile; nil when it isn't code.
     static func language(of url: URL) -> String? {
         let name = url.lastPathComponent.lowercased()
@@ -35,23 +27,8 @@ enum CodeFile {
         return extensions.contains(ext) ? ext : nil
     }
 
-    /// Sources Dewline typesets, which show as code whenever they open, whatever the setting.
+    /// Sources Dewline typesets.
     static let typeset: Set<String> = ["typ", "tex"]
-
-    /// The language of a code file that opens as code now; nil for a note, or for any other file while the setting is off.
-    static func opened(_ url: URL) -> String? {
-        language(of: url).flatMap { isOn || typeset.contains($0) ? $0 : nil }
-    }
-
-    /// Why `url` doesn't open: it is code and the setting is off.
-    static func refusal(_ url: URL) -> CocoaError? {
-        guard !isOn, !FolderEntry(url: url, isFolder: false).isMarkdown, let language = language(of: url) else { return nil }
-        return CocoaError(.fileReadUnknown, userInfo: [
-            NSURLErrorKey: url,
-            NSLocalizedDescriptionKey: "Dewline didn\u{2019}t open \u{201C}\(url.lastPathComponent)\u{201D}.",
-            NSLocalizedRecoverySuggestionErrorKey: "Turn on Open code files in Settings to open \(language) files.",
-        ])
-    }
 
     /// What Tab inserts in `text`: a tab when more lines start with a tab than with spaces, else the step its
     /// space-indented lines most often deepen by. Nil when no line is indented.

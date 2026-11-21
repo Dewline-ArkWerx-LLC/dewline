@@ -311,8 +311,6 @@ final class FolderIndex {
     private var tree: FileTree
     private var watch: FolderWatch?
     private var update: Task<Void, Never>?
-    /// Whether code files opened at the last whole listing; turning them on or off lists the folder again.
-    private var listsCode = CodeFile.isOn
     /// Whether the last whole listing held what .gitignore hides; Settings > General turns it on or off.
     private var showsIgnored = Preferences.shared.showsIgnored
     private var settings: (any NSObjectProtocol)?
@@ -330,8 +328,7 @@ final class FolderIndex {
         relist(nil)
         settings = NotificationCenter.default.addObserver(forName: Preferences.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.listsCode != CodeFile.isOn || self.showsIgnored != Preferences.shared.showsIgnored else { return }
-                self.listsCode = CodeFile.isOn
+                guard let self, self.showsIgnored != Preferences.shared.showsIgnored else { return }
                 self.showsIgnored = Preferences.shared.showsIgnored
                 self.relist(nil)
             }

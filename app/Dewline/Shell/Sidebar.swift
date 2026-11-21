@@ -794,7 +794,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .entry(let entry), .shortcut(let entry): isFolder = entry.isFolder
         default: return
         }
-        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) || CodeFile.opened(url) != nil {
+        if !isFolder, url.pathExtension.lowercased() == "md" || isAgentFile(url) || CodeFile.language(of: url) != nil {
             add("Open in New Tab", #selector(openInNewTab(_:)), mine: true)
             if case .entry = node.kind, index?.git.state(of: url) != nil {
                 add("Review Uncommitted Changes", #selector(reviewUncommitted(_:)), mine: true)

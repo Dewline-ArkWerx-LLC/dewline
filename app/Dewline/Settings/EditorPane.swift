@@ -12,10 +12,6 @@ struct EditorPane: View {
                     Text("Fetches a page's title and picture when a link is shown.")
                 }
                 Toggle("Vim mode", isOn: $store.vimMode)
-                Toggle(isOn: $preferences.opensCodeFiles) {
-                    Text("Open code files")
-                    Text("Source and config files open as highlighted code, with line numbers.")
-                }
             }
             Section("Typing") {
                 Picker("Tab key inserts", selection: $store.tabWidth) {
@@ -35,6 +31,5 @@ struct EditorPane: View {
         store.tabWidth = factory.tabWidth
         store.spellCheck = factory.spellCheck
         preferences.linkPreviews = Preferences.factory.linkPreviews
-        preferences.opensCodeFiles = Preferences.factory.opensCodeFiles
     }
 }

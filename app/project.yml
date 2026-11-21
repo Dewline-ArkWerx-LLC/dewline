@@ -120,9 +120,9 @@ targets:
             LSItemContentTypes: [net.daringfireball.markdown, dev.arkwerx.dewline.markdown-dialect]
             CFBundleTypeIconSystemGenerated: 1
             NSDocumentClass: $(PRODUCT_MODULE_NAME).MarkdownDocument
-          # Code files (CodeFile.extensions), which open only while Settings > Editor > Open code files is on. At None,
-          # so Finder's Open With never lists Dewline for them while File > Open and a drop on the Dock icon still
-          # take them. First the system's types, then by extension the ones it has none for.
+          # Code files (CodeFile.extensions). At None, so Finder's Open With never lists Dewline for them while File >
+          # Open and a drop on the Dock icon still take them. First the system's types, then by extension the ones it
+          # has none for.
           - CFBundleTypeName: Source code
             CFBundleTypeRole: Editor
             LSHandlerRank: None

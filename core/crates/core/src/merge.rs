@@ -235,7 +235,9 @@ pub fn coalesce(text: &str, edits: Vec<Edit>) -> Vec<Edit> {
     let mut k = 0;
     while k < spans.len() {
         let (first, _) = &spans[k];
-        let start = text[..first.start].rfind(ending).map_or(0, |i| i + 1);
+        let from = text[..first.start].rfind(ending).map_or(0, |i| i + 1);
+        // A change before this one can run past its own line's end.
+        let start = from.max(lined.last().map_or(0, |(range, _)| range.end));
         let end = text[first.end..]
             .find(ending)
             .map_or(text.len(), |i| first.end + i);

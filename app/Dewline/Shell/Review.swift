@@ -657,8 +657,8 @@ private final class SessionRow: NSTableCellView {
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
-        let revert = StampButton("Revert Session", keys: "", style: .outlined) { decide(false) }
-        let keep = StampButton("Keep Session", keys: "", style: .filled) { decide(true) }
+        let revert = StampButton("Revert Session", style: .outlined) { decide(false) }
+        let keep = StampButton("Keep Session", style: .filled) { decide(true) }
         revert.toolTip = "Puts back the old text of every change in this session. Revert Session (\u{2303}\u{2318}\u{232B})"
         keep.toolTip = "Clears the marks on every change in this session. Keep Session (\u{2303}\u{2318}\u{21A9})"
         let row = NSStackView(views: [name, revert, keep])

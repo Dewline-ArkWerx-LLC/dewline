@@ -265,17 +265,20 @@ final class ChangeStamp: NSView {
 
     init(revert: @escaping () -> Void, keep: @escaping () -> Void) {
         self.revert = StampButton(
-            "Revert", keys: "\u{2325}\u{2318}\u{232B}", style: .outlined, symbol: "arrow.uturn.backward",
-            alternate: ("Revert All", "\u{2325}\u{21E7}\u{2318}\u{232B}", #selector(EditorTextView.revertAllChanges(_:))), revert)
-        self.keep = StampButton(
-            "Keep", keys: "\u{2318}\u{21A9}", style: .filled, symbol: "checkmark",
-            alternate: ("Keep All", "\u{21E7}\u{2318}\u{21A9}", #selector(EditorTextView.keepAllChanges(_:))), keep)
-        setUp = StampButton("Set up agent hooks\u{2026}", keys: "", style: .link) {
+            "Revert", style: .outlined, symbol: "arrow.uturn.backward", alternate: ("Revert All", #selector(EditorTextView.revertAllChanges(_:))), revert)
+        self.keep = StampButton("Keep", style: .filled, symbol: "checkmark", alternate: ("Keep All", #selector(EditorTextView.keepAllChanges(_:))), keep)
+        setUp = StampButton("Set up agent hooks\u{2026}", style: .link) {
             NSApp.sendAction(#selector(AppDelegate.setUpHooks(_:)), to: nil, from: nil)
         }
         super.init(frame: .zero)
-        self.revert.toolTip = "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All (\u{2325}\u{21E7}\u{2318}\u{232B})"
-        self.keep.toolTip = "Already saved; Keep clears the mark. Keep (\u{2318}\u{21A9}). Option-click: Keep All (\u{21E7}\u{2318}\u{21A9})"
+        // The keys show on hover and VoiceOver reads them as help, not on the buttons.
+        for (button, tip) in [
+            (self.revert, "Puts the old text back. Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All (\u{2325}\u{21E7}\u{2318}\u{232B})"),
+            (self.keep, "Already saved; Keep clears the mark. Keep (\u{2318}\u{21A9}). Option-click: Keep All (\u{21E7}\u{2318}\u{21A9})"),
+        ] {
+            button.toolTip = tip
+            button.setAccessibilityHelp(tip)
+        }
         setUp.toolTip = "Name this writer: set up agent hooks"
         setUp.isHidden = true
         note.font = .systemFont(ofSize: 11)
@@ -548,9 +551,9 @@ func readOnlyText(_ text: NSAttributedString) -> NSScrollView {
     return scroll
 }
 
-/// Revert (outlined), Keep (filled with the theme's accent, set in paper) and a quiet link, each with its keys in one
-/// `Keycap`: ⌥⌘⌫ for Revert, ⌘↩ for Keep. Its width holds its title and its Option title, so holding Option moves
-/// nothing; the short form sets the title alone at 11 pt, the icon form its symbol alone.
+/// Revert (outlined), Keep (filled with the theme's accent, set in paper) and a quiet link, each its title alone; the
+/// keys are in the tooltip. Its width holds its title and its Option title, so holding Option moves nothing; the short
+/// form sets the title at 11 pt, the icon form its symbol alone.
 @MainActor
 final class StampButton: NSButton {
     enum Style { case outlined, filled, link }
@@ -563,10 +566,9 @@ final class StampButton: NSButton {
     static let labelBaseline = ((height + font.capHeight) / 2).rounded()
 
     private let style: Style
-    private let keys: String
     private let symbol: String?
-    /// The title, keys and action the button takes while Option is down.
-    private let alternate: (title: String, keys: String, action: Selector)?
+    /// The title and action the button takes while Option is down.
+    private let alternate: (title: String, action: Selector)?
     var handler: () -> Void
     var optionDown = false {
         didSet { if optionDown != oldValue, alternate != nil { needsDisplay = true } }
@@ -575,12 +577,8 @@ final class StampButton: NSButton {
         didSet { if form != oldValue { needsDisplay = true } }
     }
 
-    init(
-        _ title: String, keys: String, style: Style, symbol: String? = nil,
-        alternate: (title: String, keys: String, action: Selector)? = nil, _ action: @escaping () -> Void
-    ) {
+    init(_ title: String, style: Style, symbol: String? = nil, alternate: (title: String, action: Selector)? = nil, _ action: @escaping () -> Void) {
         self.style = style
-        self.keys = keys
         self.symbol = symbol
         self.alternate = alternate
         handler = action
@@ -617,26 +615,17 @@ final class StampButton: NSButton {
         return NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
     }
 
-    private static func caps(_ keys: String) -> [String] {
-        keys.isEmpty ? [] : [keys]
-    }
-
     private var symbolImage: NSImage? {
         let color = ThemeStore.shared.color(style == .filled ? .paper : .ink)
         let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
         return symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config) }
     }
 
-    /// The label and keys' width for `title` in `form`; the short form drops the keys.
-    private func content(_ title: String, _ keys: String, _ form: Form) -> CGFloat {
-        label(title, form).size().width + (keys.isEmpty || form == .short ? 0 : 5 + Keycap.width(Self.caps(keys)))
-    }
-
     /// The button's width in `form`.
     func width(_ form: Form) -> CGFloat {
         if style == .link { return ceil(label(title).size().width) }
         if form == .icon, symbolImage != nil { return 26 }
-        return ceil(8 + max(content(title, keys, form), alternate.map { content($0.title, $0.keys, form) } ?? 0) + 7)
+        return ceil(8 + max(label(title, form).size().width, alternate.map { label($0.title, form).size().width } ?? 0) + 7)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -671,11 +660,7 @@ final class StampButton: NSButton {
         }
         let font = form == .short ? Self.shortFont : Self.font
         let baseline = ((Self.height + font.capHeight) / 2).rounded()
-        let title = shownTitle
-        let shownKeys = form == .short ? "" : optionDown ? alternate?.keys ?? keys : keys
-        let text = label(title, form)
-        let x = ((bounds.width - content(title, shownKeys, form)) / 2).rounded()
-        text.draw(at: NSPoint(x: x, y: baseline - font.ascender))
-        Keycap.draw(Self.caps(shownKeys), x: x + text.size().width + 5, midY: bounds.midY, onFill: style == .filled)
+        let text = label(shownTitle, form)
+        text.draw(at: NSPoint(x: ((bounds.width - text.size().width) / 2).rounded(), y: baseline - font.ascender))
     }
 }

@@ -980,7 +980,7 @@ struct JourneyTests {
         let done = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
         #expect(done.allSatisfy { $0.done })
         #expect(done[0].status == "Hooks are set up for Claude Code.")
-        #expect(done[2].status == "dewline is at /opt/homebrew/bin/dewline.")
+        #expect(done[2].status == "Installed at /opt/homebrew/bin/dewline.")
         status.agents[0].installed = false
         let missing = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
         #expect(missing[0].button == "Set Up\u{2026}")
@@ -999,6 +999,9 @@ struct JourneyTests {
         let link = try #require(try CommandLink.install(command: command, in: folder))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == command.path)
         #expect(CommandLink.status(link.path).hasSuffix("to your PATH to run it by name."))
+        #expect(CommandLink.line(onPath: link.path, taken: nil).hasPrefix("Installed at "))
+        #expect(CommandLink.line(onPath: nil, taken: nil) == "Not installed.")
+        #expect(CommandLink.line(onPath: nil, taken: URL(filePath: "/usr/local/bin/dewline")) == "Another dewline is at /usr/local/bin/dewline.")
 
         let hop = home.appending(path: "hop")
         try FileManager.default.createSymbolicLink(at: hop, withDestinationURL: command)
@@ -1045,6 +1048,23 @@ struct JourneyTests {
         try FileManager.default.removeItem(at: link)
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: command.deletingLastPathComponent().path + "/./dewline")
         #expect(CommandLink.taken(at: folder, command: command) == nil, "the same command, written another way")
+    }
+
+    /// The hook offer waits for an edit no hook named: opening the note or typing in it doesn't make one, an outside
+    /// write does, and keeping the change ends it.
+    @Test func hookOfferWaitsForAnUnnamedOutsideEdit() async throws {
+        let vault = try Vault(["plan.md": "# Plan\n"])
+        defer { vault.remove() }
+        let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
+        defer { tab.close() }
+        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
+        tab.textView.insertText("!", replacementRange: NSRange(location: 6, length: 0))
+        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
+        try Data("# Plan\n\nAgent note.\n".utf8).write(to: vault.url("plan.md"))
+        await tab.live.refresh()
+        #expect(HookSetup.unnamedEdit(in: tab.live.changes))
+        tab.live.decideAll(keep: true)
+        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
     }
 
     /// Set Up reads which settings files lack hooks, and the entries each would gain, from `dewline doctor`, and runs

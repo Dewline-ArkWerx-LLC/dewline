@@ -4,8 +4,11 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.
 - Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
+- The hook offer waits for the first change another app makes in an open note, instead of coming when a folder opens.
+- Settings > Agents says whether the `dewline` command is installed, and where, with Add when it isn't.
 - Code files always open, and the sidebar, Quick Open and Find in Files list them; Settings > Editor drops Open code files.
 
 ## 0.6.1 (21 Nov 2026)

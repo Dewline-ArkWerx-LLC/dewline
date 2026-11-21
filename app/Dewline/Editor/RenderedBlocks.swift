@@ -49,7 +49,7 @@ final class RenderedBlocks {
         guard let textView else { return }
         let text = styled.mutableString
         let paragraphs = NSRange(location: offset, length: styled.length)
-        let width = (textView.textContainer?.size.width ?? 0) - 2 * (textView.textContainer?.lineFragmentPadding ?? 0)
+        let width = (textView.textContainer?.column ?? 0) - 2 * (textView.textContainer?.lineFragmentPadding ?? 0)
         for block in map.renderedBlocks(in: paragraphs) {
             let range = NSRange(location: block.range.location - offset, length: block.range.length)
             let overlap = NSIntersectionRange(block.range, paragraphs)

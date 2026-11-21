@@ -8,9 +8,9 @@ private struct Editor {
     let window: NSWindow
     let view: EditorTextView
 
-    init(_ text: String, caret: Int) {
+    init(_ text: String, caret: Int, width: CGFloat = 760) {
         let scrollView = EditorTextView.scrollView()
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = scrollView
         view = scrollView.documentView as! EditorTextView
@@ -133,6 +133,43 @@ struct TableTests {
         editor.edit { view.insertText(" and a much longer name", replacementRange: view.selectedRange()) }
         #expect(qtyEnd() > start + 10)
         #expect(qtyEnd() > narrow)
+    }
+
+    @Test func tablesAndCodeRunPastTheMeasure() throws {
+        let columns = 1...7
+        let table = "| " + columns.map { "column \($0)" }.joined(separator: " | ") + " |\n|" + String(repeating: "---|", count: columns.count)
+            + "\n| " + columns.map { "cell \($0)" }.joined(separator: " | ") + " |\n"
+        let code = String(repeating: "let x = 1; ", count: 7) + "done"
+        let prose = String(repeating: "word ", count: 40) + "last"
+        let editor = Editor("Intro\n\n\(table)\n```\n\(code)\n```\n\n\(prose)\n", caret: 0, width: 1200)
+        let view = editor.view
+        let container = try #require(view.textContainer)
+        func frame(_ string: String) -> NSRect {
+            view.convert(editor.window.convertFromScreen(editor.rect(string)), from: nil)
+        }
+        let start = view.textContainerOrigin.x + container.lineFragmentPadding
+        let measure = start + container.column - 2 * container.lineFragmentPadding
+        let edge = view.bounds.width - 32
+        #expect(container.column < container.size.width)
+        // The table keeps its natural columns, one line per row, past the measure and inside the right margin.
+        let row = editor.find("| cell 1").location
+        guard case .table(let rule)? = editor.role(at: row) else { Issue.record("no rule on the row"); return }
+        #expect(rule.cells.isEmpty)
+        #expect(start + rule.width > measure && start + rule.width <= edge)
+        let layout = try #require(view.textLayoutManager)
+        let location = try #require(layout.location(layout.documentRange.location, offsetBy: row))
+        layout.ensureLayout(for: NSTextRange(location: location))
+        let fragment = try #require(layout.textLayoutFragment(for: location))
+        #expect(view.textContainerOrigin.x + fragment.layoutFragmentFrame.maxX > measure)
+        #expect(frame("column 7").maxX > measure && frame("cell 7").maxX > measure && frame("cell 7").maxX <= edge)
+        #expect(abs(frame("column 1").minY - frame("column 7").minY) < 1)
+        // A code line runs on in its widened well; prose wraps at the measure.
+        #expect(frame("done").maxX > measure && abs(frame("done").minY - frame("let").minY) < 1)
+        let well = try #require(view.textStorage!.attribute(.dewlineCode, at: editor.find("let").location, effectiveRange: nil) as? CodeWell)
+        let drawn = view.codeWell(well, top: frame("let"), bottom: frame("done"))
+        #expect(drawn.maxX > frame("done").maxX && drawn.maxX <= edge)
+        #expect(frame("last").maxX <= measure + 1 && frame("last").minY > frame("word").minY)
+        #expect(view.string.hasPrefix("Intro\n\n| column 1 |"))
     }
 
     @Test func tabAndShiftTabMoveBetweenCellsPastTheDelimiterRow() {

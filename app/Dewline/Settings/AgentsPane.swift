@@ -79,12 +79,22 @@ struct HookStatus: Equatable, Sendable {
 struct AgentsPane: View {
     let store: ThemeStore
     @State private var hooks = HookStatus()
+    @State private var copied = false
 
     var body: some View {
         SettingsForm {
             Section {
                 ForEach(hooks.agents) { agent in
                     row(agent)
+                }
+                if hooks.agents.allSatisfy({ Self.lastEdit($0.name) == nil }) {
+                    LabeledContent {
+                        Button(copied ? "Copied" : "Copy a Test Prompt") { copyTestPrompt() }
+                            .fixedSize()
+                    } label: {
+                        Text("No named edit yet")
+                        Text("Paste the prompt into an agent working in a folder Dewline has open.")
+                    }
                 }
             } header: {
                 Text("Hooks")
@@ -115,18 +125,26 @@ struct AgentsPane: View {
         hooks = await Task.detached { HookStatus.read() }.value
     }
 
+    /// Copies the frontmost folder window's test prompt.
+    private func copyTestPrompt() {
+        let folder = NSApp.orderedWindows.lazy.compactMap { ($0.windowController as? MainWindowController)?.folder?.url }.first
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(MainWindowController.testPrompt(in: folder ?? URL(filePath: NSHomeDirectory())), forType: .string)
+        copied = true
+    }
+
     /// "Last named edit 16:10", or the date too before today: when the agent's hooks last named a write.
-    private static func lastEdit(_ agent: String) -> String {
-        guard let date = ControlSocket.Claim.lastNamedEdit(agent) else { return "No named edit yet" }
+    private static func lastEdit(_ agent: String) -> String? {
+        guard let date = ControlSocket.Claim.lastNamedEdit(agent) else { return nil }
         return "Last named edit " + date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
     }
 
     /// The agent's name, what its hooks give and when they last named an edit, then its state with a symbol, then Set Up or
-    /// Remove, and Show File when it has a settings file.
+    /// Remove, and Show File when it has a settings file, the buttons in a column that lines up across the rows.
     private func row(_ agent: HookStatus.Agent) -> some View {
         let (text, symbol, color): (String, String, Color) =
             switch (agent.installed, agent.needsTrust) {
-            case (true, false): ("Active", "checkmark.circle.fill", .green)
+            case (true, false): ("Active", "checkmark.circle.fill", .accentColor)
             case (true, true): ("Installed, needs trust", "exclamationmark.triangle.fill", .orange)
             default: ("Not set up", "circle.dashed", .secondary)
             }
@@ -139,23 +157,31 @@ struct AgentsPane: View {
                 }
                 .help(agent.needsTrust ? "Type /hooks in Codex to trust them." : "")
                 if agent.installed {
-                    Button("Remove") { HookSetup.remove(agent.name) { _ in Task { await refresh() } } }
-                        .fixedSize()
-                        .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
+                    Button { HookSetup.remove(agent.name) { _ in Task { await refresh() } } } label: {
+                        Text("Remove").frame(minWidth: 56)
+                    }
+                    .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
                 } else {
-                    Button("Set Up\u{2026}") { HookSetup.install(from: NSApp.keyWindow, agent: agent.name) { _ in Task { await refresh() } } }
-                        .fixedSize()
+                    Button { HookSetup.install(from: NSApp.keyWindow, agent: agent.name) { _ in Task { await refresh() } } } label: {
+                        Text("Set Up\u{2026}").frame(minWidth: 56)
+                    }
                 }
                 if let file = agent.file, FileManager.default.fileExists(atPath: file) {
                     Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
                         .fixedSize()
                         .help((file as NSString).abbreviatingWithTildeInPath)
+                } else {
+                    Button("Show File") {}
+                        .fixedSize()
+                        .hidden()
                 }
             }
         } label: {
             Text(agent.title)
             Text(Self.detail(agent.name))
-            Text(Self.lastEdit(agent.name))
+            if let edit = Self.lastEdit(agent.name) {
+                Text(edit)
+            }
         }
     }
 }

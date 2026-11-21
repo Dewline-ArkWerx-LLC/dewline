@@ -482,9 +482,24 @@ extension MarkdownStyler {
                 guard item.content.location <= NSMaxRange(paragraph) else { continue }
                 let style = (styled.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle ?? .default).mutableCopy() as! NSMutableParagraphStyle
                 let marker = NSRange(location: paragraph.location, length: item.content.location - paragraph.location)
-                let text = styled.attributedSubstring(from: marker)
-                let width = widths[text] ?? text.size().width
-                widths[text] = width
+                func measure(_ range: NSRange) -> CGFloat {
+                    let text = styled.attributedSubstring(from: range)
+                    let width = widths[text] ?? text.size().width
+                    widths[text] = width
+                    return width
+                }
+                var width = measure(marker)
+                // A bullet's text starts an en space past it; a task's box stands in for its bullet.
+                let task = block.spans.contains { span in
+                    if case .taskBox = span.kind { return span.range.location + offset == item.content.location }
+                    return false
+                }
+                if Self.isBullet(at: item.range.location, in: styled.mutableString), !task, NSMaxRange(marker) - 1 > item.range.location,
+                    let font = styled.attribute(.font, at: item.range.location, effectiveRange: nil) as? NSFont {
+                    let hang = measure(NSRange(location: paragraph.location, length: item.range.location + 1 - paragraph.location)) + font.pointSize / 2
+                    styled.addAttribute(.kern, value: hang - width, range: NSRange(location: NSMaxRange(marker) - 1, length: 1))
+                    width = hang
+                }
                 style.headIndent = style.firstLineHeadIndent + width
                 styled.addAttribute(.paragraphStyle, value: style, range: paragraph)
             }
@@ -579,10 +594,34 @@ extension MarkdownStyler {
                 storage.addAttribute(.foregroundColor, value: revealed ? ThemeStore.shared.color(showsSource ? .ink2 : .syntax) : NSColor.clear, range: marker)
             } else if revealed {
                 let font = storage.attribute(.dewlineMarkerFont, at: marker.location, effectiveRange: nil)!
-                storage.addAttributes([.font: font, .foregroundColor: ThemeStore.shared.color(showsSource ? .ink2 : .syntax)], range: marker)
+                let quiet: Bool = switch span.kind {
+                case .heading, .quote: true
+                default: false
+                }
+                storage.addAttributes([.font: font, .foregroundColor: ThemeStore.shared.color(showsSource ? .ink2 : quiet ? .ink3 : .syntax)], range: marker)
             } else {
                 CFAttributedStringSetAttributes(storage, CFRange(location: marker.location, length: marker.length), Self.hiddenMarker, false)
             }
+        }
+        if span.kind == .quote, !showsSource { hang(span.markers, in: storage) }
+    }
+
+    /// Sets each quote line's `> ` in the quote's indent, so its text stays put while they show. A callout's title line
+    /// keeps its icon's room.
+    private func hang(_ markers: [NSRange], in storage: NSMutableAttributedString) {
+        let text = storage.mutableString
+        var widths: [Int: CGFloat] = [:]
+        for marker in markers {
+            let shown = (storage.attribute(.font, at: marker.location, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 > 1
+            widths[text.paragraphRange(for: marker).location, default: 0] += shown ? storage.attributedSubstring(from: marker).size().width : 0
+        }
+        for (start, width) in widths where storage.attribute(.dewlineCallout, at: start, effectiveRange: nil) == nil {
+            guard let style = storage.attribute(.paragraphStyle, at: start, effectiveRange: nil) as? NSParagraphStyle,
+                style.firstLineHeadIndent != max(style.headIndent - width, 0)
+            else { continue }
+            let hung = style.mutableCopy() as! NSMutableParagraphStyle
+            hung.firstLineHeadIndent = max(style.headIndent - width, 0)
+            storage.addAttribute(.paragraphStyle, value: hung, range: text.paragraphRange(for: NSRange(location: start, length: 0)))
         }
     }
 

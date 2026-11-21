@@ -13,7 +13,7 @@ struct FontSlots: View {
         let system = [Faces.body] + Faces.system
         let text = [("System", system), ("Bundled", Faces.bundled), ("This Mac", Self.mac.all.filter { !system.contains($0) })]
         let code = [("System", ["SF Mono"]), ("Bundled", ["JetBrains Mono"]), ("This Mac", Self.mac.monospaced)]
-        Section("Faces") {
+        Section("Fonts") {
             face("Body", $store.bodyFace, text)
             face("Headings", $store.headingFace, text)
             face("Code", $store.codeFace, code)
@@ -23,7 +23,7 @@ struct FontSlots: View {
         } header: {
             Text("Preview")
         } footer: {
-            Text("Code is sized to the body font's x-height. Source mode (⌥⌘U) sets the whole page in the code font.")
+            Text("Code is sized to the body font\u{2019}s x-height. Source mode (⌥⌘U) sets the whole page in the code font.")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -44,7 +44,7 @@ struct FontSlots: View {
     }
 }
 
-/// A heading, a paragraph and a code line set as the editor sets them, on the current theme's paper.
+/// A heading, a paragraph and a code line set as the editor sets them, in the current theme's inks.
 struct FontPreview: View {
     let store: ThemeStore
     let colors: [Token: NSColor]
@@ -83,10 +83,8 @@ struct FontPreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(color(.codeBackground), in: .rect(cornerRadius: 4))
         }
-        .padding(20)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color(.paper), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 }

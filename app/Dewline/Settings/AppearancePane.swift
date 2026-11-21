@@ -117,7 +117,6 @@ private struct ThemeCard: View {
                             .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
                     )
                 Text(theme.name)
-                    .foregroundStyle(selected ? .primary : .secondary)
                     .padding(.horizontal, 3.5)
             }
         }

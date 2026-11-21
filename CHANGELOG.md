@@ -6,6 +6,8 @@ What changed in each Dewline release, newest first.
 
 - Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
+- The hook offer waits for the first change another app makes in an open note, instead of coming when a folder opens.
+- Settings > Agents says whether the `dewline` command is installed, and where, with Add when it isn't.
 
 ## 0.6.1 (21 Nov 2026)
 

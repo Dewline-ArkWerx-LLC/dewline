@@ -139,11 +139,16 @@ enum CommandLink {
         return link
     }
 
-    /// "dewline is at ~/.local/bin/dewline.", saying to add the folder to the PATH when this launch made it.
+    /// "Installed at ~/.local/bin/dewline.", saying to add the folder to the PATH when this launch made it.
     static func status(_ path: String) -> String {
         let shown = (path as NSString).abbreviatingWithTildeInPath
-        guard let made = madeFolder, path.hasPrefix(made.path + "/") else { return "dewline is at \(shown)." }
-        return "dewline is at \(shown). Add \((made.path as NSString).abbreviatingWithTildeInPath) to your PATH to run it by name."
+        guard let made = madeFolder, path.hasPrefix(made.path + "/") else { return "Installed at \(shown)." }
+        return "Installed at \(shown). Add \((made.path as NSString).abbreviatingWithTildeInPath) to your PATH to run it by name."
+    }
+
+    /// Settings > Agents' line for the command: where it is installed, another dewline in Add's way, or not installed.
+    static func line(onPath: String?, taken: URL?) -> String {
+        onPath.map(status) ?? taken.map { "Another dewline is at \(($0.path as NSString).abbreviatingWithTildeInPath)." } ?? "Not installed."
     }
 }
 
@@ -166,7 +171,7 @@ struct AgentsPane: View {
                     }
                 } label: {
                     Text("dewline command")
-                    Text(hooks.onPath.map(CommandLink.status) ?? taken.map { "Another dewline is at \(($0.path as NSString).abbreviatingWithTildeInPath)." } ?? "Not on your PATH.")
+                    Text(CommandLink.line(onPath: hooks.onPath, taken: taken))
                 }
             }
             Section {

@@ -4,6 +4,8 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
+- A note opens with the caret at its start (past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
 - Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
 

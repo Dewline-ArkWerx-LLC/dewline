@@ -158,6 +158,13 @@ struct JourneyTests {
         #expect(tab.textView.string.contains(Welcome.anchor + Welcome.inserted))
         let stamp = try #require(Self.stamp(in: tab))
         #expect(stamp.accessibilityLabel()?.hasSuffix(" of 2") == true)
+        // Keep and Revert are their titles alone; the keys are in the tooltip, which VoiceOver reads as help.
+        let buttons = stamp.subviews.compactMap { $0 as? StampButton }
+        let keep = try #require(buttons.first { $0.accessibilityLabel()?.hasPrefix("Keep ") == true })
+        let revert = try #require(buttons.first { $0.accessibilityLabel()?.hasPrefix("Revert ") == true })
+        #expect(keep.width(.full) == StampButton("Keep All", style: .filled) {}.width(.full), "as wide as its Option title, no keycap")
+        #expect(keep.toolTip?.contains("Keep (\u{2318}\u{21A9})") == true && keep.accessibilityHelp() == keep.toolTip)
+        #expect(revert.toolTip?.contains("Revert (\u{2325}\u{2318}\u{232B})") == true && revert.accessibilityHelp() == revert.toolTip)
         for _ in 0..<2 {
             let keep = try #require(Self.stamp(in: tab)?.subviews.compactMap { $0 as? StampButton }.first { $0.accessibilityLabel()?.hasPrefix("Keep ") == true })
             keep.performClick(nil)

@@ -150,7 +150,10 @@ struct ShellTests {
             try Data("# Notes\n\nOne line.\n".utf8).write(to: url)
             let document = MarkdownDocument()
             document.engine = engine
-            try document.read(from: url, ofType: "net.daringfireball.markdown")
+            try document.read(from: url, ofType: MarkdownDocument.type)
+            document.fileURL = url
+            document.fileType = MarkdownDocument.type
+            NSDocumentController.shared.addDocument(document)
             let tab = MainWindowController(folder: Folder(notes), joining: tabs.first)
             tab.display(document)
             tabs.append(tab)

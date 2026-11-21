@@ -105,10 +105,7 @@ struct EditRestyleTests {
         let end = start + formula.utf16.count
         let editor = Editor("Above\n\(formula)\n\nBelow\n", caret: 0)
         defer { editor.close() }
-        let deadline = ContinuousClock.now + .seconds(5)
-        while editor.picture(at: start) == nil, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        await waitForMain { editor.picture(at: start) != nil }
         #expect(editor.picture(at: start) != nil)
         editor.view.setSelectedRange(NSRange(location: end, length: 0))
         #expect(editor.picture(at: start) == nil, "the caret at the closing fence reveals the source")

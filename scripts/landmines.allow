@@ -12,7 +12,6 @@ app/DewlineTests/CodeFilesTests.swift no-fixed-sleep 2
 app/DewlineTests/CollaborationTests.swift no-fixed-sleep 8
 app/DewlineTests/ConstructTests.swift no-fixed-sleep 2
 app/DewlineTests/ControlSocketTests.swift no-fixed-sleep 1
-app/DewlineTests/EditRestyleTests.swift no-fixed-sleep 1
 app/DewlineTests/FlowsTests.swift no-fixed-sleep 10
 app/DewlineTests/HideSyntaxTests.swift no-fixed-sleep 5
 app/DewlineTests/LinkPreviewTests.swift no-fixed-sleep 11

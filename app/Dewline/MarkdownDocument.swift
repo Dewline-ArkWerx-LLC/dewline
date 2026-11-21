@@ -465,8 +465,7 @@ final class DocumentController: NSDocumentController {
         super.noteNewRecentDocumentURL(url)
     }
 
-    /// Code files open from Finder and File > Open only while Open code files is on; the sidebar, Quick Open and Find in
-    /// Files open them as code whatever it says.
+    /// Code files open from Finder, File > Open and Quick Open only while Open code files is on.
     override func openDocument(
         withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void
     ) {

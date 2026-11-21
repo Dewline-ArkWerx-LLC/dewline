@@ -489,7 +489,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         let found = "\(matches.formatted()) \(matches == 1 ? "match" : "matches") in \(count.formatted()) \(count == 1 ? "file" : "files")"
         replaceButton.isEnabled = matches > 0 && !search.isSearching && !pending
         status.stringValue = if field.stringValue.isEmpty {
-            "Search the notes and code in \(FileManager.default.displayName(atPath: folder.url.path))."
+            "Search the \(CodeFile.isOn ? "notes and code" : "notes") in \(FileManager.default.displayName(atPath: folder.url.path))."
         } else if let problem = search.problem {
             "Not a valid pattern: \(problem)"
         } else if waitsForFiles {

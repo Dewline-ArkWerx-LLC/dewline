@@ -423,7 +423,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
                 return ranked.map { .heading($0.heading, positions: $0.positions) }
             }
         case .files(let text):
-            chrome("Quick Open", placeholder: "Find a note or code file. Type > for commands.")
+            chrome("Quick Open", placeholder: Self.findPlaceholder)
             if text.allSatisfy(\.isWhitespace) {
                 show(restingFileRows())
             } else {
@@ -433,10 +433,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
                 }
             }
         case .fileLine(let text, let line):
-            chrome("Go to Line in File", placeholder: "Find a note or code file. Type > for commands.")
+            chrome("Go to Line in File", placeholder: Self.findPlaceholder)
             run { panel in await Self.ranked(text, in: panel.files)?.map { .file($0, line: line) } }
         case .fileHeadings(let text, let heading):
-            chrome("Go to Heading in File", placeholder: "Find a note or code file. Type > for commands.")
+            chrome("Go to Heading in File", placeholder: Self.findPlaceholder)
             run { panel in
                 guard let top = await Self.ranked(text, in: panel.files)?.first else { return nil }
                 let headings = await panel.headings(of: top.file)
@@ -453,6 +453,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         chip.title = word ?? ""
         chip.isHidden = word == nil
         placeholder(text)
+    }
+
+    private static var findPlaceholder: String {
+        CodeFile.isOn ? "Find a note or code file. Type > for commands." : "Find a note. Type > for commands."
     }
 
     /// With nothing typed: open tabs, then recents, then pins.
@@ -583,7 +587,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case .folderHeadings: return folder == nil ? "Open a folder to find headings across it." : "No headings match."
         case .fileHeadings: return "No heading matches in that file."
         case .files(let text) where text.allSatisfy(\.isWhitespace):
-            if let folder { return "Type a name to find notes and code in \(FileManager.default.displayName(atPath: folder.url.path))." }
+            if let folder { return "Type a name to find \(CodeFile.isOn ? "notes and code" : "notes") in \(FileManager.default.displayName(atPath: folder.url.path))." }
             return "Type a name to find a file you opened or pinned."
         case .files(let text), .fileLine(let text, _):
             return index != nil && index?.files == nil ? "Listing files…" : "No files match \(Self.quoted(text))."

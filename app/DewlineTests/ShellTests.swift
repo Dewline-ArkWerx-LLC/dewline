@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import MdCore
 import Testing
 import UniformTypeIdentifiers
 @testable import Dewline
@@ -71,6 +72,33 @@ struct ShellTests {
         _ = map.textDidChange(text, edited: NSRange(location: 0, length: text.length), delta: text.length)
         #expect(outline(of: text, in: map).map { [$0.level, $0.line] } == [[1, 1], [2, 5], [3, 12]])
         #expect(outline(of: text, in: map).map(\.title) == ["Plan", "Before the beta", "Monday"])
+    }
+
+    /// View > Changes with a waiting change draws its session row, Keep Session and Revert Session beside the byline.
+    @Test @MainActor func changesListDrawsASessionRow() async throws {
+        let root = URL(filePath: NSTemporaryDirectory()).resolvingSymlinksInPath().appending(path: "dewline-shell-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appending(path: "plan.md")
+        try Data("# Plan\n\nShip on Friday.\n".utf8).write(to: url)
+        let document = MarkdownDocument()
+        document.engine = try ChangeEngine(store: root.appending(path: "store"))
+        try document.read(from: url, ofType: MarkdownDocument.type)
+        document.fileURL = url
+        document.makeWindowControllers()
+        defer { document.close() }
+        let window = try #require(document.windowControllers.first?.window)
+        let live = try #require(document.live)
+        try Data("# Plan\n\nShip on Monday.\n".utf8).write(to: url)
+        await live.refresh()
+        #expect(live.changes.values.contains { $0.marked })
+
+        let review = ReviewViewController(for: window)
+        _ = review.view
+        let session = try #require(review.rows.firstIndex { if case .session = $0 { true } else { false } })
+        let cell = review.tableView(NSTableView(), viewFor: nil, row: session)
+        guard case .session(_, let byline) = review.rows[session] else { return }
+        #expect(cell?.accessibilityLabel() == byline)
     }
 
     @Test func shortDateNamesTodayYesterdayTheWeekThenTheDate() throws {

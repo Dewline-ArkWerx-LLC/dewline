@@ -2,6 +2,17 @@
 
 What changed in each Dewline release, newest first.
 
+## 0.6.1 (21 Nov 2026)
+
+View > Changes no longer crashes, code files and Source mode show their text again, and the first launch walks you through a real agent change.
+
+- View > Changes no longer crashes when it lists a session.
+- Code files, Typst and LaTeX files, and Source mode show their text again; the line-number gutter had painted over it.
+- Run from the disk image or Downloads, Dewline offers to move itself to Applications before anything else, since a copy there loses its updates and hooks once the image ejects.
+- The first launch runs a short guide in Welcome.md: a demo agent edits the note, you revert one change and keep the other, then a setup list offers a folder, the Markdown handler, agent hooks and the `dewline` command, each skippable. A second launch skips it.
+- Adding the `dewline` command refuses a copy on a disk image or a translocated path and offers the move instead.
+- The disk image opens to a laid-out window: Dewline on the left, Applications on the right, in light and dark.
+
 ## 0.6.0 (20 Nov 2026)
 
 Agent edits are easier to review from the keyboard and across a whole folder, uncommitted git changes show as marks, the window behaves more like a Mac app, and Typst and LaTeX files typeset in a sandbox.

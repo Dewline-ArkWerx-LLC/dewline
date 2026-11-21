@@ -1,7 +1,7 @@
 import AppKit
 
 /// The chrome's faces: SF Pro at the macOS text styles' sizes for every label Dewline draws (subheadline in the status
-/// bar, body in the sidebar, tabs and panels), and SF Mono for branch names, counts, badges and keycaps.
+/// bar, body in the sidebar, tabs, panels and keycaps), and SF Mono for branch names, counts and badges.
 @MainActor
 enum Chrome {
     /// Section labels' tracking.
@@ -81,14 +81,15 @@ enum Chrome {
 }
 
 /// One key as a cap: 20 pt tall, at least 20 wide, 5 pt radius, `keycap` fill with a `hairline` edge one step darker
-/// at the bottom, the key in mono 11 `ink2`. On an ink fill the cap takes the island's color at low alpha instead.
+/// at the bottom, the key in the label's face and size in `ink2`, which has the modifier glyphs SF Mono lacks. On an ink
+/// fill the cap takes the island's color at low alpha instead.
 @MainActor
 enum Keycap {
     static let height: CGFloat = 20
     static let gap: CGFloat = 3
 
     static func width(_ key: String) -> CGFloat {
-        max(height, ceil((key as NSString).size(withAttributes: [.font: Chrome.mono(11)]).width) + 10)
+        max(height, ceil((key as NSString).size(withAttributes: [.font: Chrome.label]).width) + 10)
     }
 
     static func width(_ keys: [String]) -> CGFloat {
@@ -123,7 +124,7 @@ enum Keycap {
                 bottom.stroke()
                 text = Chrome.color(.ink2).withAlphaComponent(alpha)
             }
-            let attributes: [NSAttributedString.Key: Any] = [.font: Chrome.mono(11), .foregroundColor: text]
+            let attributes: [NSAttributedString.Key: Any] = [.font: Chrome.label, .foregroundColor: text]
             let size = (key as NSString).size(withAttributes: attributes)
             (key as NSString).draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2), withAttributes: attributes)
             x += width + gap
@@ -131,12 +132,13 @@ enum Keycap {
     }
 }
 
-/// A chrome button drawn by Dewline: a text button in `ink2` (`ink` under the pointer), or, filled, the accent with
-/// `paper` for its text, 6 pt radius, 28 pt tall. Keycaps follow the title. Under Full Keyboard Access it takes the
-/// focus, with the system's ring, and Space or Return presses it.
+/// A chrome button drawn by Dewline: a text button in `ink2` (`ink` under the pointer); bordered, `ink` on a `keycap`
+/// fill with a `hairline` edge; or, filled, the accent with `paper` for its text. 6 pt radius, 28 pt tall. Keycaps
+/// follow the title. Under Full Keyboard Access it takes the focus, with the system's ring, and Space or Return
+/// presses it.
 final class ChromeButton: NSControl {
     enum Style {
-        case text, filled
+        case text, bordered, filled
     }
 
     private let title: String
@@ -175,7 +177,7 @@ final class ChromeButton: NSControl {
     override var intrinsicContentSize: NSSize {
         let text = ceil((title as NSString).size(withAttributes: [.font: titleFont]).width)
         let caps = keys.isEmpty ? 0 : 8 + Keycap.width(keys)
-        return NSSize(width: (style == .filled ? 14 : 6) * 2 + text + caps, height: 28)
+        return NSSize(width: (style == .text ? 6 : 14) * 2 + text + caps, height: 28)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -183,11 +185,22 @@ final class ChromeButton: NSControl {
         if filled {
             Chrome.color(.accent).withAlphaComponent(pressed ? 0.82 : 1).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        } else if style == .bordered {
+            let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+            Chrome.color(.keycap).setFill()
+            shape.fill()
+            if hovering || pressed {
+                Chrome.hover.setFill()
+                shape.fill()
+            }
+            Chrome.color(.hairline).setStroke()
+            shape.lineWidth = 1
+            shape.stroke()
         }
-        let color: NSColor = filled ? Chrome.color(.paper) : Chrome.color(hovering || pressed ? .ink : .ink2)
+        let color: NSColor = filled ? Chrome.color(.paper) : Chrome.color(hovering || pressed || style == .bordered ? .ink : .ink2)
         let attributes: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: color]
         let size = (title as NSString).size(withAttributes: attributes)
-        let x: CGFloat = filled ? 14 : 6
+        let x: CGFloat = style == .text ? 6 : 14
         (title as NSString).draw(at: NSPoint(x: x, y: bounds.midY - size.height / 2), withAttributes: attributes)
         if !keys.isEmpty {
             Keycap.draw(keys, x: x + ceil(size.width) + 8, midY: bounds.midY, onFill: filled, alpha: isEnabled ? 1 : 0.6)

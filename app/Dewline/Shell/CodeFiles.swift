@@ -185,7 +185,8 @@ final class LineNumbers: NSRulerView {
 
     override func draw(_ dirtyRect: NSRect) {
         ThemeStore.shared.color(.paper).setFill()
-        dirtyRect.fill()
+        // A view draws past its bounds unless it clips, and the text sits beside this one.
+        dirtyRect.intersection(bounds).fill()
         drawHashMarksAndLabels(in: dirtyRect)
     }
 

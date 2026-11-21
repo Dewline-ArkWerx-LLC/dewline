@@ -3,8 +3,8 @@ import MdCore
 
 /// The title row, a `.unifiedCompact` toolbar: the sidebar toggle over the sidebar, then from its divider the tab
 /// strip, Activity, Search and New Note. Each item but the system's sidebar toggle is a borderless button in a plain view, so no glass capsule draws behind it. The tabs outlast the others
-/// when the window narrows. After 1.5 s of typing, Activity dims and everything else but the selected tab fades out
-/// until the pointer or a Command chord comes back.
+/// when the window narrows. After 1.5 s of typing, everything but Activity and the selected tab fades out until the
+/// pointer or a Command chord comes back.
 @MainActor
 final class WindowToolbar: NSObject, NSToolbarDelegate {
     static let divider = NSToolbarItem.Identifier("dev.arkwerx.dewline.divider")
@@ -19,8 +19,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
     private let split: NSSplitView
     private let activity = ActivityButton()
     private var activityItem: NSToolbarItem?
-    /// Activity's view, which dims while typing.
-    private var activityView: NSView?
     /// Search and New Note, which fade out while typing.
     private var fading: [NSView] = []
     /// Whether the title row has faded for typing.
@@ -78,7 +76,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             let view = ToolbarControl(activity, inset: 7)
             let item = Self.item(identifier, "Activity", view, priority: .user)
             activityItem = item
-            activityView = view
             item.isHidden = !activity.shows
             return item
         case Self.search:
@@ -142,7 +139,6 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.15
             for view in fading { view.animator().alphaValue = out ? 0 : 1 }
-            activityView?.animator().alphaValue = out ? 0.4 : 1
             strip.animator().othersAlpha = out ? 0 : 1
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
@@ -274,9 +270,11 @@ final class ActivityButton: NSButton {
         fatalError("ActivityButton is built in code")
     }
 
+    /// Each writer's changes waiting for Keep or Revert among `origins`; git's uncommitted changes are not among them.
     private static func tally(_ origins: [ChangeEngine.Origin]) -> [(writer: MarkWriter, count: Int)] {
         var counts: [(writer: MarkWriter, count: Int)] = []
         for origin in origins {
+            if case .git = origin { continue }
             let writer = MarkWriter(origin)
             if let index = counts.firstIndex(where: { $0.writer.name == writer.name }) {
                 counts[index].count += 1
@@ -291,14 +289,16 @@ final class ActivityButton: NSButton {
         update(force: notification.name == ThemeStore.didChange)
     }
 
-    /// "main ↑2 · 7 changed" for the window's folder while the sidebar is collapsed; nil when it is in no repository.
+    /// "main ↑2 ↓1 · 7 uncommitted" for the window's folder while the sidebar is collapsed; nil when it is in no
+    /// repository.
     private var gitLine: String? {
         guard sidebarCollapsed, let folder = (owner?.windowController as? MainWindowController)?.folder else { return nil }
         let states = FolderIndex.of(folder).git
-        let branch = [gitBranch(at: folder.url), states.ahead > 0 ? "\u{2191}\(states.ahead)" : nil].compactMap { $0 }
+        let branch = [gitBranch(at: folder.url), states.ahead > 0 ? "\u{2191}\(states.ahead)" : nil, states.behind > 0 ? "\u{2193}\(states.behind)" : nil]
+            .compactMap { $0 }
         let changed = states.changed.count
         guard !branch.isEmpty || changed > 0 else { return nil }
-        return ([branch.joined(separator: " ")].filter { !$0.isEmpty } + (changed > 0 ? ["\(changed) changed"] : [])).joined(separator: " \u{00B7} ")
+        return ([branch.joined(separator: " ")].filter { !$0.isEmpty } + (changed > 0 ? ["\(changed) uncommitted"] : [])).joined(separator: " \u{00B7} ")
     }
 
     /// Rebuilds the title when the counts or the git line change; each keystroke before a pending change moves it
@@ -316,8 +316,8 @@ final class ActivityButton: NSButton {
         width.constant = ceil(attributedTitle.size().width) + 4
         width.isActive = true
         let spoken = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")
-        setAccessibilityLabel(([git].compactMap { $0 } + (counts.isEmpty ? [] : ["Changes to review: \(spoken)"])).joined(separator: ", "))
-        toolTip = "Review Changes (\u{21E7}\u{2318}R)"
+        setAccessibilityLabel(([git].compactMap { $0 } + (counts.isEmpty ? [] : ["Changes waiting for Keep or Revert: \(spoken)"])).joined(separator: ", "))
+        toolTip = "Changes waiting for Keep or Revert (\u{21E7}\u{2318}R)"
         let shows = !counts.isEmpty || git != nil
         if self.shows != shows {
             self.shows = shows
@@ -325,7 +325,7 @@ final class ActivityButton: NSButton {
         }
     }
 
-    /// "main · 7 changed   ● ● 4 to review ⌄": the git line in body `ink2`, a 7 pt dot in each writer's ink, then the
+    /// "main · 7 uncommitted   ● ● 4 to review ⌄": the git line in body `ink2`, a 7 pt dot in each writer's ink, then the
     /// total in body medium, all with monospaced digits.
     private static func title(_ counts: [(writer: MarkWriter, count: Int)], git: String?) -> NSAttributedString {
         let title = NSMutableAttributedString()
@@ -361,17 +361,33 @@ final class ActivityButton: NSButton {
         return NSAttributedString(attachment: attachment)
     }
 
-    /// Each note with changes waiting and who made them; choosing one opens it at its first change.
+    /// Each writer, under its name, with the notes it changed, newest first, by their paths in the folder; choosing one
+    /// opens it at its first change.
     @objc private func showMenu(_ sender: Any?) {
         let menu = NSMenu()
+        let folder = (owner?.windowController as? MainWindowController)?.folder
         let (open, closed) = Review.waiting(in: owner)
+        var notes: [(writer: MarkWriter, url: URL, detail: String, time: Date)] = []
         for live in open {
-            let counts = Self.tally(live.changes.values.filter(\.marked).map(\.origin))
-            let detail = counts.map { "\($0.writer.name) \($0.count)" }.joined(separator: ", ")
-            menu.addItem(Self.note(live.url, detail))
+            let time = (try? live.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            for (writer, count) in Self.tally(live.changes.values.filter(\.marked).map(\.origin)) {
+                notes.append((writer, live.url, "\(count) \(count == 1 ? "change" : "changes")", time))
+            }
         }
         for note in closed {
-            menu.addItem(Self.note(note.url, "\(MarkWriter(note.origin).name), changed while closed"))
+            guard let (writer, _) = Self.tally([note.origin]).first else { continue }
+            notes.append((writer, note.url, "\(note.count) \(note.count == 1 ? "change" : "changes") while closed", note.time))
+        }
+        notes.sort { $0.time > $1.time }
+        var writers: [String] = []
+        for note in notes where !writers.contains(note.writer.name) {
+            writers.append(note.writer.name)
+        }
+        for name in writers {
+            menu.addItem(.sectionHeader(title: name))
+            for note in notes where note.writer.name == name {
+                menu.addItem(Self.note(note.url, folder?.relativePath(of: note.url) ?? note.url.lastPathComponent, note.detail))
+            }
         }
         menu.addItem(.separator())
         let files = Set(loads.compactMap(\.url)).count
@@ -393,9 +409,9 @@ final class ActivityButton: NSButton {
         LoadsPopover.show(loads, under: self)
     }
 
-    private static func note(_ url: URL, _ detail: String) -> NSMenuItem {
-        let item = NSMenuItem(title: url.lastPathComponent, action: #selector(MainWindowController.openWaiting(_:)), keyEquivalent: "")
-        let title = NSMutableAttributedString(string: url.lastPathComponent, attributes: [.font: NSFont.menuFont(ofSize: 0)])
+    private static func note(_ url: URL, _ path: String, _ detail: String) -> NSMenuItem {
+        let item = NSMenuItem(title: path, action: #selector(MainWindowController.openWaiting(_:)), keyEquivalent: "")
+        let title = NSMutableAttributedString(string: path, attributes: [.font: NSFont.menuFont(ofSize: 0)])
         title.append(NSAttributedString(string: "   \(detail)", attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
         item.attributedTitle = title
         item.representedObject = url

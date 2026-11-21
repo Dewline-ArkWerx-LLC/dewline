@@ -1,7 +1,7 @@
 import AppKit
 
 /// The dew line: the editor's vertical scroller. Its hairline is the whole note, a tick marks each H1, H2 and H3 (13, 9
-/// and 5 pt long), a bracket filled with ink at 7% spans what is on screen, and each waiting change is a 3 x 10 pt rule
+/// and 5 pt long), a bracket filled with ink at 16% spans what is on screen, and each waiting change is a 3 x 10 pt rule
 /// in its writer's ink at its place in the note, hollow for another app.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
@@ -72,6 +72,7 @@ final class Rail: NSScroller {
     }
 
     @objc private func scrolled() {
+        if arrival != nil { updateLabels() }
         guard scrollerStyle == .overlay else { return }
         scrolling = true
         updateShown()
@@ -105,10 +106,9 @@ final class Rail: NSScroller {
         measure()
         let fresh = marks.filter { !seen.contains($0.id) }
         seen = Set(marks.map(\.id))
-        // A change that lands off screen says so once; one on screen has its stamp beside it, unless it is the first.
-        let visible = textView.visibleRect
-        let first = !fresh.isEmpty && !UserDefaults.standard.bool(forKey: Self.introduced)
-        guard let landed = fresh.last(where: { !(visible.minY...visible.maxY).contains($0.y) }) ?? (first ? fresh.last : nil) else { return }
+        // A change that lands off screen says so once; one on screen has its stamp beside it.
+        guard let landed = fresh.last(where: { !onScreen($0.y) }) else { return }
+        let first = !UserDefaults.standard.bool(forKey: Self.introduced)
         if first { UserDefaults.standard.set(true, forKey: Self.introduced) }
         introducing = first
         arrival = landed.id
@@ -168,6 +168,12 @@ final class Rail: NSScroller {
             return textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
         }
         return CGFloat(index) / CGFloat(max(length, 1)) * textView.bounds.height
+    }
+
+    /// Whether a line whose top is at `y` in the text is on screen.
+    private func onScreen(_ y: CGFloat) -> Bool {
+        guard let visible = textView?.visibleRect else { return false }
+        return (visible.minY...visible.maxY).contains(y)
     }
 
     /// The rail's y for a y in the text: the whole note maps onto the hairline.
@@ -246,19 +252,21 @@ final class Rail: NSScroller {
         for tick in ticks { tickRect(tick).fill() }
     }
 
-    /// The bracket: a 2 pt stroke down the visible span, its caps reaching the hairline.
+    /// The bracket: ink at 16% (28% under Increase Contrast) over the visible span, stroked 3 pt, its caps reaching the
+    /// hairline.
     override func drawKnob() {
         let knob = usableParts == .allScrollerParts ? rect(for: .knob) : rect(for: .knobSlot)
         guard knob.height > 0 else { return }
-        ink(0.07, dark: 0.08).setFill()
-        NSRect(x: 3, y: knob.minY + 1, width: Self.line - 3, height: max(knob.height - 2, 0)).fill()
+        let fill: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.28 : 0.16
+        ink(fill, dark: fill).setFill()
+        NSRect(x: 3, y: knob.minY + 1.5, width: Self.line - 3, height: max(knob.height - 3, 0)).fill()
         let path = NSBezierPath()
-        path.lineWidth = 2
+        path.lineWidth = 3
         path.lineJoinStyle = .round
-        path.move(to: NSPoint(x: Self.line, y: knob.minY + 1))
-        path.line(to: NSPoint(x: 3, y: knob.minY + 1))
-        path.line(to: NSPoint(x: 3, y: knob.maxY - 1))
-        path.line(to: NSPoint(x: Self.line, y: knob.maxY - 1))
+        path.move(to: NSPoint(x: Self.line, y: knob.minY + 1.5))
+        path.line(to: NSPoint(x: 3, y: knob.minY + 1.5))
+        path.line(to: NSPoint(x: 3, y: knob.maxY - 1.5))
+        path.line(to: NSPoint(x: Self.line, y: knob.maxY - 1.5))
         ThemeStore.shared.color(.ink3).setStroke()
         path.stroke()
     }
@@ -375,8 +383,9 @@ final class Rail: NSScroller {
         return nil
     }
 
-    /// A label at the hovered mark (or the change that just landed off screen, while the Changes pane is closed), in the
-    /// margin right of the text column, else every tick's name while the pointer is on a rail that draws.
+    /// A label at the hovered mark or the change that just landed (while the Changes pane is closed), when that change
+    /// is off screen, in the margin right of the text column, else every tick's name while the pointer is on a rail
+    /// that draws.
     private func updateLabels() {
         defer {
             needsDisplay = true
@@ -392,6 +401,7 @@ final class Rail: NSScroller {
         textView.marks.lit = hovered?.id
         let reviewing = (textView.window?.windowController as? MainWindowController)?.showsChanges == true
         if let mark = hovered ?? (reviewing ? nil : marks.first(where: { $0.id == arrival })) {
+            guard !onScreen(mark.y) else { return labels.items = [] }
             let (writer, place, time) = spoken(mark)
             let visible = textView.visibleRect
             let keys = mark.y < visible.minY ? "\u{2303}\u{2318}\u{2191}" : mark.y > visible.maxY ? "\u{2303}\u{2318}\u{2193}" : ""

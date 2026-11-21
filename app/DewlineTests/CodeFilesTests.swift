@@ -106,6 +106,47 @@ struct CodeFilesTests {
         }
     }
 
+    /// A Typst source opens as code with the setting off, and its first line is drawn: the line numbers paint paper in
+    /// their own strip only, not over the text beside it.
+    @Test func aTypstSourceDrawsItsFirstLine() async throws {
+        let folder = try Folder(Self.files(["brief.typ": "#set page(width: 10cm)\n= Brief\n\nThe queue retries #n times.\n"]))
+        defer { try? FileManager.default.removeItem(at: folder.url) }
+        try await Self.setting(false) {
+            let controller = MainWindowController(folder: folder)
+            defer { (controller.document as? NSDocument)?.close() }
+            controller.open(folder.url.appending(path: "brief.typ"), newTab: false)
+            let textView = try #require(controller.textView)
+            #expect(textView.styler.code == "typ")
+            let scrollView = try #require(textView.enclosingScrollView)
+            let layout = try #require(textView.textLayoutManager)
+            var first: NSTextLayoutFragment?
+            layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+                first = fragment
+                return false
+            }
+            let fragment = try #require(first)
+            let line = try #require(fragment.textLineFragments.first)
+            #expect(line.attributedString.string.hasPrefix("#set page(width: 10cm)"))
+
+            // The scroll view as the window draws it, line numbers and all: the first line's glyphs show.
+            scrollView.layoutSubtreeIfNeeded()
+            let bitmap = try #require(scrollView.bitmapImageRepForCachingDisplay(in: scrollView.bounds))
+            scrollView.cacheDisplay(in: scrollView.bounds, to: bitmap)
+            let origin = textView.textContainerOrigin
+            let glyphs = NSRect(origin: NSPoint(x: fragment.layoutFragmentFrame.minX + origin.x, y: fragment.layoutFragmentFrame.minY + origin.y), size: line.typographicBounds.size)
+            var rect = scrollView.convert(glyphs, from: textView)
+            if !scrollView.isFlipped { rect.origin.y = scrollView.bounds.height - rect.maxY }
+            let scale = CGFloat(bitmap.pixelsWide) / scrollView.bounds.width
+            var colors = Set<String>()
+            for x in Int(rect.minX * scale)..<Int(rect.maxX * scale) {
+                for y in Int(rect.minY * scale)..<Int(rect.maxY * scale) {
+                    if let color = bitmap.colorAt(x: x, y: y) { colors.insert(color.description) }
+                }
+            }
+            #expect(colors.count > 1)
+        }
+    }
+
     @Test func indentationFollowsTheFile() {
         #expect(CodeFile.indentation(of: "func main() {\n\tif x {\n\t\ty()\n\t}\n}\n") == "\t")
         #expect(CodeFile.indentation(of: "a:\n  b:\n    c: 1\n  d: 2\n") == "  ")

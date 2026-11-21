@@ -39,33 +39,30 @@ enum Review {
         if let origin = live.changes[change]?.origin { times[key(origin)] = Date() }
     }
 
-    /// Next Change and Previous Change: reveals the marked change after or before the caret, or from offset `at` on,
-    /// then the first or last one in each of the window's other tabs in order. Past the last one, Next Change opens the
-    /// next note waiting outside the tabs at its first change, saying so in the status bar; else, and after a decision at
-    /// `at`, both wrap back to
-    /// `textView`'s file.
+    /// Next Change and Previous Change: reveals the marked change after or before the caret, then the first or last one
+    /// in each of the window's other tabs in order. Past the last one, Next Change opens the next note waiting outside
+    /// the tabs at its first change, saying so in the status bar; else both wrap back to `textView`'s file. A decision
+    /// at `at` moves on to the next change in its note, or stays and names the note Next Change goes to.
     static func step(from textView: EditorTextView, forward: Bool, at start: Int? = nil) {
         guard let live = textView.marks.live else { return }
         let files = files(in: textView.window)
         let caret = start.map { $0 - 1 } ?? textView.selectedRange().location
-        // A decision moving on stays in the open notes.
-        let crosses = forward && start == nil
-        func marked(_ file: LiveFile) -> [UInt64] {
-            file.changes.filter(\.value.marked).sorted { $0.value.range.location < $1.value.range.location }.map(\.key)
-        }
         let here = marked(live)
         let ahead = here.filter { id in
             let at = live.changes[id]!.range.location
             return forward ? at > caret : at < caret
         }
         if let id = forward ? ahead.first : ahead.last { return live.reveal(id, caret: true) }
-        let start = files.firstIndex { $0 === live } ?? 0
-        for offset in 1..<max(files.count, 1) {
-            let file = files[(start + (forward ? offset : files.count - offset)) % files.count]
-            let ids = marked(file)
-            if let id = forward ? ids.first : ids.last { return file.reveal(id, caret: true) }
+        let index = files.firstIndex { $0 === live } ?? 0
+        let others = (1..<max(files.count, 1)).map { files[(index + (forward ? $0 : files.count - $0)) % files.count] }.filter { !marked($0).isEmpty }
+        if start != nil {
+            if let id = here.first { return live.reveal(id, caret: true) }
+            guard let next = others.first?.url ?? notesBeyond(textView.window).first else { return }
+            return StatusBar.post(
+                .init(id: "step", kind: .result, text: "Next: \(next.lastPathComponent) \u{2303}\u{2318}\u{2193}", untilTyping: true), in: textView.window)
         }
-        let beyond = crosses ? notesBeyond(textView.window) : []
+        if let file = others.first, let id = forward ? marked(file).first : marked(file).last { return file.reveal(id, caret: true) }
+        let beyond = forward ? notesBeyond(textView.window) : []
         if let next = beyond.first, let controller = textView.window?.windowController as? MainWindowController {
             controller.openAtFirstChange(next, newTab: !here.isEmpty)
             let name = next.lastPathComponent
@@ -74,6 +71,24 @@ enum Review {
             return StatusBar.post(.init(id: "step", kind: .result, text: "Last change in open notes. Opened \(name)\(more)", untilTyping: true), in: window)
         }
         if let id = forward ? here.first : here.last { live.reveal(id, caret: true) }
+    }
+
+    /// `file`'s marked changes in the order Next Change walks them.
+    private static func marked(_ file: LiveFile) -> [UInt64] {
+        file.changes.filter(\.value.marked).sorted { $0.value.range.location < $1.value.range.location }.map(\.key)
+    }
+
+    /// Change `id` in `live` is `index` of the `total` marked changes in `window`'s tabs, counted in Next Change's order
+    /// from the first tab: 3 of 4.
+    static func place(of id: UInt64, in live: LiveFile, window: NSWindow?) -> (index: Int, total: Int) {
+        let tabs = files(in: window)
+        var (index, total) = (0, 0)
+        for file in tabs.contains(where: { $0 === live }) ? tabs : [live] {
+            let ids = marked(file)
+            if file === live, let at = ids.firstIndex(of: id) { index = total + at + 1 }
+            total += ids.count
+        }
+        return (index, total)
     }
 
     /// The notes in the window's folder waiting outside every open note, in the order Next Change opens them: changed
@@ -646,8 +661,8 @@ private final class SessionRow: NSTableCellView {
         let keep = StampButton("Keep Session", keys: "", style: .filled) { decide(true) }
         revert.toolTip = "Puts back the old text of every change in this session. Revert Session (\u{2303}\u{2318}\u{232B})"
         keep.toolTip = "Clears the marks on every change in this session. Keep Session (\u{2325}\u{21E7}\u{2318}\u{21A9})"
-        revert.widthAnchor.constraint(equalTo: keep.widthAnchor).isActive = true
         let row = NSStackView(views: [name, revert, keep])
+        revert.widthAnchor.constraint(equalTo: keep.widthAnchor).isActive = true
         row.spacing = 4
         row.setCustomSpacing(8, after: name)
         row.translatesAutoresizingMaskIntoConstraints = false

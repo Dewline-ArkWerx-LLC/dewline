@@ -3,148 +3,122 @@ import MdCore
 import Testing
 @testable import Dewline
 
-/// Settings > Editor > Open code files. Each test sets it and puts it back, so the suite runs one test at a time.
+/// Source and config files, which open as highlighted code.
 @MainActor @Suite(.serialized)
 struct CodeFilesTests {
     private static let python = "import os\n\n# Not a heading\ndef main(**kwargs):\n    if kwargs:\n        print(\"*a* _b_\")\n"
         + "long = '\(String(repeating: "a", count: 400))'\n"
 
-    @Test func offCodeFilesStayHiddenAndAreRefused() async throws {
-        let folder = try Folder(Self.files(["notes.md": "# Notes\n", "main.py": Self.python, "Dockerfile": "FROM swift\n"]))
-        defer { try? FileManager.default.removeItem(at: folder.url) }
-        try await Self.setting(false) {
-            #expect(Self.quickOpenNames(folder) == ["notes.md"])
-            let entries = folder.children(of: folder.url).entries
-            #expect(entries.filter(\.opens).map(\.url.lastPathComponent) == ["notes.md"])
-            #expect(entries.filter(\.isCode).map(\.url.lastPathComponent) == ["Dockerfile", "main.py"])
-            let refusal = try #require(CodeFile.refusal(folder.url.appending(path: "main.py")))
-            #expect(refusal.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String == "Turn on Open code files in Settings to open py files.")
-            #expect(CodeFile.refusal(folder.url.appending(path: "notes.md")) == nil)
-            // A Typst or TeX source that opens shows as code.
-            #expect(CodeFile.opened(folder.url.appending(path: "main.py")) == nil)
-            #expect(CodeFile.opened(folder.url.appending(path: "brief.typ")) == "typ")
-        }
-        await Self.setting(false) {
-            let (document, error) = await Self.openDocument(folder.url.appending(path: "main.py"))
-            #expect(document == nil)
-            #expect((error as? CocoaError)?.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String
-                == "Turn on Open code files in Settings to open py files.")
-        }
-    }
-
-    @Test func onCodeFilesListAndOpenInCodeMode() async throws {
+    @Test func codeFilesListAndOpenInCodeMode() async throws {
         let folder = try Folder(Self.files(["notes.md": "# Notes\n", "main.py": Self.python, "Dockerfile": "FROM swift\n", "photo.png": ""]))
         defer { try? FileManager.default.removeItem(at: folder.url) }
-        try await Self.setting(true) {
-            #expect(Self.quickOpenNames(folder) == ["Dockerfile", "main.py", "notes.md"])
-            #expect(folder.children(of: folder.url).entries.filter(\.opens).map(\.url.lastPathComponent) == ["Dockerfile", "main.py", "notes.md"])
+        // Quick Open and Find in Files list every file the sidebar opens: notes and code, not the picture.
+        #expect(Self.quickOpenNames(folder) == ["Dockerfile", "main.py", "notes.md"])
+        #expect(folder.children(of: folder.url).entries.filter(\.opens).map(\.url.lastPathComponent) == ["Dockerfile", "main.py", "notes.md"])
 
-            let controller = MainWindowController(folder: folder)
-            defer { (controller.document as? NSDocument)?.close() }
-            controller.open(folder.url.appending(path: "main.py"), newTab: false)
-            let textView = try #require(controller.textView)
-            #expect(textView.string == Self.python)
-            #expect(textView.styler.code == "py")
-            // No Markdown: no blocks, so no heading, emphasis or hidden marker.
-            let whole = NSRange(location: 0, length: (textView.string as NSString).length)
-            #expect(textView.styler.map.blocks(in: whole).isEmpty)
-            let storage = try #require(textView.textStorage)
-            storage.enumerateAttribute(.font, in: whole) { value, _, _ in
-                let font = value as? NSFont
-                #expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
-                #expect(font?.familyName == NSFont.monospacedSystemFont(ofSize: 13, weight: .regular).familyName)
-            }
-            storage.enumerateAttribute(.foregroundColor, in: whole) { value, _, _ in
-                #expect(value as? NSColor != NSColor.clear)
-            }
-            // Lines don't wrap, the view scrolls sideways, and each line has a number.
-            #expect(textView.textContainer?.widthTracksTextView == false)
-            #expect(textView.isHorizontallyResizable)
-            #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
-            let numbers = try #require(textView.enclosingScrollView?.verticalRulerView as? LineNumbers)
-            #expect(textView.enclosingScrollView?.rulersVisible == true)
-            #expect(numbers.lineStarts() == [0, 10, 11, 27, 47, 62, 87, 497])
-            #expect(!textView.isAutomaticQuoteSubstitutionEnabled && !textView.isContinuousSpellCheckingEnabled)
-            // The whole file is highlighted: "import" takes the keyword color.
-            let layout = try #require(textView.textLayoutManager)
-            // Compared by resolved value: a ThemeStore change, from a suite running beside this one, rebuilds the store's
-            // dynamic colors as new objects, so a color held across the wait would never equal the one painted after it.
-            func resolved(_ color: NSColor?) -> NSColor? {
-                var result: NSColor?
-                textView.effectiveAppearance.performAsCurrentDrawingAppearance { result = color?.usingColorSpace(.sRGB) }
-                return result
-            }
-            let area = NSRect(x: 0, y: 0, width: 600, height: 300)
-            let bitmap = try #require(textView.bitmapImageRepForCachingDisplay(in: area))
-            try await Self.until {
-                layout.ensureLayout(for: layout.documentRange)
-                // Colors are set when a line is drawn, and a window that is not on screen never draws: draw into a bitmap.
-                textView.cacheDisplay(in: area, to: bitmap)
-                var color: NSColor?
-                layout.enumerateRenderingAttributes(from: layout.documentRange.location, reverse: false) { _, attributes, _ in
-                    color = attributes[.foregroundColor] as? NSColor
-                    return false
-                }
-                return resolved(color) == resolved(ThemeStore.shared.color(.codeKeyword))
-            }
-            // The 400-character line widens the view past the clip view, and no further than the text.
-            let clip = try #require(textView.enclosingScrollView?.contentView.bounds.width)
-            #expect(textView.frame.width > clip)
-            #expect(textView.frame.width < 10_000)
-            // Tab inserts the file's four spaces.
-            textView.setSelectedRange(NSRange(location: 0, length: 0))
-            textView.insertTab(nil)
-            #expect(textView.string.hasPrefix("    import os"))
-
-            // File > Open's way in takes a file Launch Services has no type for.
-            let dockerfile = folder.url.appending(path: "Dockerfile")
-            let (document, error) = await Self.openDocument(dockerfile)
-            defer { document?.close() }
-            #expect(error == nil)
-            #expect(document?.fileType == MarkdownDocument.type)
-            #expect(CodeFile.opened(dockerfile) == "dockerfile")
+        let controller = MainWindowController(folder: folder)
+        defer { (controller.document as? NSDocument)?.close() }
+        controller.open(folder.url.appending(path: "main.py"), newTab: false)
+        let textView = try #require(controller.textView)
+        #expect(textView.string == Self.python)
+        #expect(textView.styler.code == "py")
+        // No Markdown: no blocks, so no heading, emphasis or hidden marker.
+        let whole = NSRange(location: 0, length: (textView.string as NSString).length)
+        #expect(textView.styler.map.blocks(in: whole).isEmpty)
+        let storage = try #require(textView.textStorage)
+        storage.enumerateAttribute(.font, in: whole) { value, _, _ in
+            let font = value as? NSFont
+            #expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
+            #expect(font?.familyName == NSFont.monospacedSystemFont(ofSize: 13, weight: .regular).familyName)
         }
+        storage.enumerateAttribute(.foregroundColor, in: whole) { value, _, _ in
+            #expect(value as? NSColor != NSColor.clear)
+        }
+        // Lines don't wrap, the view scrolls sideways, and each line has a number.
+        #expect(textView.textContainer?.widthTracksTextView == false)
+        #expect(textView.isHorizontallyResizable)
+        #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
+        let numbers = try #require(textView.enclosingScrollView?.verticalRulerView as? LineNumbers)
+        #expect(textView.enclosingScrollView?.rulersVisible == true)
+        #expect(numbers.lineStarts() == [0, 10, 11, 27, 47, 62, 87, 497])
+        #expect(!textView.isAutomaticQuoteSubstitutionEnabled && !textView.isContinuousSpellCheckingEnabled)
+        // The whole file is highlighted: "import" takes the keyword color.
+        let layout = try #require(textView.textLayoutManager)
+        // Compared by resolved value: a ThemeStore change, from a suite running beside this one, rebuilds the store's
+        // dynamic colors as new objects, so a color held across the wait would never equal the one painted after it.
+        func resolved(_ color: NSColor?) -> NSColor? {
+            var result: NSColor?
+            textView.effectiveAppearance.performAsCurrentDrawingAppearance { result = color?.usingColorSpace(.sRGB) }
+            return result
+        }
+        let area = NSRect(x: 0, y: 0, width: 600, height: 300)
+        let bitmap = try #require(textView.bitmapImageRepForCachingDisplay(in: area))
+        try await Self.until {
+            layout.ensureLayout(for: layout.documentRange)
+            // Colors are set when a line is drawn, and a window that is not on screen never draws: draw into a bitmap.
+            textView.cacheDisplay(in: area, to: bitmap)
+            var color: NSColor?
+            layout.enumerateRenderingAttributes(from: layout.documentRange.location, reverse: false) { _, attributes, _ in
+                color = attributes[.foregroundColor] as? NSColor
+                return false
+            }
+            return resolved(color) == resolved(ThemeStore.shared.color(.codeKeyword))
+        }
+        // The 400-character line widens the view past the clip view, and no further than the text.
+        let clip = try #require(textView.enclosingScrollView?.contentView.bounds.width)
+        #expect(textView.frame.width > clip)
+        #expect(textView.frame.width < 10_000)
+        // Tab inserts the file's four spaces.
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.insertTab(nil)
+        #expect(textView.string.hasPrefix("    import os"))
+
+        // File > Open's way in takes a file Launch Services has no type for.
+        let dockerfile = folder.url.appending(path: "Dockerfile")
+        let (document, error) = await Self.openDocument(dockerfile)
+        defer { document?.close() }
+        #expect(error == nil)
+        #expect(document?.fileType == MarkdownDocument.type)
+        #expect(CodeFile.language(of: dockerfile) == "dockerfile")
     }
 
-    /// A Typst source opens as code with the setting off, and its first line is drawn: the line numbers paint paper in
-    /// their own strip only, not over the text beside it.
+    /// A Typst source opens as code, and its first line is drawn: the line numbers paint paper in their own strip only,
+    /// not over the text beside it.
     @Test func aTypstSourceDrawsItsFirstLine() async throws {
         let folder = try Folder(Self.files(["brief.typ": "#set page(width: 10cm)\n= Brief\n\nThe queue retries #n times.\n"]))
         defer { try? FileManager.default.removeItem(at: folder.url) }
-        try await Self.setting(false) {
-            let controller = MainWindowController(folder: folder)
-            defer { (controller.document as? NSDocument)?.close() }
-            controller.open(folder.url.appending(path: "brief.typ"), newTab: false)
-            let textView = try #require(controller.textView)
-            #expect(textView.styler.code == "typ")
-            let scrollView = try #require(textView.enclosingScrollView)
-            let layout = try #require(textView.textLayoutManager)
-            var first: NSTextLayoutFragment?
-            layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
-                first = fragment
-                return false
-            }
-            let fragment = try #require(first)
-            let line = try #require(fragment.textLineFragments.first)
-            #expect(line.attributedString.string.hasPrefix("#set page(width: 10cm)"))
-
-            // The scroll view as the window draws it, line numbers and all: the first line's glyphs show.
-            scrollView.layoutSubtreeIfNeeded()
-            let bitmap = try #require(scrollView.bitmapImageRepForCachingDisplay(in: scrollView.bounds))
-            scrollView.cacheDisplay(in: scrollView.bounds, to: bitmap)
-            let origin = textView.textContainerOrigin
-            let glyphs = NSRect(origin: NSPoint(x: fragment.layoutFragmentFrame.minX + origin.x, y: fragment.layoutFragmentFrame.minY + origin.y), size: line.typographicBounds.size)
-            var rect = scrollView.convert(glyphs, from: textView)
-            if !scrollView.isFlipped { rect.origin.y = scrollView.bounds.height - rect.maxY }
-            let scale = CGFloat(bitmap.pixelsWide) / scrollView.bounds.width
-            var colors = Set<String>()
-            for x in Int(rect.minX * scale)..<Int(rect.maxX * scale) {
-                for y in Int(rect.minY * scale)..<Int(rect.maxY * scale) {
-                    if let color = bitmap.colorAt(x: x, y: y) { colors.insert(color.description) }
-                }
-            }
-            #expect(colors.count > 1)
+        let controller = MainWindowController(folder: folder)
+        defer { (controller.document as? NSDocument)?.close() }
+        controller.open(folder.url.appending(path: "brief.typ"), newTab: false)
+        let textView = try #require(controller.textView)
+        #expect(textView.styler.code == "typ")
+        let scrollView = try #require(textView.enclosingScrollView)
+        let layout = try #require(textView.textLayoutManager)
+        var first: NSTextLayoutFragment?
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+            first = fragment
+            return false
         }
+        let fragment = try #require(first)
+        let line = try #require(fragment.textLineFragments.first)
+        #expect(line.attributedString.string.hasPrefix("#set page(width: 10cm)"))
+
+        // The scroll view as the window draws it, line numbers and all: the first line's glyphs show.
+        scrollView.layoutSubtreeIfNeeded()
+        let bitmap = try #require(scrollView.bitmapImageRepForCachingDisplay(in: scrollView.bounds))
+        scrollView.cacheDisplay(in: scrollView.bounds, to: bitmap)
+        let origin = textView.textContainerOrigin
+        let glyphs = NSRect(origin: NSPoint(x: fragment.layoutFragmentFrame.minX + origin.x, y: fragment.layoutFragmentFrame.minY + origin.y), size: line.typographicBounds.size)
+        var rect = scrollView.convert(glyphs, from: textView)
+        if !scrollView.isFlipped { rect.origin.y = scrollView.bounds.height - rect.maxY }
+        let scale = CGFloat(bitmap.pixelsWide) / scrollView.bounds.width
+        var colors = Set<String>()
+        for x in Int(rect.minX * scale)..<Int(rect.maxX * scale) {
+            for y in Int(rect.minY * scale)..<Int(rect.maxY * scale) {
+                if let color = bitmap.colorAt(x: x, y: y) { colors.insert(color.description) }
+            }
+        }
+        #expect(colors.count > 1)
     }
 
     @Test func indentationFollowsTheFile() {
@@ -285,13 +259,6 @@ struct CodeFilesTests {
 
     // MARK: Helpers
 
-    private static func setting<T>(_ on: Bool, _ body: () async throws -> T) async rethrows -> T {
-        let was = UserDefaults.standard.object(forKey: CodeFile.key)
-        UserDefaults.standard.set(on, forKey: CodeFile.key)
-        defer { UserDefaults.standard.set(was, forKey: CodeFile.key) }
-        return try await body()
-    }
-
     private static func until(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(10)
         while !condition() {
@@ -325,7 +292,7 @@ struct CodeFilesTests {
         }
     }
 
-    /// A code file the change engine opens, in a window never shown, with the setting on while it opens.
+    /// A code file the change engine opens, in a window never shown.
     @MainActor private struct EngineFile {
         let folder: URL
         let url: URL
@@ -342,10 +309,7 @@ struct CodeFilesTests {
             document.engine = try ChangeEngine(store: folder.appending(path: "snapshots"))
             try document.read(from: url, ofType: MarkdownDocument.type)
             document.fileURL = url
-            let was = UserDefaults.standard.object(forKey: CodeFile.key)
-            UserDefaults.standard.set(true, forKey: CodeFile.key)
             document.makeWindowControllers()
-            UserDefaults.standard.set(was, forKey: CodeFile.key)
             textView = try #require(document.textView)
             live = try #require(document.live)
         }

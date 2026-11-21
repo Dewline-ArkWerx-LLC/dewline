@@ -24,6 +24,15 @@ struct SettingsPaneTests {
         }
     }
 
+    /// Open code files is gone: code files always open, and reading the settings drops what it left behind.
+    @Test func preferencesDropTheOpenCodeFilesSetting() {
+        withDefaults { defaults in
+            defaults.set(false, forKey: "DewlineOpenCodeFiles")
+            _ = Preferences(defaults: defaults)
+            #expect(defaults.object(forKey: "DewlineOpenCodeFiles") == nil)
+        }
+    }
+
     @Test func preferencesKeepWhatIsSetUnderTheirKeys() {
         withDefaults { defaults in
             let preferences = Preferences(defaults: defaults)
@@ -70,7 +79,6 @@ struct SettingsPaneTests {
             store.tabWidth = factory.tabWidth == 4 ? 2 : 4
             store.spellCheck = !factory.spellCheck
             preferences.linkPreviews = !Preferences.factory.linkPreviews
-            preferences.opensCodeFiles = !Preferences.factory.opensCodeFiles
 
             AppearancePane.restore(store)
             #expect(store.appearance == factory.appearance)
@@ -85,7 +93,6 @@ struct SettingsPaneTests {
             #expect(store.tabWidth == factory.tabWidth)
             #expect(store.spellCheck == factory.spellCheck)
             #expect(preferences.linkPreviews == Preferences.factory.linkPreviews)
-            #expect(preferences.opensCodeFiles == Preferences.factory.opensCodeFiles)
         }
     }
 

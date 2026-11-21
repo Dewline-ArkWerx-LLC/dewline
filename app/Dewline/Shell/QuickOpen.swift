@@ -138,16 +138,18 @@ struct FuzzyText: Sendable {
     }
 }
 
-/// A Markdown file Quick Open can offer, matched by its path under the open folder, or by its full path outside it.
+/// A note or code file Quick Open can offer, matched by its path under the open folder, or by its full path outside it.
 struct QuickOpenFile: Sendable {
     let url: URL
     let text: FuzzyText
-    /// Its place among recents, then pins; nil for other files.
+    let isCode: Bool
+    /// Its place among open tabs, then recents, then pins; nil for other files.
     var boost: Int?
 
     init(_ url: URL, path: String, boost: Int? = nil) {
         self.url = url
         text = FuzzyText(path)
+        isCode = !FolderEntry(url: url, isFolder: false).isMarkdown
         self.boost = boost
     }
 
@@ -165,7 +167,7 @@ struct QuickOpenResult: Sendable {
 }
 
 enum QuickOpen {
-    /// `files` with recents and pins (`boosted`, in that order) marked, and the ones outside `files` added after them.
+    /// `files` with open tabs, recents and pins (`boosted`, in that order) marked, and the ones outside `files` added after them.
     /// Files are compared by the path Quick Open shows, which names one file.
     static func merge(_ files: [QuickOpenFile], boosted: [URL], in folder: Folder?) -> [QuickOpenFile] {
         var rank: [String: Int] = [:]
@@ -183,9 +185,9 @@ enum QuickOpen {
         return merged + extra.filter { rank[$0.text.string] != nil }
     }
 
-    /// The files matching `query`: recents and pins first when their names hold its letters or it names a folder
-    /// with "/", then by match quality, then shorter paths. With no query, only recents and pins, in that order. Nil
-    /// when cancelled.
+    /// The files matching `query`: open tabs, recents and pins first when their names hold its letters or it names a
+    /// folder with "/", then notes before code, then by match quality, then shorter paths. With no query, only those
+    /// boosted, in order. Nil when cancelled.
     static func rank(_ query: String, in files: [QuickOpenFile], limit: Int = 200) -> [QuickOpenResult]? {
         let letters = FuzzyText.query(query)
         guard !letters.isEmpty else {
@@ -203,6 +205,7 @@ enum QuickOpen {
         matches.sort { a, b in
             let (x, y) = (files[a.index], files[b.index])
             if (a.boost == nil) != (b.boost == nil) { return a.boost != nil }
+            if a.boost == nil, x.isCode != y.isCode { return !x.isCode }
             if a.score != b.score { return a.score > b.score }
             if let p = a.boost, let q = b.boost { return p < q }
             if x.text.string.utf16.count != y.text.string.utf16.count { return x.text.string.utf16.count < y.text.string.utf16.count }
@@ -285,7 +288,7 @@ struct FileTree: Sendable {
     }
 }
 
-/// An open folder's Markdown files, kept in memory and current through FSEvents so Quick Open never waits on the
+/// An open folder's notes and code files, kept in memory and current through FSEvents so Quick Open never waits on the
 /// disk, and its git states. Its one watch on the folder keeps both current and tells the sidebars which folders
 /// changed. The folder's tabs share one; it lives while one of them holds it.
 @MainActor

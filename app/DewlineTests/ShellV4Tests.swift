@@ -60,6 +60,9 @@ struct ShellV4Tests {
         #expect(main.tabName == "Launch plan")
         #expect(main.savedState?.hasPrefix("Saved") == true)
         #expect(main.wordCount.hasSuffix("words"))
+        main.textView?.setSelectedRange(NSRange(location: 0, length: 0))
+        await settle(0.5)
+        #expect(main.statusBar.idle == "Launch plan.md:1:1", "the idle status bar names the caret's place")
     }
 
     @Test func eachTabsTitleRowHoldsTheWindowsTabs() async throws {
@@ -163,6 +166,11 @@ struct ShellV4Tests {
         #expect(bar.isHidden)
         bar.reserved = true
         #expect(!bar.isHidden)
+        bar.reserved = false
+        bar.idle = "docs/spec.md:3:5"
+        #expect(!bar.isHidden && bar.shown == nil)
+        #expect(MainWindowController.place("docs/spec.md", at: 9, in: "# A\n\nabcdef\n") == "docs/spec.md:3:5")
+        #expect(MainWindowController.place("a.md", at: 12, in: "# A\n\nabcdef\n") == "a.md:4:1")
     }
 
     @Test func quickOpenNamesANewNoteForWhatWasTyped() {

@@ -9,7 +9,7 @@ To watch it again: ⌘-click [Show me a change](dewline://demo), or choose Help 
 Changes from git, a sync app or another editor are marked the same way. [Settings > Agents](dewline://setup-hooks) sets up the hooks that name each agent; without them, an agent’s edit shows as ANOTHER APP.
 
 - Open a folder: ⌥⌘O
-- Find a note: ⇧⌘O
+- Find a note: ⌘P
 - New note: ⌘N
 
 This note is Dewline’s own, kept outside your folders. Type anywhere. It saves as you go.

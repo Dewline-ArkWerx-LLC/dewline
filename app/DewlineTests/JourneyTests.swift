@@ -740,7 +740,7 @@ struct JourneyTests {
         #expect(Export.Format.allCases.map(\.type.preferredFilenameExtension) == ["pdf", "docx", "html", "rtf", "odt", "epub", "tex", "md", "txt", "png"])
         #expect(Export.Format.allCases.map(\.name) == ["PDF", "Word", "HTML", "Rich Text", "OpenDocument", "EPUB", "LaTeX", "Markdown (portable)", "Plain Text", "PNG Image"])
 
-        // One File > Export… on ⇧⌘E, starting on PDF, and Print on ⌘P; a written export is what the status bar names.
+        // One File > Export… on ⇧⌘E, starting on PDF, and Print on ⌥⌘P; a written export is what the status bar names.
         let file = try #require(MainMenu.bar().main.items.first { $0.submenu?.title == "File" }?.submenu)
         let export = try #require(file.items.first { $0.title == "Export\u{2026}" })
         #expect(export.keyEquivalent == "E" && export.tag == Export.Format.pdf.rawValue)

@@ -32,7 +32,7 @@ macOS 26+ · Free to start · No account, no telemetry
 
 **Files and saves.** Edits save in place as plain Markdown. When something else changes the open file (git, a sync app, a script or a coding agent), Dewline marks each change and lets you keep or revert it. It snapshots the file before an outside change lands, and File > Earlier Versions… restores any snapshot.
 
-**Finding your way.** The sidebar starts at your folder, with + for a new note. Tabs, Quick Open (⇧⌘O), find in files (⇧⌘F) and a command palette for files, commands and settings (⇧⌘P).
+**Finding your way.** The sidebar starts at your folder, with + for a new note. Tabs, Quick Open (⌘P), find in files (⇧⌘F) and a command palette for files, commands and settings (⇧⌘P).
 
 **Looks.** Four themes, two light and two dark, and any font on your Mac for the body, headings and code.
 

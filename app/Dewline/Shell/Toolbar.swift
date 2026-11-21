@@ -80,7 +80,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             return item
         case Self.search:
             return Self.item(identifier, "Open Quickly", fades(ToolbarControl(Self.symbolButton(
-                "magnifyingglass", "Open Quickly", tip: "Open Quickly (\u{21E7}\u{2318}O)", action: #selector(AppDelegate.quickOpen(_:))))), priority: .user)
+                "magnifyingglass", "Open Quickly", tip: "Open Quickly (\u{2318}P)", action: #selector(AppDelegate.quickOpen(_:))))), priority: .user)
         case Self.newNote:
             return Self.item(identifier, "New Note", fades(ToolbarControl(Self.symbolButton(
                 "square.and.pencil", "New Note", tip: "New Note (\u{2318}N)", action: #selector(AppDelegate.newNote(_:))))), priority: .user)

@@ -2,6 +2,11 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
+- Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
+
 ## 0.6.1 (21 Nov 2026)
 
 View > Changes no longer crashes, code files and Source mode show their text again, and the first launch walks you through a real agent change.

@@ -182,12 +182,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// The empty page's Set Up Agent Hooks… button, or "Agent hooks are on.", once `dewline doctor` answers.
     private let hookButton = NSButton(title: "Set Up Agent Hooks\u{2026}", target: nil, action: #selector(setUpAgentHooks(_:)))
     private let hookNote = NSTextField(labelWithString: "Agent hooks are on.")
-    /// "Agent hooks are on." with Copy a Test Prompt under it.
-    private var hookLine: NSView?
+    /// Under Copy a Test Prompt: how its edit shows, with hooks or without.
+    private var hookHint: NSTextField?
 
-    /// The page of a folder with no note open: what waits for review in the folder, each note opening on Return or a
-    /// click, or with nothing waiting, what an agent's edit does and how to pick or make a note; then Open CLAUDE.md
-    /// (or README.md), the default, beside Set Up Agent Hooks… while no agent has them.
+    /// The page of a folder with no note open: what an agent's edit does, then what waits for review in the folder and
+    /// what git has uncommitted, each file opening on Return or a click, or with nothing listed, how to pick or make a
+    /// note; then Open CLAUDE.md (or README.md), the default, beside Set Up Agent Hooks… while no agent has them, and
+    /// Copy a Test Prompt.
     private func emptyPage(in folder: URL) -> NSView {
         func label(_ text: String, _ ink: Token) -> NSTextField {
             let label = NSTextField(wrappingLabelWithString: text)
@@ -204,12 +205,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             label("Pick a note in the sidebar, or press \u{2318}N\u{00A0}for\u{00A0}a\u{00A0}new\u{00A0}one.", .ink2),
         ]
         let waiting = WaitingNotes(in: folder, git: index?.git) { [weak self] url in self?.openAtFirstChange(url) }
-        waiting.changed = { empty in prose.forEach { $0.isHidden = !empty } }
-        let stack = NSStackView(views: [title, waiting] + prose)
+        waiting.changed = { empty in prose[1].isHidden = !empty }
+        let stack = NSStackView(views: [title, prose[0], waiting, prose[1]])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 6
         stack.setCustomSpacing(12, after: title)
+        stack.setCustomSpacing(12, after: prose[0])
         let buttons = NSStackView()
         buttons.distribution = .fillEqually
         buttons.spacing = 12
@@ -224,15 +226,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         buttons.addArrangedSubview(hookButton)
         hookNote.font = Chrome.label
         hookNote.textColor = Chrome.color(.ink2)
-        let tryIt = label("Run it in Claude Code here; the edit shows up marked.", .ink2)
+        hookNote.isHidden = true
+        let tryIt = label(Self.hookHint(on: false), .ink2)
+        hookHint = tryIt
         let copy = NSButton(title: "Copy a Test Prompt", target: self, action: #selector(copyTestPrompt(_:)))
         copy.toolTip = Self.testPrompt(in: folder)
-        let hooksOn = NSStackView(views: [hookNote, copy, tryIt])
-        hooksOn.orientation = .vertical
-        hooksOn.spacing = 6
-        hooksOn.isHidden = true
-        hookLine = hooksOn
-        for view in [buttons, hooksOn] {
+        let test = NSStackView(views: [hookNote, copy, tryIt])
+        test.orientation = .vertical
+        test.spacing = 6
+        for view in [buttons, test] {
             stack.addView(view, in: .center)
             stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
         }
@@ -258,8 +260,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             let on = await Task.detached { HookStatus.read(in: folder).any }.value
             guard let self else { return }
             hookButton.isHidden = on
-            hookLine?.isHidden = !on
+            hookNote.isHidden = !on
+            hookHint?.stringValue = Self.hookHint(on: on)
         }
+    }
+
+    /// How the test prompt's edit shows: named with hooks, as Another app without.
+    static func hookHint(on: Bool) -> String {
+        on ? "Run it in Claude Code here; the edit shows up marked." : "Run it in Claude Code here; without hooks, the edit lands marked as Another app."
     }
 
     /// A prompt that makes an agent edit a note here, for the first marked change.
@@ -520,6 +528,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(wakeTitleRow), name: NSText.didEndEditingNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(countWords), name: NSTextView.didChangeSelectionNotification, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(showPlace), name: NSTextView.didChangeSelectionNotification, object: textView)
         NotificationCenter.default.addObserver(self, selector: #selector(updateOutline), name: BlockMap.didParse, object: textView.styler.map)
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         self.textView = textView
@@ -536,12 +545,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         updateTitle()
         countWords()
+        showPlace()
         countLoads()
         tabs?.post()
         window?.makeFirstResponder(textView)
     }
 
+    private var placeUpdate: Task<Void, Never>?
+
+    /// The status bar's idle line in a folder window, once the caret rests: the note's path from the folder and the
+    /// caret's line and column.
+    @objc private func showPlace() {
+        placeUpdate?.cancel()
+        guard let folder, let url = (document as? NSDocument)?.fileURL else { return statusBar.idle = nil }
+        let root = folder.url.path + "/"
+        let path = url.standardizedFileURL.path.hasPrefix(root) ? String(url.standardizedFileURL.path.dropFirst(root.count)) : url.lastPathComponent
+        placeUpdate = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, let self, let textView else { return }
+            statusBar.idle = Self.place(path, at: textView.selectedRange().location, in: textView.textStorage!.mutableString)
+        }
+    }
+
+    /// "docs/spec.md:12:4": `path`, then the line and column of `index` in `text`, from 1.
+    static func place(_ path: String, at index: Int, in text: NSString) -> String {
+        let start = text.lineRange(for: NSRange(location: min(index, text.length), length: 0)).location
+        var line = 1
+        text.enumerateSubstrings(in: NSRange(location: 0, length: start), options: [.byLines, .substringNotRequired]) { _, _, _, _ in line += 1 }
+        return "\(path):\(line):\(index - start + 1)"
+    }
+
     private func setPage(_ content: NSView) {
+        placeUpdate?.cancel()
+        statusBar.idle = nil
         pageContent?.removeFromSuperview()
         pageContent = content
         page.addSubview(content)
@@ -1161,16 +1197,25 @@ enum LoadsPopover {
     }
 }
 
-/// The notes in a folder with something to review, each once under the first that applies: marked changes in an open
-/// note, changes made while it was closed, or a difference from the last commit. Up to eight rows show at once;
-/// Return or a click opens the note.
+/// The files in a folder with something to look at, each once under the first that applies: "Waiting for you", marked
+/// changes in an open note or changes made while it was closed, led by who wrote them; then "Uncommitted in git", every
+/// file that differs from the last commit. Up to eight rows show at once; Return or a click opens the file.
 @MainActor
 final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelegate {
+    /// A section's heading when `url` is nil, else a file: its path from the folder, the writer of a change waiting
+    /// in it, and what waits.
+    struct Row {
+        var url: URL?
+        var text: String
+        var writer: MarkWriter?
+        var detail = ""
+    }
+
     private let folder: URL
     private weak var git: GitStates?
     private let open: (URL) -> Void
     private let table = ReturnTable()
-    private(set) var rows: [(url: URL, detail: String)] = []
+    private(set) var rows: [Row] = []
     private lazy var height = heightAnchor.constraint(equalToConstant: 0)
     /// Called after each reload with whether the list is empty.
     var changed: (Bool) -> Void = { _ in }
@@ -1207,33 +1252,40 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     }
 
     @objc func reload() {
-        var rows: [(url: URL, detail: String)] = []
+        var waiting: [Row] = []
+        var uncommitted: [Row] = []
         var seen: Set<String> = []
-        func add(_ url: URL, _ detail: String) {
+        func row(_ url: URL) -> Row? {
             let path = url.standardizedFileURL.path
-            guard path.hasPrefix(folder.path + "/"), seen.insert(path).inserted else { return }
-            rows.append((url, detail))
+            guard path.hasPrefix(folder.path + "/"), seen.insert(path).inserted else { return nil }
+            return Row(url: url, text: String(path.dropFirst(folder.path.count + 1)))
         }
         for live in NSDocumentController.shared.documents.compactMap({ ($0 as? MarkdownDocument)?.live }) {
             let marked = live.changes.values.filter(\.marked)
-            if let first = marked.first { add(live.url, "\(MarkWriter(first.origin).name) \u{00B7} \(marked.count) to review") }
+            guard let first = marked.first, var row = row(live.url) else { continue }
+            (row.writer, row.detail) = (MarkWriter(first.origin), "\(marked.count) to review")
+            waiting.append(row)
         }
         for note in Review.closedNotes() {
             if case .git = note.origin { continue }
-            add(note.url, "\(MarkWriter(note.origin).name) \u{00B7} changed while closed")
+            guard var row = row(note.url) else { continue }
+            (row.writer, row.detail) = (MarkWriter(note.origin), "changed while closed")
+            waiting.append(row)
         }
-        let notes = FolderEntry.markdownExtensions.union(FolderEntry.dialectExtensions)
-        for (url, state) in git?.changed ?? [] where notes.contains(url.pathExtension.lowercased()) {
-            switch state {
-            case .new: add(url, "New since the last commit")
-            case .conflicted: add(url, "Merge conflict")
-            case .deleted: add(url, "Deleted since the last commit")
-            case .modified, .renamed: add(url, "Modified since the last commit")
+        for (url, state) in git?.changed ?? [] {
+            guard var row = row(url) else { continue }
+            row.detail = switch state {
+            case .new: "New"
+            case .conflicted: "Merge conflict"
+            case .deleted: "Deleted"
+            case .modified, .renamed: "Modified"
             }
+            uncommitted.append(row)
         }
-        self.rows = rows
+        rows = (waiting.isEmpty ? [] : [Row(text: "Waiting for you (\(waiting.count))")] + waiting)
+            + (uncommitted.isEmpty ? [] : [Row(text: "Uncommitted in git (\(uncommitted.count))")] + uncommitted)
         table.reloadData()
-        if table.selectedRow < 0, !rows.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
+        if table.selectedRow < 0, let first = rows.firstIndex(where: { $0.url != nil }) { table.selectRowIndexes([first], byExtendingSelection: false) }
         height.constant = CGFloat(min(rows.count, 8)) * table.rowHeight
         isHidden = rows.isEmpty
         changed(rows.isEmpty)
@@ -1244,8 +1296,7 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     }
 
     private func openRow(_ row: Int) {
-        guard rows.indices.contains(row) else { return }
-        let url = rows[row].url
+        guard rows.indices.contains(row), let url = rows[row].url else { return }
         guard git?.state(of: url) == .deleted else { return open(url) }
         let folder = folder
         Task { [weak self] in
@@ -1279,30 +1330,48 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         rows.count
     }
 
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        rows[row].url != nil
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        rows[row].url == nil ? NSTableRowView() : WaitingRowView()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let (url, detail) = rows[row]
-        let relative = String(url.standardizedFileURL.path.dropFirst(folder.path.count + 1))
-        let name = NSTextField(labelWithString: relative)
-        name.font = Chrome.label
-        name.textColor = Chrome.color(.ink)
+        let row = rows[row]
+        let name = NSTextField(labelWithString: row.text)
+        name.font = row.url == nil ? Chrome.status : Chrome.label
+        name.textColor = Chrome.color(row.url == nil ? .ink2 : .ink)
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let note = NSTextField(labelWithString: detail)
+        let note = NSTextField(labelWithString: row.detail)
         note.font = Chrome.status
         note.textColor = Chrome.color(.ink2)
         note.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let line = NSStackView(views: [name, note])
+        let writer = NSTextField(labelWithAttributedString: row.writer?.stamp ?? NSAttributedString())
+        writer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let line = NSStackView(views: (row.writer == nil ? [] : [writer]) + [name, note])
         line.spacing = 12
         line.translatesAutoresizingMaskIntoConstraints = false
         let cell = NSTableCellView()
         cell.addSubview(line)
         NSLayoutConstraint.activate([
-            line.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-            line.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            line.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -14),
             line.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
-        cell.setAccessibilityLabel("\(relative), \(detail)")
+        cell.setAccessibilityLabel([row.writer?.name, row.text, row.detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
         return cell
+    }
+}
+
+/// A waiting file's row: its selection is the wash, never the solid accent, so the writer's ink and the text keep their
+/// colors.
+private final class WaitingRowView: StationRowView {
+    override var isEmphasized: Bool {
+        get { false }
+        set {}
     }
 }
 

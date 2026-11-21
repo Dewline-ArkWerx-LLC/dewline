@@ -3,7 +3,8 @@ import MdCore
 
 /// A paragraph that is only an http or https address, `https://…` or `<https://…>`, drawn as a card with the page's
 /// title and picture while the selection is outside it. The address stays in the storage, hidden, and the card never
-/// changes the file. Pages load only for cards in the viewport.
+/// changes the file. Pages load only for cards in the viewport. A paragraph that is only a `dewline:` link, as
+/// Welcome.md's "Show me a change", draws as a button while the selection is outside it.
 @MainActor
 final class LinkCards {
     weak var textView: EditorTextView?
@@ -17,6 +18,10 @@ final class LinkCards {
     private var loadScheduled = false
 
     static let maxWidth: CGFloat = 480
+    /// What `.dewlineCodeChip` holds on a button's label, which the view fills as a button rather than a code chip.
+    static let button = "button"
+    /// The space each side of a button's label.
+    static let buttonPad: CGFloat = 10
 
     private struct Key: Hashable {
         let url: URL
@@ -53,6 +58,20 @@ final class LinkCards {
             var end = NSMaxRange(block.range)
             while end > block.range.location, [0x0A, 0x0D].contains(text.character(at: end - 1)) { end -= 1 }
             return (NSRange(location: block.range.location, length: end - block.range.location), url)
+        }
+    }
+
+    /// The paragraph blocks that are only a `dewline:` link, as their link spans, in document offsets.
+    private func buttons(in range: NSRange, of text: NSString) -> [SyntaxSpan] {
+        map.blocks(in: range).compactMap { block in
+            guard block.kind == .paragraph, let link = block.spans.first(where: { $0.kind == .link })?.shifted(by: block.range.location) else { return nil }
+            var end = NSMaxRange(block.range)
+            while end > block.range.location, [0x0A, 0x0D].contains(text.character(at: end - 1)) { end -= 1 }
+            let close = NSRange(location: NSMaxRange(link.content), length: end - NSMaxRange(link.content))
+            guard link.range.location == block.range.location, NSMaxRange(link.range) == end, close.length > 0,
+                text.substring(with: close).lowercased().hasPrefix("](dewline:")
+            else { return nil }
+            return link
         }
     }
 
@@ -97,6 +116,19 @@ final class LinkCards {
             lines.minimumLineHeight = picture.size.height
             lines.maximumLineHeight = picture.size.height
             styled.addAttribute(.paragraphStyle, value: lines, range: paragraph)
+        }
+        for link in buttons(in: whole, of: storage.mutableString) {
+            let label = NSRange(location: link.content.location - offset, length: link.content.length)
+            guard label.location > 0, label.length > 0, NSMaxRange(label) <= styled.length,
+                !Self.touches(NSRange(location: link.range.location - offset, length: link.range.length), selection)
+            else { continue }
+            styled.removeAttribute(.underlineStyle, range: label)
+            styled.addAttributes([.foregroundColor: ThemeStore.shared.color(.accent), .dewlineCodeChip: Self.button], range: label)
+            // The hidden "[" before the label and the label's last character make room for the button's sides.
+            for at in [label.location - 1, NSMaxRange(label) - 1] {
+                let kern = styled.attribute(.kern, at: at, effectiveRange: nil) as? CGFloat ?? 0
+                styled.addAttribute(.kern, value: kern + Self.buttonPad, range: NSRange(location: at, length: 1))
+            }
         }
         scheduleLoad()
     }

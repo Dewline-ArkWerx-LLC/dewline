@@ -120,7 +120,7 @@ struct JourneyTests {
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
         #expect(guide.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code, Codex or Cursor edits a note"))
-        #expect(guide.contains("[Show me a change](dewline://demo), or choose Help > Replay the Demo."))
+        #expect(guide.contains("Help > Replay the Demo:\n\n[Show me a change](dewline://demo)\n\n"), "the demo link alone, drawn as a button")
         #expect(guide.contains("[Settings > Agents](dewline://setup-hooks)"))
         #expect(guide.contains(Welcome.replaced))
         #expect(guide.contains(Welcome.anchor))
@@ -689,9 +689,11 @@ struct JourneyTests {
         #expect(sheet.sheet.title == "Earlier Versions")
         #expect(EarlierVersions.title(of: tab.live.snapshots[0]).hasPrefix("Today, "))
         var seen: Set<String> = []
-        for index in tab.live.snapshots.indices {
+        for index in sheet.rows.indices {
             await sheet.select(index)
-            if let text = sheet.text { seen.insert(text) }
+            guard let text = sheet.text else { continue }
+            seen.insert(text)
+            #expect(sheet.restore.isEnabled == (text != tab.textView.string), "Restore is off for the current text")
         }
         #expect(seen.isSuperset(of: versions + [typed, last]), "\(seen.sorted()) from \(tab.live.snapshots.map(\.origin))")
 
@@ -702,7 +704,7 @@ struct JourneyTests {
         #expect(struck == NSUnderlineStyle.single.rawValue)
 
         // The oldest version, restored as one undoable edit.
-        await sheet.select(tab.live.snapshots.count - 1)
+        await sheet.select(sheet.rows.count - 1)
         let target = try #require(sheet.text)
         sheet.restoreSelected()
         await waitForMain { tab.textView.string == target }
@@ -710,9 +712,9 @@ struct JourneyTests {
         #expect(tab.window.isVisible == false)
     }
 
-    /// The sheet's diff of identical texts says so, and an empty history says there is nothing yet.
+    /// The sheet's diff of identical texts is the text, unmarked.
     @Test func j6EarlierVersionsSayWhenNothingDiffers() {
-        #expect(EarlierVersions.difference(from: "# A\n", to: "# A\n").string == "Same as the current text.")
+        #expect(EarlierVersions.difference(from: "# A\n\nB.\n", to: "# A\n\nB.\n").string == "  # A\n  \n  B.\n")
         #expect(EarlierVersions.writer(.external) == "Another app")
     }
 

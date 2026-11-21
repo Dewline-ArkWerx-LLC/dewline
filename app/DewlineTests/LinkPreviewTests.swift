@@ -167,6 +167,20 @@ private func until(_ condition: () -> Bool) async {
         }
     }
 
+    /// A dewline: link alone in its paragraph draws as a button, with room each side and no underline, until the caret
+    /// goes into it.
+    @Test func aLoneDewlineLinkIsAButton() {
+        let sandbox = Sandbox()
+        let text = "Intro\n\n[Show me a change](dewline://demo)\n"
+        let editor = Editor(text, caret: 0, previews: sandbox.previews(Pages()))
+        let index = (text as NSString).range(of: "Show me").location
+        #expect(editor.attribute(.dewlineCodeChip, at: index) as? String == LinkCards.button)
+        #expect(editor.attribute(.underlineStyle, at: index) as? Int ?? 0 == 0)
+        #expect(editor.attribute(.kern, at: index - 1) as? CGFloat == LinkCards.buttonPad)
+        editor.place(index + 2)
+        #expect(editor.attribute(.dewlineCodeChip, at: index) == nil, "the caret shows the link")
+    }
+
     /// The card shows the host until the page arrives, then its title and picture; the caret in it shows the address;
     /// the address is fetched once however many cards show it, and the bytes never change.
     @Test func aBareAddressBecomesACardOnceItsPageArrives() async throws {

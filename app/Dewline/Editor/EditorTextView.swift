@@ -291,21 +291,27 @@ final class EditorTextView: CaretTextView {
     }
 
     /// Fills a rounded chip behind each code span in `visible`, line by line, under the change marks so a change's
-    /// wash and underline run on across it.
+    /// wash and underline run on across it; a `dewline:` link alone in its paragraph gets a button, the accent at 14%
+    /// with a 6 pt radius, over the room its kerning leaves each side.
     private func drawCodeChips(in visible: NSRange) {
         let storage = textStorage!
         guard let layout = textLayoutManager, let content = layout.textContentManager else { return }
-        ThemeStore.shared.color(.codeBackground).setFill()
+        let accent = ThemeStore.shared.color(.accent)
         storage.enumerateAttribute(.dewlineCodeChip, in: visible) { value, range, _ in
             guard value != nil, let font = storage.attribute(.font, at: NSMaxRange(range) - 1, effectiveRange: nil) as? NSFont,
                 let start = content.location(content.documentRange.location, offsetBy: range.location),
                 let end = content.location(start, offsetBy: range.length), let text = NSTextRange(location: start, end: end)
             else { return }
+            let button = value as? String == LinkCards.button
+            (button ? accent.withAlphaComponent(0.14) : ThemeStore.shared.color(.codeBackground)).setFill()
             layout.enumerateTextSegments(in: text, type: .standard, options: []) { _, frame, baseline, _ in
                 guard frame.width >= 0.5 else { return true }
-                let top = frame.minY + baseline - font.ascender - 2
-                let chip = NSRect(x: frame.minX - 1, y: top, width: frame.width + 2, height: font.ascender - font.descender + 4)
-                NSBezierPath(roundedRect: chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), xRadius: 3, yRadius: 3).fill()
+                let (pad, rise, radius): (CGFloat, CGFloat, CGFloat) = button ? (LinkCards.buttonPad, 5, 6) : (1, 2, 3)
+                let chip = NSRect(
+                    x: frame.minX - pad, y: frame.minY + baseline - font.ascender - rise, width: frame.width + (button ? pad : 2),
+                    height: font.ascender - font.descender + 2 * rise
+                )
+                NSBezierPath(roundedRect: chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), xRadius: radius, yRadius: radius).fill()
                 return true
             }
         }

@@ -1,12 +1,12 @@
 # Welcome to Dewline
 
-Try it: [Show me a change](dewline://demo)
-
-When Claude Code, Codex or Cursor edits a note, Dewline marks the change, names the agent, and lets you keep or revert it.
+When Claude Code, Codex or Cursor edits a note, Dewline marks the change, names the agent and lets you keep or revert it.
 
 A marked change is already saved. Keep clears the mark; Revert puts the old text back.
 
-Changes from git, a sync app or another editor are marked the same way. [Settings > Agents](dewline://setup-hooks) sets up the hooks that name each agent; without them, an agent’s edit shows as Another app.
+To watch it again: ⌘-click [Show me a change](dewline://demo), or choose Help > Replay the Demo.
+
+Changes from git, a sync app or another editor are marked the same way. [Settings > Agents](dewline://setup-hooks) sets up the hooks that name each agent; without them, an agent’s edit shows as ANOTHER APP.
 
 - Open a folder: ⌥⌘O
 - Find a note: ⇧⌘O

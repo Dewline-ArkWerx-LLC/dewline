@@ -1,9 +1,11 @@
 internal import DewlineFFIBindings
 import Foundation
 
-/// A file's state against HEAD and the index, as git status reports it.
+/// A file's state against HEAD and the index, as git status reports it. A new file is staged, or added with intent, or
+/// untracked.
 public enum GitFileState: Sendable, Equatable {
-    case modified, new, deleted, renamed, conflicted
+    case modified, deleted, renamed, conflicted
+    case new(staged: Bool)
 }
 
 public struct FolderGitStatus: Sendable, Equatable {
@@ -12,8 +14,10 @@ public struct FolderGitStatus: Sendable, Equatable {
     /// The files that differ from HEAD or the index, by their "/"-separated paths from the folder. An untracked folder
     /// holding no tracked file is one entry.
     public let files: [String: GitFileState]
-    /// The commits HEAD's branch has that its upstream lacks; nil without an upstream.
+    /// The commits HEAD's branch has that its upstream lacks, and those the upstream has that it lacks; nil without an
+    /// upstream.
     public let ahead: Int?
+    public let behind: Int?
 }
 
 /// The git state of the files under `folder`, or nil when the folder is in no repository or the repository can't be
@@ -25,14 +29,16 @@ public func gitStatus(of folder: URL) -> FolderGitStatus? {
             files: Dictionary(uniqueKeysWithValues: status.files.map { file in
                 let state: GitFileState = switch file.state {
                 case .modified: .modified
-                case .new: .new
+                case .added: .new(staged: true)
+                case .untracked: .new(staged: false)
                 case .deleted: .deleted
                 case .renamed: .renamed
                 case .conflicted: .conflicted
                 }
                 return (file.path, state)
             }),
-            ahead: status.ahead.map(Int.init)
+            ahead: status.ahead.map(Int.init),
+            behind: status.behind.map(Int.init)
         )
     }
 }

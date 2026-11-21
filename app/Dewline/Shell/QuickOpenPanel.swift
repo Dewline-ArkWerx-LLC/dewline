@@ -1,9 +1,9 @@
 import AppKit
 
 /// The palette: one opaque Station panel over the window in front. Shift-Cmd-P opens it on ">",
-/// the menu bar's enabled commands and the settings; Shift-Cmd-O opens it empty, which finds Markdown files by name in
-/// the window's folder, Recents and Pinned. "@" lists the open file's headings, ":" goes to a line, "#" finds headings
-/// across the folder and "?" lists these prefixes; "notes@intro" and "notes:42" reach into a file. A typed prefix
+/// the menu bar's enabled commands and the settings; Shift-Cmd-O opens it empty, which finds notes and code files by
+/// name in the window's open tabs, its folder, Recents and Pinned. "@" lists the open file's headings, ":" goes to a
+/// line, "#" finds headings across the folder and "?" lists these prefixes; "notes@intro" and "notes:42" reach into a file. A typed prefix
 /// turns into a scope chip in front of the field, and Delete on the empty field takes it back.
 final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private static var shared: QuickOpenPanel?
@@ -87,7 +87,8 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private var scope: Character?
     /// Files with an agent's undecided changes in any open document, by path, with the writer of the latest.
     private var touched: [String: (url: URL, writer: MarkWriter)] = [:]
-    /// How many of `boosted` are recents; the rest are pins.
+    /// How many of `boosted` are open tabs, and how many recents after them; the rest are pins.
+    private var tabCount = 0
     private var recentCount = 0
 
     /// The window in front, which files open in.
@@ -97,7 +98,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private var folder: Folder?
     private weak var index: FolderIndex?
     private var recents: [String: Date] = [:]
-    /// Recent files, then pinned ones.
+    /// The window's open tabs, then recent files, then pinned ones.
     private var boosted: [URL] = []
     private var files: [QuickOpenFile] = []
     private var commands: [PaletteCommand] = []
@@ -244,7 +245,9 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         let isFile = { (url: URL) in FolderEntry(url: url, isFolder: false).opens && FileManager.default.fileExists(atPath: url.path) }
         let visits = Library.recents.filter { isFile($0.url) }
         recents = Dictionary(visits.map { ($0.url.path, $0.date) }) { first, _ in first }
-        boosted = visits.map(\.url) + Library.pins.filter(isFile)
+        let tabs = (controller?.tabs?.tabs ?? []).compactMap { ($0.document as? NSDocument)?.fileURL }.filter(isFile)
+        boosted = tabs + visits.map(\.url) + Library.pins.filter(isFile)
+        tabCount = tabs.count
         recentCount = visits.count
         touched = Self.touched()
         let menu = NSApp.mainMenu.map { MenuCommand.all(in: $0, excluding: #selector(AppDelegate.showCommandPalette(_:))) } ?? []
@@ -420,7 +423,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
                 return ranked.map { .heading($0.heading, positions: $0.positions) }
             }
         case .files(let text):
-            chrome("Quick Open", placeholder: "Find a note. Type > for commands.")
+            chrome("Quick Open", placeholder: "Find a note or code file. Type > for commands.")
             if text.allSatisfy(\.isWhitespace) {
                 show(restingFileRows())
             } else {
@@ -430,10 +433,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
                 }
             }
         case .fileLine(let text, let line):
-            chrome("Go to Line in File", placeholder: "Find a note. Type > for commands.")
+            chrome("Go to Line in File", placeholder: "Find a note or code file. Type > for commands.")
             run { panel in await Self.ranked(text, in: panel.files)?.map { .file($0, line: line) } }
         case .fileHeadings(let text, let heading):
-            chrome("Go to Heading in File", placeholder: "Find a note. Type > for commands.")
+            chrome("Go to Heading in File", placeholder: "Find a note or code file. Type > for commands.")
             run { panel in
                 guard let top = await Self.ranked(text, in: panel.files)?.first else { return nil }
                 let headings = await panel.headings(of: top.file)
@@ -452,12 +455,14 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         placeholder(text)
     }
 
-    /// With nothing typed: files with an agent's changes (three at most), then recents, then pins.
+    /// With nothing typed: open tabs, then recents, then pins.
     private func restingFileRows() -> [Row] {
         var rows: [Row] = []
         let rest = QuickOpen.rank("", in: files) ?? []
-        let recent = rest.filter { ($0.file.boost ?? 0) < recentCount }
-        let pinned = rest.filter { ($0.file.boost ?? 0) >= recentCount }
+        let open = rest.filter { ($0.file.boost ?? 0) < tabCount }
+        let recent = rest.filter { (tabCount..<tabCount + recentCount).contains($0.file.boost ?? 0) }
+        let pinned = rest.filter { ($0.file.boost ?? 0) >= tabCount + recentCount }
+        if !open.isEmpty { rows += [.header("Open")] + open.map { .file($0, line: nil) } }
         if !recent.isEmpty { rows += [.header("Recent")] + recent.map { .file($0, line: nil) } }
         if !pinned.isEmpty { rows += [.header("Pinned")] + pinned.map { .file($0, line: nil) } }
         return rows
@@ -468,7 +473,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private func mixedRows(_ found: [QuickOpenResult], commands hits: [PaletteHit]) -> [Row] {
         let commands = hits.filter { !$0.positions.isEmpty }.prefix(3)
         let groups: [(String, [Row])] = [
-            ("Notes", found.map { .file($0, line: nil) }),
+            ("Files", found.map { .file($0, line: nil) }),
             ("Commands", commands.map(Row.command)),
         ].filter { !$0.1.isEmpty }
         guard groups.count > 1 else { return groups.first?.1 ?? [] }
@@ -578,10 +583,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case .folderHeadings: return folder == nil ? "Open a folder to find headings across it." : "No headings match."
         case .fileHeadings: return "No heading matches in that file."
         case .files(let text) where text.allSatisfy(\.isWhitespace):
-            if let folder { return "Type a name to find a note in \(FileManager.default.displayName(atPath: folder.url.path))." }
-            return "Type a name to find a note you opened or pinned."
+            if let folder { return "Type a name to find notes and code in \(FileManager.default.displayName(atPath: folder.url.path))." }
+            return "Type a name to find a file you opened or pinned."
         case .files(let text), .fileLine(let text, _):
-            return index != nil && index?.files == nil ? "Listing notes…" : "No notes match \(Self.quoted(text))."
+            return index != nil && index?.files == nil ? "Listing files…" : "No files match \(Self.quoted(text))."
         }
     }
 
@@ -886,16 +891,18 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             let name = path.substring(from: text.nameStart)
             let folderPath = text.nameStart > 0 ? path.substring(to: text.nameStart - 1) : folder.map { FileManager.default.displayName(atPath: $0.url.path) } ?? ""
             let writer = touched[result.file.url.path]?.writer
-            let detail = line.map { "line \($0)" } ?? recents[result.file.url.path].map { relativeTime($0) } ?? (result.file.boost != nil ? "pinned" : "")
+            let place = result.file.boost.map { $0 < tabCount ? "open" : $0 >= tabCount + recentCount ? "pinned" : "" } ?? ""
+            let detail = line.map { "line \($0)" } ?? writer.map { "\($0.name) changes waiting" }
+                ?? recents[result.file.url.path].map { relativeTime($0) } ?? place
             let positions = result.positions.compactMap { $0 >= text.nameStart ? $0 - text.nameStart : nil }
-            content.lead = writer.map { _ in .dot(Chrome.color(.accent)) } ?? .symbol("doc.text")
+            content.lead = writer.map { .dot($0.color) } ?? .symbol("doc.text")
             let style: PaletteCell.Segment.Style = FolderEntry(url: result.file.url, isFolder: false).isCode ? .code : .title
             content.title = [.init(name, positions: positions, style: style, dimUnmatched: !positions.isEmpty)]
             let folderName = (folderPath as NSString).lastPathComponent
             content.subtitle = folderName
             content.trailing = .text(detail)
             content.hints = [("↩", "open"), ("⌘↩", "new tab")]
-            content.spoken = spoken([name, folderPath, writer.map { "changed by \($0.name)" }, detail])
+            content.spoken = spoken([name, folderPath, detail])
         case .command(let hit):
             let command = hit.command
             let value = command.value?()

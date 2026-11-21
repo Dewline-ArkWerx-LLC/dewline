@@ -1,7 +1,7 @@
 import AppKit
 
-/// Source and config files, which open as highlighted code while Settings > Editor's "Open code files" is on. Off,
-/// they list and open as they always did.
+/// Source and config files, which list and open as highlighted code. Settings > Editor's "Open code files" lets Finder
+/// and File > Open open them too.
 enum CodeFile {
     static let key = "DewlineOpenCodeFiles"
 
@@ -35,15 +35,15 @@ enum CodeFile {
         return extensions.contains(ext) ? ext : nil
     }
 
-    /// Sources Dewline typesets, which show as code whenever they open, whatever the setting.
+    /// Sources Dewline typesets.
     static let typeset: Set<String> = ["typ", "tex"]
 
-    /// The language of a code file that opens as code now; nil for a note, or for any other file while the setting is off.
+    /// The language a code file opens as; nil for a note.
     static func opened(_ url: URL) -> String? {
-        language(of: url).flatMap { isOn || typeset.contains($0) ? $0 : nil }
+        language(of: url)
     }
 
-    /// Why `url` doesn't open: it is code and the setting is off.
+    /// Why `url` doesn't open from Finder or File > Open: it is code and the setting is off.
     static func refusal(_ url: URL) -> CocoaError? {
         guard !isOn, !FolderEntry(url: url, isFolder: false).isMarkdown, let language = language(of: url) else { return nil }
         return CocoaError(.fileReadUnknown, userInfo: [

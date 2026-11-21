@@ -9,19 +9,19 @@ struct CodeFilesTests {
     private static let python = "import os\n\n# Not a heading\ndef main(**kwargs):\n    if kwargs:\n        print(\"*a* _b_\")\n"
         + "long = '\(String(repeating: "a", count: 400))'\n"
 
-    @Test func offCodeFilesStayHiddenAndAreRefused() async throws {
+    @Test func offCodeFilesListButFinderIsRefused() async throws {
         let folder = try Folder(Self.files(["notes.md": "# Notes\n", "main.py": Self.python, "Dockerfile": "FROM swift\n"]))
         defer { try? FileManager.default.removeItem(at: folder.url) }
         try await Self.setting(false) {
-            #expect(Self.quickOpenNames(folder) == ["notes.md"])
+            #expect(Self.quickOpenNames(folder) == ["Dockerfile", "main.py", "notes.md"])
             let entries = folder.children(of: folder.url).entries
-            #expect(entries.filter(\.opens).map(\.url.lastPathComponent) == ["notes.md"])
+            #expect(entries.filter(\.opens).map(\.url.lastPathComponent) == ["Dockerfile", "main.py", "notes.md"])
             #expect(entries.filter(\.isCode).map(\.url.lastPathComponent) == ["Dockerfile", "main.py"])
             let refusal = try #require(CodeFile.refusal(folder.url.appending(path: "main.py")))
             #expect(refusal.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String == "Turn on Open code files in Settings to open py files.")
             #expect(CodeFile.refusal(folder.url.appending(path: "notes.md")) == nil)
-            // A Typst or TeX source that opens shows as code.
-            #expect(CodeFile.opened(folder.url.appending(path: "main.py")) == nil)
+            // What the sidebar or Quick Open opens shows as code.
+            #expect(CodeFile.opened(folder.url.appending(path: "main.py")) == "py")
             #expect(CodeFile.opened(folder.url.appending(path: "brief.typ")) == "typ")
         }
         await Self.setting(false) {

@@ -5,6 +5,7 @@ What changed in each Dewline release, newest first.
 ## Unreleased
 
 - The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
+- Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
 
 ## 0.7.0 (22 Nov 2026)
 

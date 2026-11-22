@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- In a note too short to scroll, Source keeps prose's baselines at prose's line pitch instead of setting every line 2 pt lower.
+
 ## 0.7.1 (22 Nov 2026)
 
 Code-file changes read as a diff, a change waiting off screen keeps its mark at the window's edge, and writer badges count only what is left to review.

@@ -127,9 +127,14 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
             return Self.base.merging([.font: font, .paragraphStyle: style]) { $1 }
         }
         guard showsSource else { return Self.base }
-        return Self.base.merging([
-            .font: Self.code(matching: Self.bodyFont), .paragraphStyle: ThemeStore.shared.paragraphStyle(lineHeight: sourceLineHeight),
-        ]) { $1 }
+        // TextKit 2 sets a fixed-height line's baseline its font's descender, to the point, above the line's bottom. A
+        // Source line is as much shorter than prose's as prose's descender is deeper, so its baseline sits where prose's
+        // does, and the rest of its pitch comes after it.
+        let body = Self.bodyFont, font = Self.code(matching: body)
+        let height = ThemeStore.shared.bodyLineHeight - (-body.descender).rounded() + (-font.descender).rounded()
+        let style = ThemeStore.shared.paragraphStyle(lineHeight: height).mutableCopy() as! NSMutableParagraphStyle
+        style.lineSpacing = sourceLineHeight - height
+        return Self.base.merging([.font: font, .paragraphStyle: style]) { $1 }
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? {

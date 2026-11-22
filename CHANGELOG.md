@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Earlier Versions shows each change with two lines around it, word by word in the writer's color, says under each row what it changed ("+12 words · Backoff"), folds an agent's turn into one row, shows a pin only where it applies, and fits a 620 pt window. Mermaid labels use the text font in 6 pt boxes, H1 tracking loosens to -0.01 em, and images take a 1 px edge in both themes (12% dimmer in dark).
+
 ## 0.7.0 (22 Nov 2026)
 
 Review keys follow one rule, agent changes are marked with the writer's color instead of a letter, and marks stay on their words while you type above them.

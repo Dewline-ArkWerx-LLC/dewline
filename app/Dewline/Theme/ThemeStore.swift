@@ -207,7 +207,7 @@ final class ThemeStore {
     }
 
     /// Heading levels 1 to 6 (synthesis 2.3) on a 1.25 ratio from the body, in whole points: at 16 pt, H1 31 / 620 with
-    /// -0.025 em tracking, H2 25 / 600, H3 20 / 600, then the body size in semibold; those weights and the optical size
+    /// -0.01 em tracking, H2 25 / 600, H3 20 / 600, then the body size in semibold; those weights and the optical size
     /// axis apply to Bricolage, and other faces set semibold.
     func heading(_ level: Int) -> Heading {
         if let heading = headings[level] { return heading }
@@ -224,7 +224,7 @@ final class ThemeStore {
         }
         let heading = switch level {
         case 1:
-            Heading(font: display(step(3), 620, opticalSize: 48), lineHeight: (step(3) * 1.2).rounded(), kern: -0.025 * step(3))
+            Heading(font: display(step(3), 620, opticalSize: 48), lineHeight: (step(3) * 1.2).rounded(), kern: -0.01 * step(3))
         case 2:
             Heading(font: display(step(2), 600), lineHeight: (step(2) * 1.25).rounded(), kern: 0)
         case 3:

@@ -771,7 +771,7 @@ struct JourneyTests {
         #expect(struck == NSUnderlineStyle.single.rawValue)
         // A wrapped line's rows hang past the gutter, where its first row's text starts.
         let style = try #require(shown.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
-        let gutter = ("+ " as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]).width
+        let gutter = ("+ " as NSString).size(withAttributes: [.font: EarlierVersions.font]).width
         #expect(style.firstLineHeadIndent == 0 && style.headIndent == gutter)
 
         // The oldest version, restored as one undoable edit.

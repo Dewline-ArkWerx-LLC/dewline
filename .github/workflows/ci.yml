@@ -75,6 +75,7 @@ jobs:
         with:
           workspaces: core -> target
           prefix-key: v1-rust
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest@0.9.151
@@ -141,6 +142,7 @@ jobs:
         with:
           workspaces: core -> target
           shared-key: ffi
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # Host slice only: release-dry builds and checks the universal app on main.
       - if: github.event_name != 'pull_request' || steps.core.outputs.cache-hit != 'true'
         run: scripts/build-xcframework.sh

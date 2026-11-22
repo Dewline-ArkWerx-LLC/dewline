@@ -108,8 +108,8 @@ struct ShellV4Tests {
         let origins: [ChangeEngine.Origin] = [.git(action: nil), .external, .agent(.claude, session: "s"), .agent(.demo, session: "d")]
         let widths = origins.map { WaitingBadge.width([WaitingCount(writer: MarkWriter($0), count: 2)]) }
         #expect(Set(widths).count == 1, "a dot, not a letter, so every writer's badge is the same width")
-        #expect(WaitingBadge.tip([WaitingCount(writer: MarkWriter(.external), count: 2)]) == "Another app: 2 changes waiting")
-        #expect(WaitingCount(writer: MarkWriter(.git(action: nil)), count: 1).spoken == "1 git change waiting")
+        #expect(WaitingBadge.tip([WaitingCount(writer: MarkWriter(.external), count: 2)]) == "2 changes by Another app, not reviewed")
+        #expect(WaitingCount(writer: MarkWriter(.agent(.claude, session: "s")), count: 1).spoken == "1 change by Claude Code, not reviewed")
     }
 
     @Test func aLongTabNameLosesItsMiddleAndKeepsItsExtension() {
@@ -122,14 +122,14 @@ struct ShellV4Tests {
         #expect(TabStrip.fit(title, stem: 24, in: 400) == title)
     }
 
-    @Test func chromeButtonsArePushButtonsAndSkipIsInline() {
+    @Test func chromeButtonsArePushButtonsAndSkipIsBorderless() {
         var pressed = 0
-        let done = ChromeButton("Done") { pressed += 1 }
+        let skip = ChromeButton("Skip") { pressed += 1 }
         let setUp = ChromeButton("Set Up", style: .bordered) {}
         let open = ChromeButton("Open a Folder\u{2026}", style: .filled) {}
-        #expect(done.bezelStyle == .inline && setUp.bezelStyle == .push && open.bezelStyle == .push)
+        #expect(!skip.isBordered && skip.contentTintColor == Chrome.color(.ink2) && setUp.bezelStyle == .push && open.bezelStyle == .push)
         #expect(open.bezelColor != nil && setUp.bezelColor == nil)
-        done.performClick(nil)
+        skip.performClick(nil)
         #expect(pressed == 1)
     }
 
@@ -220,10 +220,7 @@ struct ShellV4Tests {
         bar.clear("held")
         bar.clear("awaited")
         bar.clear("loads")
-        #expect(bar.isHidden)
-        bar.reserved = true
-        #expect(!bar.isHidden)
-        bar.reserved = false
+        #expect(!bar.isHidden, "keeps its height once shown")
         bar.idle = "docs/spec.md:3:5"
         #expect(!bar.isHidden && bar.shown == nil)
         // A message shows beside the place, in the same face from the same inset.

@@ -129,15 +129,18 @@ final class BlockFragment: NSTextLayoutFragment {
         switch line.role {
         case .picture(let picture, _):
             let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y), size: picture.size)
-            guard case .image = picture.art, NSAppearance.currentDrawing().isDark else { return picture.draw(in: frame, of: context) }
-            // On a dark page an embedded image draws at 85% brightness in 6 pt corners with a 1 px rim, and a link card
-            // takes a faint 1 pt rim, so a light one reads as placed.
-            context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
+            let dark = NSAppearance.currentDrawing().isDark
+            guard case .image = picture.art, dark || picture.kind == .image else { return picture.draw(in: frame, of: context) }
+            // An embedded image draws in 6 pt corners with a 1 px rim, black at 8% on a light page and white at 10% on a
+            // dark one, where it also draws at 88% brightness; on a dark page a link card takes a faint 1 pt rim, so a
+            // light one reads as placed.
             guard picture.kind == .image else {
                 picture.draw(in: frame, of: context)
+                context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
                 context.setLineWidth(1)
                 return context.stroke(frame.insetBy(dx: 0.5, dy: 0.5))
             }
+            context.setStrokeColor(dark ? CGColor(gray: 1, alpha: 0.1) : CGColor(gray: 0, alpha: 0.08))
             let pixel = 1 / max(abs(context.convertToDeviceSpace(CGSize(width: 1, height: 1)).width), 1)
             let radius = min(6, frame.width / 2, frame.height / 2)
             context.saveGState()
@@ -145,9 +148,11 @@ final class BlockFragment: NSTextLayoutFragment {
             context.clip()
             context.beginTransparencyLayer(in: frame, auxiliaryInfo: nil)
             picture.draw(in: frame, of: context)
-            context.setBlendMode(.sourceAtop)
-            context.setFillColor(CGColor(gray: 0, alpha: 0.15))
-            context.fill(frame)
+            if dark {
+                context.setBlendMode(.sourceAtop)
+                context.setFillColor(CGColor(gray: 0, alpha: 0.12))
+                context.fill(frame)
+            }
             context.endTransparencyLayer()
             context.restoreGState()
             let rim = frame.insetBy(dx: pixel / 2, dy: pixel / 2)

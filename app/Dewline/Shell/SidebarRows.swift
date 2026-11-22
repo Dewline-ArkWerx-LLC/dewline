@@ -1,13 +1,13 @@
 import AppKit
 import MdCore
 
-/// Git's state of a file in the tree: a letter on the row in `ink3` ("?" untracked, "A" staged, "U" in conflict in red),
-/// the word for VoiceOver.
+/// Git's state of a file in the tree: a letter on the row in `ink3` ("New" untracked, "A" staged, "U" in conflict in
+/// red), the word for VoiceOver.
 extension GitFileState {
     var letter: String {
         switch self {
         case .modified: "M"
-        case .new(let staged): staged ? "A" : "?"
+        case .new(let staged): staged ? "A" : "New"
         case .deleted: "D"
         case .renamed: "R"
         case .conflicted: "U"
@@ -17,7 +17,7 @@ extension GitFileState {
     var word: String {
         switch self {
         case .modified: "modified"
-        case .new(let staged): staged ? "added" : "untracked"
+        case .new(let staged): staged ? "added" : "new"
         case .deleted: "deleted"
         case .renamed: "renamed"
         case .conflicted: "conflicted"
@@ -27,7 +27,7 @@ extension GitFileState {
     var tip: String {
         switch self {
         case .modified: "Modified since the last commit. Click to review the changes."
-        case .new(let staged): staged ? "Added, not yet committed" : "Untracked"
+        case .new(let staged): staged ? "Added, not yet committed" : "New, not yet added to git"
         case .deleted: "Deleted since the last commit"
         case .renamed: "Renamed since the last commit"
         case .conflicted: "In conflict"
@@ -44,26 +44,42 @@ struct WaitingCount {
     let writer: MarkWriter
     var count: Int
 
-    /// "Codex: 2 changes waiting".
-    var tip: String {
-        "\(writer.name): \(count) \(count == 1 ? "change" : "changes") waiting"
-    }
-
-    /// "2 Codex changes waiting".
+    /// "1 change by Claude Code, not reviewed", the tooltip and what VoiceOver says.
     var spoken: String {
-        "\(count) \(writer.name) \(count == 1 ? "change" : "changes") waiting"
+        "\(count) \(count == 1 ? "change" : "changes") by \(writer.name), not reviewed"
     }
 }
 
 extension [WaitingCount] {
-    /// Adds `count` changes from `writer`, keeping the writer with the most first.
+    /// Adds `count` changes from `writer`, keeping the writer with the most first. Git's uncommitted changes don't
+    /// wait for Keep or Revert, so they add none: the badges sum to the toolbar's "N to review", and the row's git
+    /// letter shows them.
     mutating func add(_ writer: MarkWriter, _ count: Int) {
+        guard writer.writer != .git else { return }
         if let index = firstIndex(where: { $0.writer.name == writer.name }) {
             self[index].count += count
         } else {
             append(WaitingCount(writer: writer, count: count))
         }
         sort { $0.count > $1.count }
+    }
+}
+
+extension [WaitingCount] {
+    /// Each note's undecided changes by writer, by its standardized path: the window's tabs', as the Keep bar counts
+    /// them, and the notes changed while closed.
+    @MainActor static func waiting(in window: NSWindow?) -> [String: [WaitingCount]] {
+        var waiting: [String: [WaitingCount]] = [:]
+        let (open, closed) = Review.waiting(in: window)
+        for note in closed {
+            waiting[note.url.standardizedFileURL.path, default: []].add(MarkWriter(note.origin), note.count)
+        }
+        for live in open {
+            for change in live.changes.values where change.marked {
+                waiting[live.url.standardizedFileURL.path, default: []].add(MarkWriter(change.origin), 1)
+            }
+        }
+        return waiting
     }
 }
 
@@ -174,9 +190,9 @@ final class FolderPicker: NSView {
         line.lineBreakMode = .byTruncatingTail
         let ink2 = Chrome.color(.ink2)
         let text = NSMutableAttributedString(string: name, attributes: [.font: Chrome.labelStrong, .foregroundColor: Chrome.color(.ink)])
-        let mono = [branch, ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }
-        if !mono.isEmpty {
-            text.append(NSAttributedString(string: " " + mono.joined(separator: " "), attributes: [.font: Chrome.mono(12), .foregroundColor: ink2]))
+        let state = [branch, ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }
+        if !state.isEmpty {
+            text.append(NSAttributedString(string: " " + state.joined(separator: " "), attributes: [.font: Chrome.small, .foregroundColor: ink2]))
         }
         if changed > 0 {
             text.append(NSAttributedString(string: " \u{00B7} \(changed) uncommitted", attributes: [.font: Chrome.small, .foregroundColor: ink2]))
@@ -269,7 +285,7 @@ final class SidebarRowView: StationRowView {
 }
 
 /// A file or folder row: a chevron for a folder under its guide, the name 22 pt in (pane edge + 30), and on the trailing
-/// edge the writer badge, then git's letter in SF Mono 11 `ink3` in a 14 pt column; a closed folder holding changed
+/// edge the writer badge, then git's letter in SF Mono 11 `ink3` in a column at least 14 pt wide; a closed folder holding changed
 /// files shows a dot there. A ".md" extension shows in `ink2`. A name too long for the row loses its middle. A file gone from
 /// disk is struck through. On the focused list's selection everything is `paper`.
 final class SidebarFileCell: NSTableCellView {
@@ -402,7 +418,8 @@ final class SidebarFileCell: NSTableCellView {
         var right = bounds.width
         if !git.isHidden {
             let size = git.intrinsicContentSize
-            git.frame = NSRect(x: right - 14, y: (height - size.height) / 2, width: 14, height: size.height)
+            let width = max(14, ceil(size.width))
+            git.frame = NSRect(x: right - width, y: (height - size.height) / 2, width: width, height: size.height)
             right = git.frame.minX - 6
         }
         if !badge.isHidden {
@@ -448,6 +465,9 @@ final class WaitingBadge: NSView {
     func show(_ waiting: [WaitingCount]) {
         self.waiting = waiting
         toolTip = Self.tip(waiting)
+        setAccessibilityElement(!waiting.isEmpty)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(Self.tip(waiting))
         invalidateIntrinsicContentSize()
         needsDisplay = true
     }
@@ -463,7 +483,7 @@ final class WaitingBadge: NSView {
     }
 
     static func tip(_ waiting: [WaitingCount]) -> String? {
-        waiting.isEmpty ? nil : waiting.map(\.tip).joined(separator: "\n")
+        waiting.isEmpty ? nil : waiting.map(\.spoken).joined(separator: "\n")
     }
 
     private static let dot: CGFloat = 6

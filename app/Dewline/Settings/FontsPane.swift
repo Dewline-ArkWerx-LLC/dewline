@@ -23,11 +23,15 @@ struct FontSlots: View {
         } header: {
             Text("Preview")
         } footer: {
-            Text("Code is sized to the body font\u{2019}s x-height. Source mode (⌥⌘U) sets the whole page in the code font.")
+            Text(Self.codeNote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    /// How the Code font is sized beside the body, as MarkdownStyler sets it.
+    static let codeNote = "Code blocks match the body font\u{2019}s x-height; inline code is 0.9 of the text around it. "
+        + "Source mode (\u{2325}\u{2318}U) sets the whole page in the code font."
 
     /// A menu of families under their sections' headers, with the chosen family first when it is not on this Mac.
     private func face(_ label: String, _ selection: Binding<String>, _ sections: [(String, [String])]) -> some View {

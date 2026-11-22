@@ -32,7 +32,7 @@ final class StationSplitController: NSSplitViewController {
 
     override func toggleSidebar(_ sender: Any?) {
         guard let item = sidebarItem else { return }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if Motion.current == .off {
             item.isCollapsed.toggle()
         } else {
             NSAnimationContext.runAnimationGroup { context in

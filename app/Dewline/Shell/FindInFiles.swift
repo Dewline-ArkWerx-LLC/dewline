@@ -93,10 +93,10 @@ final class FileSearch {
     }
 }
 
-/// Find in Files in the sidebar (synthesis 2.7): a search field with the close button back to Files, Match Case, Whole
-/// Word and Regular Expression under it with the Replace toggle, the replace field while Replace is on, a line counting
-/// the matches, then the matches grouped by file, each on one line from a little before the match, with the match marked
-/// and a note's markup in `ink3`. Every row ends 16 pt from the trailing edge. It searches the open tabs, then the folder's notes,
+/// Find in Files in the sidebar (synthesis 2.7): a search field whose clear button and Esc go back to Files, Match Case,
+/// Whole Word and Regular Expression under it with the Replace toggle, the replace field while Replace is on, a line
+/// counting the matches, then the matches grouped by file, each file with its writer badge and git letter as in the
+/// tree, each match on up to two lines from a little before it, with the match marked and a note's markup in `ink3`. Every row ends 16 pt from the trailing edge. It searches the open tabs, then the folder's notes,
 /// then its code. A `path:` term in the query searches only the files whose path in the folder holds it.
 final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Opens a file from the results, at a match when there is one, in a new tab when asked.
@@ -115,9 +115,12 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private let status = NSTextField(wrappingLabelWithString: "")
     /// Under a search that found nothing: turns off the options it ran with.
     private let clearOptions = NSButton(title: "Turn Off Options", target: nil, action: nil)
-    private let closeButton = NSButton()
     private let outlineView = ResultsOutlineView()
     private var files: [ResultFile] = []
+    /// Each note's waiting changes by writer, by path, for the file rows' badges.
+    private var waiting: [String: [WaitingCount]] = [:]
+    /// The width the match rows' heights were measured at.
+    private var measuredWidth: CGFloat = 0
     /// Set while a query waits for the folder's first listing.
     private var waitsForFiles = false
     /// Set from a query's search until its first batch replaces the results.
@@ -149,13 +152,14 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         options.trackingMode = .selectAny
         options.segmentCount = 3
-        options.setLabel("Aa", forSegment: 0)
-        options.setLabel("Word", forSegment: 1)
+        for (segment, symbol) in ["textformat", "text.word.spacing"].enumerated() {
+            options.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: Self.optionNames[segment]), forSegment: segment)
+        }
         options.setLabel(".*", forSegment: 2)
-        options.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        options.font = .systemFont(ofSize: 12, weight: .semibold)
         for (segment, name) in Self.optionNames.enumerated() {
             options.setToolTip(name, forSegment: segment)
-            options.setWidth(segment == 1 ? 0 : 28, forSegment: segment)
+            options.setWidth(28, forSegment: segment)
         }
         replaceToggle.bezelStyle = .accessoryBar
         replaceToggle.setButtonType(.pushOnPushOff)
@@ -163,12 +167,6 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         replaceToggle.toolTip = "Replace matches"
         replaceToggle.target = self
         replaceToggle.action = #selector(toggleReplace)
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Back to Files")
-        closeButton.bezelStyle = .accessoryBarAction
-        closeButton.isBordered = false
-        closeButton.toolTip = "Back to Files (⎋)"
-        closeButton.target = self
-        closeButton.action = #selector(closeSearch)
         clearOptions.controlSize = .small
         clearOptions.bezelStyle = .push
         clearOptions.target = self
@@ -215,7 +213,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         scrollView.autohidesScrollers = true
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 600))
-        for view in [replaceToggle, field, closeButton, options, replacement, replaceButton, status, scrollView, clearOptions] as [NSView] {
+        for view in [replaceToggle, field, options, replacement, replaceButton, status, scrollView, clearOptions] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -226,9 +224,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         NSLayoutConstraint.activate([
             field.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
             field.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 16),
-            closeButton.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
-            closeButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
-            closeButton.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            field.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
             options.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
             options.leadingAnchor.constraint(equalTo: field.leadingAnchor),
             replaceToggle.leadingAnchor.constraint(equalTo: options.trailingAnchor, constant: 6),
@@ -253,12 +249,31 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         view = root
         search.changed = { [weak self] replaced in self?.resultsChanged(replaced: replaced) }
         NotificationCenter.default.addObserver(self, selector: #selector(indexChanged(_:)), name: FolderIndex.changed, object: index)
+        for name in [LiveFile.changesDidChange, ClosedChanges.changed, GitStates.changed] {
+            NotificationCenter.default.addObserver(self, selector: #selector(badgesChanged), name: name, object: nil)
+        }
         showStatus()
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
         outlineView.sizeLastColumnToFit()
+        guard lineWidth != measuredWidth else { return }
+        measuredWidth = lineWidth
+        outlineView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<outlineView.numberOfRows))
+    }
+
+    /// The width a match's line wraps in: the column less the child indent, the rows' inset, the line number and the
+    /// trailing edge.
+    private var lineWidth: CGFloat {
+        max(outlineView.bounds.width - outlineView.indentationPerLevel - 8 - LineResultCell.lead - 16, 40)
+    }
+
+    /// A waiting change or git's state changed: the file rows' badges and letters follow.
+    @objc private func badgesChanged() {
+        waiting = [WaitingCount].waiting(in: view.window)
+        let rows = IndexSet(files.map { outlineView.row(forItem: $0) }.filter { $0 >= 0 })
+        outlineView.reloadData(forRowIndexes: rows, columnIndexes: [0])
     }
 
     var query: String {
@@ -413,10 +428,6 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         run(after: .zero)
     }
 
-    @objc private func closeSearch() {
-        leave()
-    }
-
     /// Shows or hides the replace field and Replace All.
     @objc private func toggleReplace() {
         let shows = replaceToggle.state == .on
@@ -456,6 +467,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     // MARK: Results
 
     private func resultsChanged(replaced: Bool) {
+        waiting = [WaitingCount].waiting(in: view.window)
         if replaced {
             pending = false
             files = search.results.map(ResultFile.init)
@@ -550,7 +562,8 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        item is ResultFile ? 26 : 24
+        guard let line = item as? ResultLine else { return 26 }
+        return LineResultCell.height(line.match, width: lineWidth)
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
@@ -561,7 +574,8 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         if let file = item as? ResultFile {
             let cell = outlineView.makeView(withIdentifier: FileResultCell.identifier, owner: nil) as? FileResultCell ?? FileResultCell()
             let path = folder.relativePath(of: file.url.deletingLastPathComponent()) ?? ""
-            cell.show(file.url.lastPathComponent, in: path, count: file.lines.count)
+            cell.show(file.url.lastPathComponent, in: path, count: file.lines.count,
+                waiting: waiting[file.url.standardizedFileURL.path] ?? [], git: index.git.state(of: file.url))
             return cell
         }
         let line = item as! ResultLine
@@ -620,13 +634,16 @@ private final class ResultsOutlineView: NSOutlineView {
     }
 }
 
-/// A file's row: its name in `ink`, the folder it is in and how many matches it holds in `ink2`, the symbol in `ink3`;
-/// `paper` on the focused list's selection.
+/// A file's row: its name in `ink`, the folder it is in and how many matches it holds in `ink2`, the symbol in `ink3`,
+/// then the tree's writer badge before the count and git's letter after it; `paper` on the focused list's selection.
 private final class FileResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchFile")
 
     private let folder = NSTextField(labelWithString: "")
     private let count = NSTextField(labelWithString: "")
+    private let badge = WaitingBadge()
+    private let git = NSTextField(labelWithString: "")
+    private var state: GitFileState?
 
     init() {
         super.init(frame: .zero)
@@ -641,11 +658,16 @@ private final class FileResultCell: NSTableCellView {
         folder.lineBreakMode = .byTruncatingHead
         folder.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         count.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
-        count.setContentHuggingPriority(.required, for: .horizontal)
-        count.setContentCompressionResistancePriority(.required, for: .horizontal)
+        git.font = Chrome.mono(11)
+        let trailing = NSStackView(views: [badge, count, git])
+        trailing.spacing = 6
+        for view in trailing.views {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
         imageView = icon
         textField = name
-        for view in [icon, name, folder, count] {
+        for view in [icon, name, folder, trailing] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -657,9 +679,9 @@ private final class FileResultCell: NSTableCellView {
             name.centerYAnchor.constraint(equalTo: centerYAnchor),
             folder.leadingAnchor.constraint(equalTo: name.trailingAnchor, constant: 6),
             folder.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
-            folder.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -6),
-            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            count.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
+            folder.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -6),
+            trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: nil)
         paint()
@@ -678,19 +700,28 @@ private final class FileResultCell: NSTableCellView {
         imageView?.contentTintColor = Chrome.color(onAccent ? .paper : .ink3)
         textField?.textColor = Chrome.color(onAccent ? .paper : .ink)
         for label in [folder, count] { label.textColor = Chrome.color(onAccent ? .paper : .ink2) }
+        git.textColor = onAccent ? Chrome.color(.paper) : state?.color ?? Chrome.color(.ink3)
+        badge.needsDisplay = true
     }
 
-    func show(_ name: String, in path: String, count matches: Int) {
+    func show(_ name: String, in path: String, count matches: Int, waiting: [WaitingCount], git state: GitFileState?) {
         textField?.stringValue = name
         folder.stringValue = path
         count.stringValue = matches.formatted()
-        let label = [name, path, "\(matches.formatted()) \(matches == 1 ? "match" : "matches")"].filter { !$0.isEmpty }
-        setAccessibilityLabel(label.joined(separator: ", "))
+        badge.show(waiting)
+        badge.isHidden = badge.isEmpty
+        self.state = state
+        git.stringValue = state?.letter ?? ""
+        git.toolTip = state?.tip
+        git.isHidden = state == nil
+        paint()
+        let label = [name, path, "\(matches.formatted()) \(matches == 1 ? "match" : "matches")"] + waiting.map(\.spoken) + [state?.word ?? ""]
+        setAccessibilityLabel(label.filter { !$0.isEmpty }.joined(separator: ", "))
     }
 }
 
-/// A match's row: its line number in `ink2`, then the line on one line in `ink`, cut at the end, a note's markup in
-/// `ink3`, with the match on the theme's find highlight, all `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
+/// A match's row: its line number in `ink2`, then the line in `ink` on up to two lines, cut at the end, a note's markup in
+/// `ink3`, with the match in black on the system's find highlight, all `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
 /// dropping the highlight.
 private final class LineResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchLine")
@@ -705,19 +736,24 @@ private final class LineResultCell: NSTableCellView {
         identifier = Self.identifier
         number.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
         number.alignment = .right
-        line.lineBreakMode = .byTruncatingTail
+        line.maximumNumberOfLines = 2
+        line.usesSingleLineMode = false
+        line.cell?.wraps = true
+        line.cell?.truncatesLastVisibleLine = true
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        line.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         for view in [number, line] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
             number.leadingAnchor.constraint(equalTo: leadingAnchor),
-            number.widthAnchor.constraint(equalToConstant: 30),
+            number.widthAnchor.constraint(equalToConstant: Self.lead - 6),
             number.firstBaselineAnchor.constraint(equalTo: line.firstBaselineAnchor),
             line.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 6),
             line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            line.centerYAnchor.constraint(equalTo: centerYAnchor),
+            line.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            line.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(render), name: ThemeStore.didChange, object: nil)
     }
@@ -728,6 +764,18 @@ private final class LineResultCell: NSTableCellView {
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { render() }
+    }
+
+    /// The line number's column and the gap after it.
+    static let lead: CGFloat = 30 + 6
+
+    /// 24 pt for a line that fits `width`, a line more for one that wraps.
+    static func height(_ match: TextMatch, width: CGFloat) -> CGFloat {
+        let font = Chrome.small
+        let line = ceil(font.ascender - font.descender + font.leading)
+        let text = NSAttributedString(string: centered(match.preview, on: match.previewRange).0, attributes: [.font: font])
+        let tall = text.boundingRect(with: NSSize(width: width - 4, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height
+        return tall > line * 1.5 ? 24 + line : 24
     }
 
     func show(_ match: TextMatch, markup: Bool) {
@@ -744,7 +792,7 @@ private final class LineResultCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         number.textColor = Chrome.color(selected ? .paper : .ink2)
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
+        style.lineBreakMode = .byWordWrapping
         let ink = Chrome.color(selected ? .paper : .ink)
         let (preview, range) = Self.centered(match.preview, on: match.previewRange)
         let text = NSMutableAttributedString(string: preview, attributes: [
@@ -757,9 +805,8 @@ private final class LineResultCell: NSTableCellView {
             text.addAttribute(.foregroundColor, value: ink, range: range)
         }
         text.addAttributes([
-            .backgroundColor: selected ? ink.withAlphaComponent(0.25) : Self.findMatch,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
-            .underlineColor: ThemeStore.shared.color(.signal),
+            .backgroundColor: selected ? ink.withAlphaComponent(0.25) : NSColor.findHighlightColor,
+            .foregroundColor: selected ? ink : NSColor.black,
         ], range: range)
         line.attributedStringValue = text
     }
@@ -780,10 +827,4 @@ private final class LineResultCell: NSTableCellView {
     /// brackets and link targets.
     private static let markup = try! NSRegularExpression(
         pattern: #"^\s{0,3}(?:#{1,6}(?=\s)|>|[-*+](?=\s)|\d+[.)](?=\s))|\*\*|__|~~|`+|\]\([^)\s]*\)|[\[\]]|(?<![\w*])[*_](?=\S)|(?<=\S)[*_](?![\w*])"#)
-
-    /// Signal at 12%, the most a signal fill takes; the match's underline carries it.
-    private static var findMatch: NSColor {
-        let signal = ThemeStore.shared.color(.signal)
-        return NSColor(name: nil) { signal.resolved(for: $0).withAlphaComponent(0.12) }
-    }
 }

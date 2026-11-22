@@ -255,8 +255,7 @@ enum HookSetup {
                 return present(alert, on: window) { _ in done(true) }
             }
             alert.messageText = "Let Dewline see which agent made each edit"
-            alert.informativeText = scope(missing, in: folder) + "\n\n"
-                + "Hooks send file paths and hashes, never content, and nothing leaves this Mac. Remove them any time in Settings > Agents."
+            alert.informativeText = informative(missing, in: folder)
             alert.accessoryView = HookDetails(missing, command: command, alert: alert)
             alert.addButton(withTitle: "Add Hooks")
             alert.addButton(withTitle: "Not Now")
@@ -276,15 +275,32 @@ enum HookSetup {
         }
     }
 
-    /// The files Add Hooks changes and how far each reaches: "Adds 2 entries to ~/.claude/settings.json (every
-    /// project). Backup saved beside it." A file inside `folder` holds that project's settings.
+    /// The sheet's text: what hooks send, first, then `scope`.
+    static func informative(_ missing: [Missing], in folder: URL?) -> String {
+        "Hooks send file paths and hashes, never content, and nothing leaves this Mac. Remove them any time in Settings > Agents.\n\n"
+            + scope(missing, in: folder)
+    }
+
+    /// The hook events Add Hooks gives each agent, the file and how far each reaches: "Adds Dewline to 8 Claude Code hook
+    /// events (PreToolUse, PostToolUse, Stop, …) in ~/.claude/settings.json, for every project. Backup saved beside it."
+    /// A file inside `folder` holds that project's settings.
     static func scope(_ missing: [Missing], in folder: URL?) -> String {
         let lines = missing.map { item in
-            let count = item.entries.count == 1 ? "1 entry" : "\(item.entries.count) entries"
+            let count = item.events.count == 1 ? "1 \(item.agent) hook event" : "\(item.events.count) \(item.agent) hook events"
+            let named = item.events.prefix(3).joined(separator: ", ") + (item.events.count > 3 ? ", \u{2026}" : "")
             let project = folder.map { item.file.hasPrefix($0.standardizedFileURL.path + "/") } ?? false
-            return "Adds \(count) to \((item.file as NSString).abbreviatingWithTildeInPath) (\(project ? "this project only" : "every project"))."
+            return "Adds Dewline to \(count) (\(named)) in \(shortened(item.file)), for \(project ? "this project only" : "every project")."
         }
         return (lines + [missing.count == 1 ? "Backup saved beside it." : "Backups saved beside each."]).joined(separator: "\n")
+    }
+
+    /// `path` with ~ for the home folder, and past 40 characters its first folder, an ellipsis and its last three
+    /// parts, so it never breaks across the sheet's lines: "/private/…/relay/.claude/settings.json".
+    static func shortened(_ path: String) -> String {
+        let path = (path as NSString).abbreviatingWithTildeInPath
+        let parts = (path as NSString).pathComponents
+        guard path.count > 40, parts.count > 5 else { return path }
+        return NSString.path(withComponents: Array(parts.prefix(2)) + ["\u{2026}"] + parts.suffix(3))
     }
 
     /// Settings > Agents > Remove: takes `agent`'s Dewline hooks out of its settings file, keeping a backup beside it.

@@ -170,7 +170,7 @@ struct ShellTests {
         textView.setSelectedRange(NSRange(location: lives[0].changes[id]!.range.location + 1, length: 0))
         textView.keepChange(nil)
         #expect(lives[0].changes[id] == nil)
-        #expect(main.statusBar.shown?.text == "Next: spec.md \u{2303}\u{2318}\u{2193}")
+        #expect(main.statusBar.shown?.text == "Next change: spec.md \u{2303}\u{2318}\u{2193}")
         #expect(main.tabs.selected === main)
         await waitForMain()
         #expect(main.statusBar.shown?.id == "step", "the hint outlasts the decision")

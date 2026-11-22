@@ -92,9 +92,9 @@ public final class Drawing: @unchecked Sendable {
     }
 }
 
-/// A Mermaid diagram drawn by the engine in `colors`.
-public func mermaidDrawing(_ source: String, colors: DiagramColors) throws(RenderFailure) -> Drawing {
-    Drawing(try engine { try drawMermaid(source: source, colors: colors.ffi) })
+/// A Mermaid diagram drawn by the engine in `colors`, its labels in the `font` family at `size` points.
+public func mermaidDrawing(_ source: String, colors: DiagramColors, font: String, size: Double) throws(RenderFailure) -> Drawing {
+    Drawing(try engine { try drawMermaid(source: source, colors: colors.ffi, font: font, fontSize: Float(size)) })
 }
 
 /// Math typeset by RaTeX at `size` points in `color` (0xRRGGBBAA), to sit on a line of text.

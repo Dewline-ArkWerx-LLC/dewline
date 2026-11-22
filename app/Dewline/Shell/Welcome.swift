@@ -13,7 +13,7 @@ enum Welcome {
     static let replacement = "edits a file,"
     static let anchor = "Revert puts the old text back.\n"
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open. "
-        + "With hooks set up, the stamp reads CLAUDE, CODEX or CURSOR.\n"
+        + "With hooks set up, the stamp reads CLAUDE CODE, CODEX or CURSOR.\n"
 
     /// Whether this launch runs the guide: never once it has started, and not on a launch that opens a file, which
     /// opens that file alone and leaves the guide for the next plain launch.
@@ -295,16 +295,17 @@ final class WelcomeGuide {
 
     static let sentences = [
         "Watch the note. A demo agent is about to edit it.",
-        "The agent swapped \u{201C}note\u{201D} for \u{201C}file.\u{201D} Revert it.",
-        "It also added a paragraph you want. Keep it.",
+        "The agent swapped \u{201C}note\u{201D} for \u{201C}file.\u{201D} Revert it with the button beside the change, or",
+        "It also added a paragraph. Keep this one.",
     ]
     static let keys: [String?] = [nil, "\u{2325}\u{2318}\u{232B}", "\u{2318}\u{21A9}"]
     static let spoken: [String?] = [nil, "Option Command Delete.", "Command Return."]
-    static let closing = "Open the folder Claude Code works in. Its edits will land like these."
+    static let closing = "Open the folder your agent works in. Its edits will land like these."
 
     // MARK: Setup list
 
-    /// One row of the setup list: what it does, its state, and its button, or a checkmark once done.
+    /// One row of the setup list: what it does, its state, with a command between backticks, and its button, or a
+    /// checkmark once done.
     struct SetupRow: Equatable {
         let title: String
         let status: String
@@ -335,7 +336,7 @@ final class WelcomeGuide {
             }
             }
         }
-        let done = ChromeButton("Done") { [weak self] in self?.end() }
+        let done = ChromeButton("Done", style: .bordered) { [weak self] in self?.end() }
         let open = ChromeButton("Open a Folder\u{2026}", style: .filled) { [weak self] in self?.openFolder() }
         island.onReturn = { [weak self] in self?.openFolder() }
         island.showSetup(rows, actions: actions, footer: LaunchWindowController.emptyText, buttons: [done, open])
@@ -361,7 +362,7 @@ final class WelcomeGuide {
             } else if let agent = hooks.agents.first(where: { $0.file != nil }), let file = agent.file {
                 SetupRow(
                     title: hooksTitle, status: "Adds a hook to \((file as NSString).abbreviatingWithTildeInPath) so the stamp says \(agent.title.uppercased()).",
-                    button: "Set Up\u{2026}")
+                    button: "Set Up Agent Hooks\u{2026}")
             } else {
                 SetupRow(title: hooksTitle, status: "No Claude Code, Codex or Cursor found. Set this up later in Settings > Agents.")
             }
@@ -375,7 +376,7 @@ final class WelcomeGuide {
             } else if let taken = CommandLink.taken() {
                 SetupRow(title: commandTitle, status: "Another dewline is at \((taken.path as NSString).abbreviatingWithTildeInPath).")
             } else {
-                SetupRow(title: commandTitle, status: "Opens notes from a terminal. dewline open --wait works as $EDITOR.", button: "Add")
+                SetupRow(title: commandTitle, status: "Opens notes from a terminal. `dewline open --wait` works as $EDITOR.", button: "Add")
             }
         return [hooksRow, defaultRow, commandRow]
     }
@@ -585,9 +586,8 @@ final class GuideIsland: NSView {
             let title = NSTextField(labelWithString: row.title)
             title.font = Chrome.labelActive
             title.textColor = Chrome.color(.ink)
-            let status = NSTextField(wrappingLabelWithString: row.status)
-            status.font = Chrome.small
-            status.textColor = Chrome.color(.ink2)
+            let status = NSTextField(wrappingLabelWithString: "")
+            status.attributedStringValue = Self.status(row.status)
             status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let words = NSStackView(views: [title, status])
             words.orientation = .vertical
@@ -611,7 +611,7 @@ final class GuideIsland: NSView {
             line.spacing = 16
             line.setAccessibilityElement(true)
             line.setAccessibilityRole(.group)
-            line.setAccessibilityLabel(row.title + ". " + row.status + (row.done ? " Done." : ""))
+            line.setAccessibilityLabel(row.title + ". " + Self.spoken(row.status) + (row.done ? " Done." : ""))
             views.append(line)
         }
         let note = NSTextField(wrappingLabelWithString: footer)
@@ -627,7 +627,21 @@ final class GuideIsland: NSView {
         replace(views, buttons: controls + buttons, animatedHeight: true)
         sentence = rows.map(\.title).joined(separator: ". ")
         superview?.layoutSubtreeIfNeeded()
-        announce("Set up Dewline. " + rows.map { $0.title + ". " + $0.status }.joined(separator: " "))
+        announce("Set up Dewline. " + rows.map { $0.title + ". " + Self.spoken($0.status) }.joined(separator: " "))
+    }
+
+    /// A row's state in `ink2`, its backticked command in SF Mono at the same size.
+    static func status(_ text: String) -> NSAttributedString {
+        let styled = NSMutableAttributedString()
+        for (index, part) in text.split(separator: "`", omittingEmptySubsequences: false).enumerated() {
+            let font = index % 2 == 1 ? Chrome.mono(Chrome.small.pointSize) : Chrome.small
+            styled.append(NSAttributedString(string: String(part), attributes: [.font: font, .foregroundColor: Chrome.color(.ink2)]))
+        }
+        return styled
+    }
+
+    private static func spoken(_ status: String) -> String {
+        status.replacingOccurrences(of: "`", with: "")
     }
 
     private func replace(_ views: [NSView], buttons: [ChromeButton], animatedHeight: Bool) {

@@ -60,14 +60,19 @@ enum CodeFile {
 }
 
 /// Line numbers for a code file and for Source mode, in SF Mono `ink3` left of the text, one per paragraph at its
-/// first line.
+/// first line. In a code file a marked change reads as a diff: "−" and the old numbers beside the old lines its ghost
+/// sets above the new ones, and "+" beside each line it wrote.
 final class LineNumbers: NSRulerView {
     private weak var textView: EditorTextView?
     /// The UTF-16 offset each line starts at, moved with each edit.
     private var starts: [Int]?
-    /// The lines the last typesetting found errors on, whose numbers draw in `codeDeleted`.
-    var errors: Set<Int> = [] {
-        didSet { needsDisplay = true }
+    /// The lines the last typesetting found errors on, whose numbers draw in `codeDeleted`, with the first error's
+    /// message on each; a change's stamp says the error on its lines.
+    var errors: [Int: String] = [:] {
+        didSet {
+            needsDisplay = true
+            textView?.marks.refresh()
+        }
     }
 
     init(textView: EditorTextView, in scrollView: NSScrollView) {
@@ -102,11 +107,25 @@ final class LineNumbers: NSRulerView {
         needsDisplay = true
     }
 
-    /// Wide enough for the last line's number and 8 pt either side.
+    /// The room a code file's "−" and "+" take left of the numbers.
+    private var signRoom: CGFloat {
+        textView?.styler.code == nil ? 0 : ceil(NSAttributedString(string: "\u{2212}", attributes: [.font: font]).size().width) + 4
+    }
+
+    /// Wide enough for the last line's number and 8 pt either side, and a code file's signs.
     private func fit() {
         let digits = String(max(lineStarts().count, 100)).count
-        let width = ceil(CGFloat(digits) * NSAttributedString(string: "0", attributes: [.font: font]).size().width) + 16
+        let width = ceil(CGFloat(digits) * NSAttributedString(string: "0", attributes: [.font: font]).size().width) + 16 + signRoom
         if ruleThickness != width { ruleThickness = width }
+    }
+
+    /// The first typesetting error on the lines `range` covers.
+    func error(in range: NSRange) -> String? {
+        guard !errors.isEmpty else { return nil }
+        let starts = lineStarts()
+        let first = Self.count(starts, through: range.location)
+        let last = Self.count(starts, through: max(NSMaxRange(range) - 1, range.location))
+        return (first...max(last, first)).lazy.compactMap { self.errors[$0] }.first
     }
 
     /// Where each line starts, as TextKit splits paragraphs: after a line feed, a lone carriage return, CRLF or U+2029.
@@ -174,16 +193,31 @@ final class LineNumbers: NSRulerView {
         let starts = lineStarts()
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeStore.shared.color(.ink3)]
         let failed: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeStore.shared.color(.codeDeleted)]
+        let signs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeStore.shared.color(.ink2)]
         let origin = textView.textContainerOrigin
+        let diff = textView.marks.diff
+        func draw(_ index: Int, sign: String?, baseline: CGFloat, style: [NSAttributedString.Key: Any]) {
+            let y = convert(NSPoint(x: 0, y: baseline), from: textView).y - font.ascender
+            let number = NSAttributedString(string: "\(index)", attributes: style)
+            number.draw(at: NSPoint(x: ruleThickness - 8 - number.size().width, y: y))
+            if let sign { NSAttributedString(string: sign, attributes: signs).draw(at: NSPoint(x: 4, y: y)) }
+        }
         layout.enumerateTextLayoutFragments(from: viewport.location) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else { return false }
             let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+            let end = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.endLocation)
             guard let line = fragment.textLineFragments.first else { return true }
-            let baseline = origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.minY + line.glyphOrigin.y
-            let y = convert(NSPoint(x: 0, y: baseline), from: textView).y
+            let top = origin.y + fragment.layoutFragmentFrame.minY
             let index = Self.count(starts, through: offset)
-            let number = NSAttributedString(string: "\(index)", attributes: errors.contains(index) ? failed : attributes)
-            number.draw(at: NSPoint(x: ruleThickness - 8 - number.size().width, y: y - font.ascender))
+            // The old lines take the space before the line, a line's pitch each.
+            if let old = diff.removed.first(where: { $0.at == offset }), old.lines > 0 {
+                let pitch = line.typographicBounds.minY / CGFloat(old.lines)
+                for k in 0..<old.lines {
+                    draw(index - old.added + k, sign: "\u{2212}", baseline: top + CGFloat(k) * pitch + line.glyphOrigin.y, style: attributes)
+                }
+            }
+            let written = diff.written.contains { $0.location < max(end, offset + 1) && NSMaxRange($0) > offset }
+            draw(index, sign: written ? "+" : nil, baseline: top + line.typographicBounds.minY + line.glyphOrigin.y, style: errors[index] != nil ? failed : attributes)
             return true
         }
     }

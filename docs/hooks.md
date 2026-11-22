@@ -38,7 +38,7 @@ Merge into `~/.codex/hooks.json`:
 }
 ```
 
-Codex runs a new or changed hook only once you trust it: start Codex, open `/hooks` and trust each Dewline hook. `dewline doctor` says "needs trust" until `~/.codex/config.toml` records trust for each one; it can't tell a trusted hook that changed since. Set Up skips an agent whose folder (`~/.claude`, `~/.codex`, `~/.cursor`) doesn't exist.
+Codex runs a new or changed hook only once you trust it: start Codex, open `/hooks` and trust each Dewline hook; until then the stamp on another app's change says "Trust Dewline's hook in Codex: /hooks". `dewline doctor` says "needs trust" until `~/.codex/config.toml` records trust for each one; it can't tell a trusted hook that changed since. Set Up skips an agent whose folder (`~/.claude`, `~/.codex`, `~/.cursor`) doesn't exist.
 
 A hook whose command names a `dewline` that no longer exists, as after the app moved, counts as missing. Set Up replaces its command with the app's current path.
 

@@ -619,6 +619,7 @@ final class LiveFile {
             NotificationCenter.default.post(name: Self.revertRefused, object: self)
             return
         }
+        if decision == .other, !pending.conflict { textView.marks.reverted(change) }
         changes[change] = nil
         // A decision that edits the text is kept by the save that follows.
         if let replacement {

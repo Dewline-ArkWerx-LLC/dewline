@@ -5,6 +5,7 @@ What changed in each Dewline release, newest first.
 ## Unreleased
 
 - List bullets move with their lines, a period after inline code stays on the code's line, struck text sits flush or hangs when it would push its line, and a rewrite across lines hangs its old text as one block.
+- Code-file changes read as a diff (old lines above, − and + with numbers in the gutter) with Revert and Keep on the stamp and a build error on it; every stamp shows Keep filled and its keys, sized from the body text; a revert leaves "Reverted · ⌘Z" in the margin; a named writer's insert drops the solid underline unless Differentiate Without Color or Increase Contrast is on.
 - The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
 - First run and setup: the guide points at the stamp's Revert button, Skip and Done read as buttons, the status bar keeps its height once shown, and Set Up Agent Hooks… opens one sheet that leads with what hooks send and names the events. A folder's empty page leads with Copy a Test Prompt, and File > Open… takes a folder.
 - Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.

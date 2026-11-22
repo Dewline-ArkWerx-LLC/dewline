@@ -102,7 +102,7 @@
       <p class="lead">Dewline marks each change another writer makes to an open note, so you can keep or revert it.</p>
 
       <h2 id="review">Keep or revert a change</h2>
-      <p>When git, a sync app, a script or an agent writes to an open note, Dewline marks the change. A stamp beside it names the writer and the time, “CLAUDE CODE 3:25 PM · 1 of 1”, with Revert and Keep. Hover either button to see its keys. A change above or below the view keeps its mark at the window's right edge, and one that lands there pins a chip such as “1 more below · Backoff ⌃⌘↓” until you scroll to it or decide it.</p>
+      <p>When git, a sync app, a script or an agent writes to an open note, Dewline marks the change. A stamp beside it names the writer and the time, “CLAUDE CODE 3:25 PM · 1 of 1”, with Revert and Keep, their keys beside them where the margin has room. The stamp's text follows Text size, and the change Revert and Keep decide has the heavier bar in the margin. A change above or below the view keeps its mark at the window's right edge, and one that lands there pins a chip such as “1 more below · Backoff ⌃⌘↓” until you scroll to it or decide it.</p>
       <ol class="steps">
         <li><b>Step through the changes</b> with <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↓</kbd></span> and <span class="keys"><kbd>⌃</kbd><kbd>⌘</kbd><kbd>↑</kbd></span>.</li>
         <li><b>Keep or revert the one in focus.</b></li>
@@ -119,16 +119,17 @@
           </tbody>
         </table>
       </div>
-      <p>Each choice is one edit you can undo; after a revert the status bar says “Reverted · ⌘Z to undo” for 4 seconds. A revert leaves the other app's history alone.</p>
+      <p>Each choice is one edit you can undo; after a revert the status bar says “Reverted · ⌘Z to undo” for 4 seconds, and the margin says “Reverted · ⌘Z” where the stamp stood. A revert leaves the other app's history alone.</p>
       <p>Every outside write that lands in an open note is marked, whether or not the note has unsaved edits. A hook that reports late can still name a change after it lands.</p>
       <p>Removed text reads struck where it was, when it fits the rest of its line. A longer removal hangs under its paragraph, and a rewrite across several lines hangs its old text there as one block.</p>
+      <p>In a code file a change reads as a diff: the old lines sit above the new ones in the code's font, with − and their old numbers in the gutter, and + beside each new line. The stamp sits under the change with Revert and Keep, and says when the change breaks a Typst or LaTeX build.</p>
 
       <h2 id="install">Mark edits from other agents</h2>
       <p>An agent you run in Terminal writes files itself. Hooks let its edits carry its name.</p>
       <ol class="steps">
         <li><b>Click Set Up Agent Hooks…</b> in Settings &gt; Agents, or “Set up agent hooks…” on the stamp of another app's change. The first time you keep or revert another app's change to an open note in a folder where an agent works, Dewline offers this once.</li>
         <li><b>Confirm the files it changes.</b> The sheet names each file and whether it reaches every project or this one only. Each keeps a backup beside it.</li>
-        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex and trust each Dewline hook. Until you do, Settings shows Codex's hooks as Needs trust.</li>
+        <li><b>For Codex, trust the hooks:</b> open <code>/hooks</code> in Codex and trust each Dewline hook. Until you do, Settings shows Codex's hooks as Needs trust, and the stamp of another app's change links to the same step.</li>
       </ol>
       <p>If you move or rename Dewline.app, the hooks show as Not set up; Set Up points them at the app's new place, and Codex asks for trust again.</p>
       <p>In Terminal, <a href="/docs/cli/#doctor"><code>dewline doctor --install-hooks</code></a> does the same.</p>

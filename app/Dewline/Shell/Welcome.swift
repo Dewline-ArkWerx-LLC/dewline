@@ -273,12 +273,12 @@ final class WelcomeGuide {
         case .watch, .revert, .keep:
             let skip = ChromeButton("Skip") { [weak self] in self?.end() }
             island.onReturn = {}
-            island.show(Self.sentences[beat.rawValue], key: Self.keys[beat.rawValue], spoken: Self.spoken[beat.rawValue], progress: CGFloat(beat.rawValue) / 3, buttons: [skip])
+            island.show(Self.sentences[beat.rawValue], key: Self.keys[beat.rawValue], spoken: Self.spoken[beat.rawValue], step: beat.rawValue + 1, buttons: [skip])
         case .done:
-            let done = ChromeButton("Done") { [weak self] in self?.end() }
-            let setUp = ChromeButton("Set Up Dewline", style: .filled) { [weak self] in self?.show(.setup) }
-            island.show(Self.closing, key: nil, spoken: nil, progress: 1, buttons: [done, setUp])
-            island.onReturn = { [weak self] in self?.show(.setup) }
+            let setUp = ChromeButton("Set Up\u{2026}", style: .bordered, label: "Set Up Dewline") { [weak self] in self?.show(.setup) }
+            let open = ChromeButton("Open a Folder\u{2026}", style: .filled) { [weak self] in self?.openFolder() }
+            island.show(Self.closing, key: nil, spoken: nil, step: nil, buttons: [setUp, open])
+            island.onReturn = { [weak self] in self?.openFolder() }
         case .setup:
             refreshSetup()
         }
@@ -300,7 +300,7 @@ final class WelcomeGuide {
     ]
     static let keys: [String?] = [nil, "\u{2325}\u{2318}\u{232B}", "\u{2318}\u{21A9}"]
     static let spoken: [String?] = [nil, "Option Command Delete.", "Command Return."]
-    static let closing = "Every agent edit lands like those two."
+    static let closing = "Open the folder Claude Code works in. Its edits will land like these."
 
     // MARK: Setup list
 
@@ -358,10 +358,12 @@ final class WelcomeGuide {
         let hooksRow =
             if !installed.isEmpty {
                 SetupRow(title: hooksTitle, status: "Hooks are set up for \(ListFormatter.localizedString(byJoining: installed)).", done: true)
-            } else if hooks.agents.allSatisfy({ $0.file == nil }) {
-                SetupRow(title: hooksTitle, status: "No Claude Code, Codex or Cursor found. Set this up later in Settings > Agents.")
+            } else if let agent = hooks.agents.first(where: { $0.file != nil }), let file = agent.file {
+                SetupRow(
+                    title: hooksTitle, status: "Adds a hook to \((file as NSString).abbreviatingWithTildeInPath) so the stamp says \(agent.title.uppercased()).",
+                    button: "Set Up\u{2026}")
             } else {
-                SetupRow(title: hooksTitle, status: "Without hooks, agent edits show as ANOTHER APP.", button: "Set Up\u{2026}")
+                SetupRow(title: hooksTitle, status: "No Claude Code, Codex or Cursor found. Set this up later in Settings > Agents.")
             }
         let isDewline = isDefault ?? DefaultApp.isDewline
         let defaultRow = isDewline
@@ -378,13 +380,13 @@ final class WelcomeGuide {
         return [hooksRow, defaultRow, commandRow]
     }
 
-    /// The footer's Open a Folder…: the folder opens with its hook offer already made, since the list just asked.
+    /// Open a Folder…: the folder opens; from the setup list, whose hooks row just asked, with its hook offer already made.
     private func openFolder() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        HookSetup.askedThisLaunch.insert(Folder(url).url.path)
+        if beat == .setup { HookSetup.askedThisLaunch.insert(Folder(url).url.path) }
         end()
         (NSApp.delegate as? AppDelegate)?.openFolder(at: url)
     }
@@ -407,17 +409,18 @@ final class WelcomeGuide {
     }
 }
 
-/// The guide's island: Paper with the `strokeSubtle` edge at a 12 pt radius and a soft shadow, as wide as the text
-/// column and 16 pt above the bottom of the editor, which scrolls the note clear of it. A Signal hairline along its top
-/// edge fills by thirds. It holds a sentence, a keycap and its buttons, or the setup list. VoiceOver reads it as one
-/// group and hears each sentence as it changes.
+/// The guide's island: the raised fill with the `strokeSubtle` edge at a 12 pt radius over a contact shadow and an
+/// ambient one, as wide as the text column and 16 pt above the bottom of the editor, which keeps a line more than that
+/// clear under the note's end. It holds three step dots, a sentence, a keycap and its buttons, or the setup list.
+/// VoiceOver reads it as one group and hears each sentence as it changes.
 @MainActor
 final class GuideIsland: NSView {
     private static let ease = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
     private let stack = NSStackView()
-    private let hairline = SignalHairline()
+    /// The fill, under the contents, casting the contact shadow; the island's own layer casts the ambient one.
+    private let plate = NSView()
+    private let dots = StepDots()
     private var bottom: NSLayoutConstraint?
-    private var fill: NSLayoutConstraint?
     private var column: NSLayoutConstraint?
     private weak var scrollView: NSScrollView?
     private var adjusted = true
@@ -441,22 +444,17 @@ final class GuideIsland: NSView {
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 12, right: 12)
         stack.wantsLayer = true
-        for view in [stack, hairline] as [NSView] {
+        plate.wantsLayer = true
+        for view in [plate, stack] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
+            NSLayoutConstraint.activate([
+                view.topAnchor.constraint(equalTo: topAnchor),
+                view.leadingAnchor.constraint(equalTo: leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: trailingAnchor),
+                view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
         }
-        let fill = hairline.widthAnchor.constraint(equalToConstant: 0)
-        self.fill = fill
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            hairline.heightAnchor.constraint(equalToConstant: 1.5),
-            fill,
-        ])
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
     }
 
@@ -466,28 +464,40 @@ final class GuideIsland: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    /// Contact shadow: radius 3, 12%, 1 pt down; ambient: radius 16, 8%, 4 pt down. Dark paper takes both darker.
     override func updateLayer() {
-        layer?.backgroundColor = Chrome.color(.islandEditor).cgColor
-        layer?.borderColor = Chrome.strokeSubtle.cgColor
-        layer?.borderWidth = 1
-        layer?.cornerRadius = 12
-        layer?.cornerCurve = .continuous
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = effectiveAppearance.isDark ? 0.3 : 0.1
-        layer?.shadowRadius = 10
-        layer?.shadowOffset = CGSize(width: 0, height: -3)
+        let dark = effectiveAppearance.isDark
+        guard let layer, let fill = plate.layer else { return }
+        fill.backgroundColor = Chrome.color(.raised).cgColor
+        fill.borderColor = Chrome.strokeSubtle.cgColor
+        fill.borderWidth = 1
+        for (layer, opacity, radius, offset) in [(fill, 0.12, 3.0, -1.0), (layer, 0.08, 16.0, -4.0)] {
+            layer.cornerRadius = 12
+            layer.cornerCurve = .continuous
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOpacity = Float(dark ? opacity * 2.5 : opacity)
+            layer.shadowRadius = radius
+            layer.shadowOffset = CGSize(width: 0, height: offset)
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let shape = CGPath(roundedRect: bounds, cornerWidth: 12, cornerHeight: 12, transform: nil)
+        layer?.shadowPath = shape
+        plate.layer?.shadowPath = shape
     }
 
     @objc private func themeDidChange() {
         needsDisplay = true
-        hairline.needsDisplay = true
+        dots.needsDisplay = true
         column?.constant = ThemeStore.shared.measure
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         fitSentence()
-        makeRoom(newSize.height + 16)
+        makeRoom(newSize.height + 16 + ThemeStore.shared.bodySize * ThemeStore.shared.lineHeight)
     }
 
     /// Wraps the beat's sentence at the width its row leaves it beside the keycap and buttons, so every word shows.
@@ -542,15 +552,18 @@ final class GuideIsland: NSView {
         }
     }
 
-    /// A beat: `text` with the keycap `key` after it and `buttons` at the trailing edge; `spoken` reads the key.
-    func show(_ text: String, key: String?, spoken: String?, progress: CGFloat, buttons: [ChromeButton]) {
+    /// A beat: step `step` of three's dots, then `text` with the keycap `key` after it and `buttons` at the trailing
+    /// edge; `spoken` reads the key. The island takes its new height, and the editor its inset, before the beat's change
+    /// lands.
+    func show(_ text: String, key: String?, spoken: String?, step: Int?, buttons: [ChromeButton]) {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = Chrome.label
         label.textColor = Chrome.color(.ink)
         label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         let read = spoken.map { text + " " + $0 } ?? text
         label.setAccessibilityLabel(read)
-        var views: [NSView] = [label]
+        dots.step = step ?? 0
+        var views: [NSView] = step == nil ? [label] : [dots, label]
         if let key { views.append(KeycapView([key])) }
         views += [Self.spacer()] + buttons as [NSView]
         let row = NSStackView(views: views)
@@ -560,7 +573,7 @@ final class GuideIsland: NSView {
         self.label = label
         fitSentence()
         sentence = text
-        setProgress(progress)
+        superview?.layoutSubtreeIfNeeded()
         announce(read)
     }
 
@@ -613,7 +626,7 @@ final class GuideIsland: NSView {
         label = nil
         replace(views, buttons: controls + buttons, animatedHeight: true)
         sentence = rows.map(\.title).joined(separator: ". ")
-        setProgress(1)
+        superview?.layoutSubtreeIfNeeded()
         announce("Set up Dewline. " + rows.map { $0.title + ". " + $0.status }.joined(separator: " "))
     }
 
@@ -637,18 +650,6 @@ final class GuideIsland: NSView {
             context.timingFunction = Self.ease
             context.allowsImplicitAnimation = true
             host.layoutSubtreeIfNeeded()
-        }
-    }
-
-    private func setProgress(_ progress: CGFloat) {
-        superview?.layoutSubtreeIfNeeded()
-        let width = max(0, bounds.width - 24) * progress
-        guard let fill, fill.constant != width else { return }
-        guard Motion.current == .calm else { return fill.constant = width }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
-            context.timingFunction = Self.ease
-            fill.animator().constant = width
         }
     }
 
@@ -689,11 +690,33 @@ final class GuideIsland: NSView {
     }
 }
 
-/// The island's progress: 1.5 pt of Signal along its top edge.
-private final class SignalHairline: NSView {
+/// The guide's progress inside the island: three 4 pt dots 4 pt apart, those up to the current step in Signal, the
+/// rest in `ink3`. The sentence says the step, so VoiceOver skips them.
+private final class StepDots: NSView {
+    var step = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        setAccessibilityElement(false)
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("StepDots is built in code")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 20, height: 4)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        Chrome.color(.signal).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+        for index in 0..<3 {
+            Chrome.color(index < step ? .signal : .ink3).setFill()
+            NSBezierPath(ovalIn: NSRect(x: CGFloat(index) * 8, y: bounds.midY - 2, width: 4, height: 4)).fill()
+        }
     }
 }
 

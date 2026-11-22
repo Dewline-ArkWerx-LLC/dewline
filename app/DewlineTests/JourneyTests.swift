@@ -120,7 +120,9 @@ struct JourneyTests {
         let guide = try String(contentsOf: Welcome.url(in: folder), encoding: .utf8)
         #expect(guide == (try String(contentsOf: Welcome.bundled, encoding: .utf8)))
         #expect(guide.hasPrefix("# Welcome to Dewline\n\nWhen Claude Code, Codex or Cursor edits a note"))
-        #expect(guide.contains("Help > Replay the Demo:\n\n[Show me a change](dewline://demo)\n\n"), "the demo link alone, drawn as a button")
+        let demo = try #require(guide.range(of: Welcome.anchor)).upperBound
+        #expect(guide[..<demo].split(separator: "\n", omittingEmptySubsequences: true).count == 3, "the title and two sentences above the demo")
+        #expect(!guide.contains("dewline://demo"), "the guide is the one thing that plays the demo; Help replays it")
         #expect(guide.contains("[Settings > Agents](dewline://setup-hooks)"))
         #expect(guide.contains(Welcome.replaced))
         #expect(guide.contains(Welcome.anchor))
@@ -904,14 +906,14 @@ struct JourneyTests {
             tab.window.setContentSize(NSSize(width: CGFloat(width), height: 760))
             for beat in 0...3 {
                 let text = beat < 3 ? WelcomeGuide.sentences[beat] : WelcomeGuide.closing
-                let buttons = (beat < 3 ? ["Skip"] : ["Done", "Set Up Dewline"]).map { ChromeButton($0) {} }
-                island.show(text, key: beat < 3 ? WelcomeGuide.keys[beat] : nil, spoken: nil, progress: 0, buttons: buttons)
+                let buttons = (beat < 3 ? ["Skip"] : ["Set Up\u{2026}", "Open a Folder\u{2026}"]).map { ChromeButton($0) {} }
+                island.show(text, key: beat < 3 ? WelcomeGuide.keys[beat] : nil, spoken: nil, step: beat < 3 ? beat + 1 : nil, buttons: buttons)
                 tab.window.layoutIfNeeded()
                 let label = try #require(fields(in: island).first { $0.stringValue == text })
                 let cell = try #require(label.cell)
                 let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.bounds.width, height: .greatestFiniteMagnitude)).height
                 #expect(needed <= label.bounds.height + 0.5, "\(width) pt: \(text)")
-                #expect(scrollView.contentInsets.bottom >= island.frame.height + 16)
+                #expect(scrollView.contentInsets.bottom >= island.frame.height + 16 + ThemeStore.shared.bodySize, "a line clear of the island")
             }
         }
 
@@ -991,6 +993,7 @@ struct JourneyTests {
         status.agents[0].installed = false
         let missing = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
         #expect(missing[0].button == "Set Up\u{2026}")
+        #expect(missing[0].status == "Adds a hook to /Users/a/.claude/settings.json so the stamp says CLAUDE CODE.", "names the file it edits")
     }
 
     /// The dewline command links into /usr/local/bin when this account can use it, else ~/.local/bin, made if missing;
@@ -1057,21 +1060,23 @@ struct JourneyTests {
         #expect(CommandLink.taken(at: folder, command: command) == nil, "the same command, written another way")
     }
 
-    /// The hook offer waits for an edit no hook named: opening the note or typing in it doesn't make one, an outside
-    /// write does, and keeping the change ends it.
-    @Test func hookOfferWaitsForAnUnnamedOutsideEdit() async throws {
+    /// The hook offer waits until an edit no hook named is kept or reverted: opening the note, typing in it or an
+    /// outside write landing doesn't make it due, so the sheet never covers the change; keeping that change does.
+    @Test func hookOfferWaitsUntilAnUnnamedEditIsDecided() async throws {
         let vault = try Vault(["plan.md": "# Plan\n"])
         defer { vault.remove() }
         let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
         defer { tab.close() }
-        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
+        #expect(HookSetup.unnamedEdits(in: tab.live.changes).isEmpty)
         tab.textView.insertText("!", replacementRange: NSRange(location: 6, length: 0))
-        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
+        #expect(HookSetup.unnamedEdits(in: tab.live.changes).isEmpty)
         try Data("# Plan\n\nAgent note.\n".utf8).write(to: vault.url("plan.md"))
         await tab.live.refresh()
-        #expect(HookSetup.unnamedEdit(in: tab.live.changes))
+        #expect(HookSetup.unnamedEdits(in: tab.live.changes).count == 1)
+        #expect(!tab.controller.hookOfferDue, "the offer waits while the change is on show")
         tab.live.decideAll(keep: true)
-        #expect(!HookSetup.unnamedEdit(in: tab.live.changes))
+        #expect(HookSetup.unnamedEdits(in: tab.live.changes).isEmpty)
+        #expect(tab.controller.hookOfferDue)
     }
 
     /// Set Up reads which settings files lack hooks, and the entries each would gain, from `dewline doctor`, and runs
@@ -1087,6 +1092,9 @@ struct JourneyTests {
             )
         ])
         #expect(HookSetup.summary(missing) == "Claude Code: PreToolUse to name the agent behind each edit; Stop to mark where each turn ends.")
+        #expect(HookSetup.scope(missing, in: URL(filePath: "/Users/a/relay")) == "Adds 2 entries to /Users/a/.claude/settings.json (every project).\nBackup saved beside it.")
+        let project = HookSetup.Missing(agent: "Claude Code", file: "/Users/a/relay/.claude/settings.json", entries: ["{}"])
+        #expect(HookSetup.scope([project], in: URL(filePath: "/Users/a/relay")) == "Adds 1 entry to /Users/a/relay/.claude/settings.json (this project only).\nBackup saved beside it.")
         let vault = try Vault([:])
         defer { vault.remove() }
         let script = vault.root.appending(path: "asks.sh")

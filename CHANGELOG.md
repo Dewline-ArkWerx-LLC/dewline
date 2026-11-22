@@ -12,6 +12,8 @@ What changed in each Dewline release, newest first.
 - The hook offer waits for the first change another app makes in an open note, instead of coming when a folder opens.
 - Settings > Agents says whether the `dewline` command is installed, and where, with Add when it isn't.
 - Code files always open, and the sidebar, Quick Open and Find in Files list them; Settings > Editor drops Open code files.
+- The hook offer comes once you keep or revert another app's change, not as it lands, and names each settings file it edits and whether it reaches every project.
+- First run and Settings: Welcome.md is two sentences above the demo, the guide island clears the note and ends on Open a Folder…, the test prompt targets a new dewline-test.md and prints under its button, and the Settings window fits each pane.
 
 ## 0.6.1 (21 Nov 2026)
 

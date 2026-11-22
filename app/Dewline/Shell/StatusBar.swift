@@ -1,9 +1,9 @@
 import AppKit
 
 /// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: `idle`, which a
-/// click copies, then one message at a time with its buttons, a problem's after a red octagon. With neither it is
-/// hidden and takes no height unless `reserved`, so a message never moves the editor. Results and problems are read
-/// out to VoiceOver. Nothing in it blinks.
+/// click copies, then one message at a time with its buttons, a problem's after a red octagon. Until either first
+/// shows it is hidden and takes no height unless `reserved`; from then on it keeps its height, so a later message never
+/// moves the page. Results and problems are read out to VoiceOver. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
@@ -57,6 +57,8 @@ final class StatusBar: NSView {
     }
     private let line = NSStackView()
     private var messages: [Message] = []
+    /// Set once a message or the place has shown.
+    private var shownOnce = false
     private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: 0)
 
     override init(frame: NSRect) {
@@ -138,7 +140,8 @@ final class StatusBar: NSView {
 
     private func rebuild() {
         for view in line.arrangedSubviews { view.removeFromSuperview() }
-        isHidden = shown == nil && idle == nil && !reserved
+        shownOnce = shownOnce || shown != nil || idle != nil
+        isHidden = !shownOnce && !reserved
         heightConstraint.constant = isHidden ? 0 : Self.height
         if let idle {
             let place = NSTextField(labelWithString: idle)

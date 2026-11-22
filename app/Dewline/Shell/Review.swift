@@ -60,7 +60,7 @@ enum Review {
             if let id = here.first { return live.reveal(id, caret: true) }
             guard let next = others.first?.url ?? notesBeyond(textView.window).first else { return }
             return StatusBar.post(
-                .init(id: "step", kind: .result, text: "Next: \(next.lastPathComponent) \u{2303}\u{2318}\u{2193}", untilTyping: true), in: textView.window)
+                .init(id: "step", kind: .result, text: "Next change: \(next.lastPathComponent) \u{2303}\u{2318}\u{2193}", untilTyping: true), in: textView.window)
         }
         if let file = others.first, let id = forward ? marked(file).first : marked(file).last { return file.reveal(id, caret: true) }
         let beyond = forward ? notesBeyond(textView.window) : []

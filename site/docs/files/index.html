@@ -110,7 +110,7 @@
       <p>New Folder is <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd></span>. With no folder open, Dewline asks where new notes go the first time and uses that folder from then on.</p>
 
       <h2 id="find">Find a note</h2>
-      <p>Press <span class="keys"><kbd>⌘</kbd><kbd>P</kbd></span>, type a few letters of the name and press <kbd>↩</kbd>. If nothing matches, a row offers to create it: “Create “plan.md” in Field Notes”.</p>
+      <p>Press <span class="keys"><kbd>⌘</kbd><kbd>P</kbd></span>, type a few letters of the name and press <kbd>↩</kbd>. If nothing matches, a row offers to create it: “Create “plan.md” in Field Notes”. With nothing typed, the prefixes show under the list.</p>
       <div class="table" tabindex="0" role="region" aria-label="Quick Open prefixes">
         <table>
           <thead><tr><th scope="col">Type first</th><th scope="col">To search</th></tr></thead>
@@ -165,14 +165,14 @@
 
       <h2 id="snapshots">Go back to an earlier version</h2>
       <ol class="steps">
-        <li><b>Choose File &gt; Earlier Versions…</b> Each version shows its time and writer: “Today, 9:41 AM · Claude Code”.</li>
-        <li><b>Select a version</b> to see what differs.</li>
+        <li><b>Choose File &gt; Earlier Versions…</b> Each version shows its time and writer, “Today, 9:41 AM · Claude Code”, over what it changed: “+12 words · Backoff”.</li>
+        <li><b>Select a version</b> to see what restoring it changes: each changed passage with two lines around it, the words it takes out struck and the words it brings back in the writer's color.</li>
         <li><b>Click Restore</b>, or Open as Copy. A restore is one edit you can undo.</li>
       </ol>
-      <p>Dewline keeps a version when another app changes a note, before a merge and before a restore. The version a write replaced is listed at the time it was written, so one write is one row. Versions live in <code>~/Library/Application Support/dev.arkwerx.dewline/</code>.</p>
+      <p>Dewline keeps a version when another app changes a note, before a merge and before a restore. The version a write replaced is listed at the time it was written, so one write is one row, and an agent's writes in one turn are one row too. Versions live in <code>~/Library/Application Support/dev.arkwerx.dewline/</code>.</p>
       <details>
         <summary>How long versions are kept</summary>
-        <p>A version stays while it is pinned, one of its note's 50 newest, or less than 30 days old. Pin one with the pin beside it. Versions are zstd-compressed and stored once per content, by BLAKE3 hash. Agent transcripts and settings files are never kept.</p>
+        <p>A version stays while it is pinned, one of its note's 50 newest, or less than 30 days old. Pin one with the pin on its row, which shows when you select or point at the row. Versions are zstd-compressed and stored once per content, by BLAKE3 hash. Agent transcripts and settings files are never kept.</p>
       </details>
 
       <h2 id="inbox">Capture to the inbox</h2>

@@ -106,7 +106,7 @@ final class WindowState {
 }
 
 /// The tab strip in the title row: one 26 pt pill per tab, SF Pro body, radius 6, at most 200 pt, its file name with
-/// the extension in `ink2`. The selected tab is the brightest pill; a tab with unsaved edits shows a dot 3 pt into it,
+/// a code file's extension in `ink2`. The selected tab is the brightest pill; a tab with unsaved edits shows a dot 3 pt into it,
 /// which turns into the close x under the pointer. Other tabs sit on the chrome, the name 16 pt in and 8 pt from the end, with a 1 px divider at
 /// 10%, hidden beside the selected or hovered tab. Tabs narrow to fit, down to 72 pt, a name too long for its tab losing
 /// the middle of its name and never its extension, so it runs to the tab's end; those past the strip's end go into a "+N" pop-up, in the writer's ink when one of
@@ -232,14 +232,16 @@ final class TabStrip: NSView {
         return cut(low)
     }
 
-    /// The title fitted to `room`, its extension and parent path in `ink2`.
+    /// The title fitted to `room`, its parent path and a code file's extension in `ink2`; a note's ".md" stays in `ink`.
     private static func name(_ tab: MainWindowController, _ title: String, room: CGFloat = .greatestFiniteMagnitude) -> NSAttributedString {
-        let stem = (tab.tabFileName as NSString).deletingPathExtension.count
+        let file = tab.tabFileName as NSString
+        let stem = file.deletingPathExtension.count
+        let inked = FolderEntry.markdownExtensions.contains(file.pathExtension.lowercased()) ? tab.tabFileName.count : stem
         let text = fit(title, stem: stem, in: room)
         let line = NSMutableParagraphStyle()
         line.lineBreakMode = .byClipping
         let name = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
-        let start = (String(text.prefix(text.count - (title.count - stem))) as NSString).length
+        let start = (String(text.prefix(text.count - (title.count - inked))) as NSString).length
         name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: start, length: name.length - start))
         return name
     }
@@ -509,7 +511,7 @@ final class TabStrip: NSView {
             let id = ObjectIdentifier(other.tab)
             shifts[id] = (shifts[id]?.now ?? 0, target)
         }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if Motion.current == .off {
             shifts = shifts.mapValues { ($0.target, $0.target) }
             return
         }

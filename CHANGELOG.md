@@ -6,6 +6,12 @@ What changed in each Dewline release, newest first.
 
 - List bullets move with their lines, a period after inline code stays on the code's line, struck text sits flush or hangs when it would push its line, and a rewrite across lines hangs its old text as one block.
 - Code-file changes read as a diff (old lines above, − and + with numbers in the gutter) with Revert and Keep on the stamp and a build error on it; every stamp shows Keep filled and its keys, sized from the body text; a revert leaves "Reverted · ⌘Z" in the margin; a named writer's insert drops the solid underline unless Differentiate Without Color or Increase Contrast is on.
+- The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
+- First run and setup: the guide points at the stamp's Revert button, Skip and Done read as buttons, the status bar keeps its height once shown, and Set Up Agent Hooks… opens one sheet that leads with what hooks send and names the events. A folder's empty page leads with Copy a Test Prompt, and File > Open… takes a folder.
+- Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
+- Earlier Versions shows each change with two lines around it, word by word in the writer's color, says under each row what it changed ("+12 words · Backoff"), folds an agent's turn into one row, shows a pin only where it applies, and fits a 620 pt window. Mermaid labels use the text font in 6 pt boxes, H1 tracking loosens to -0.01 em, and images take a 1 px edge in both themes (12% dimmer in dark).
+- A change waiting off screen keeps its mark at the window's right edge at rest, and one that lands there pins a chip ("1 more below · Backoff ⌃⌘↓") until it is on screen or decided.
+- Writer badges count only changes waiting for Keep or Revert, so they add up to "N to review", and say "1 change by Claude Code, not reviewed"; untracked files read New; the review menu heads each writer with its ink and count; the status bar says "Next change: spec.md ⌃⌘↓". Quick Open shows its prefixes, a magnifier and a stronger selection; Find in Files rows wrap to two lines, carry the badge and git letter, and use symbol toggles and the system find highlight.
 
 ## 0.7.0 (22 Nov 2026)
 

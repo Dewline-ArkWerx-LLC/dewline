@@ -229,6 +229,9 @@ impl Claim {
 pub struct Chain {
     pub vendor: Vendor,
     pub session: Id,
+    /// The versions its writes left between the two, which a change that
+    /// coalesced them never names.
+    pub through: Vec<Hash>,
     path: PathBuf,
     uses: Vec<Id>,
 }
@@ -395,9 +398,18 @@ impl Claims {
                 if found.is_some() {
                     return None;
                 }
+                let mut through: Vec<Hash> = links
+                    .iter()
+                    .filter(|(id, _)| uses.contains(id))
+                    .filter_map(|(_, link)| link.to)
+                    .filter(|hash| hash != from && hash != to)
+                    .collect();
+                through.sort_by_key(|hash| *hash.as_bytes());
+                through.dedup();
                 found = Some(Chain {
                     vendor,
                     session: session.clone(),
+                    through,
                     path: path.to_path_buf(),
                     uses,
                 });
@@ -778,6 +790,10 @@ mod tests {
             let expected = expected.map(|(vendor, session, uses)| Chain {
                 vendor,
                 session: Id::new(session).unwrap(),
+                through: chain
+                    .as_ref()
+                    .map(|chain| chain.through.clone())
+                    .unwrap_or_default(),
                 path: PathBuf::from(path),
                 uses: ids(uses),
             });
@@ -1005,7 +1021,9 @@ mod tests {
                     let chain = ledger.chain(Path::new(P), &h(&state(i)), &h(&state(j)), seen);
                     let uses: Vec<String> = (i..j).map(|k| format!("toolu_{k}")).collect();
                     let uses: Vec<&str> = uses.iter().map(String::as_str).collect();
-                    let expected = Chain { vendor: Vendor::Claude, session: Id::new("s1").unwrap(), path: PathBuf::from(P), uses: ids(&uses) };
+                    let mut through: Vec<Hash> = (i + 1..j).map(|k| h(&state(k))).collect();
+                    through.sort_by_key(|hash| *hash.as_bytes());
+                    let expected = Chain { vendor: Vendor::Claude, session: Id::new("s1").unwrap(), through, path: PathBuf::from(P), uses: ids(&uses) };
                     prop_assert_eq!(chain, Some(expected));
                     prop_assert_eq!(ledger.chain(Path::new(P), &h(&state(j)), &h(&state(i)), seen), None);
                 }

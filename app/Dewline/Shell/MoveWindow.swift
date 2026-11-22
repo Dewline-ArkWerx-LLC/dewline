@@ -138,7 +138,7 @@ final class MoveWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// The icon's trip along the line into the folder, 450 ms, fading over its last 150; under Reduce Motion it only
+    /// The icon's trip along the line into the folder, 200 ms, fading over its last 150; under Reduce Motion it only
     /// fades, 150 ms. Returns how long it takes.
     private func travel() -> Duration {
         let calm = Motion.current == .calm
@@ -153,12 +153,12 @@ final class MoveWindowController: NSWindowController, NSWindowDelegate {
             return .milliseconds(150)
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.45
+            context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             icon.animator().frame = Self.iconFrame(midX: Self.folderX).insetBy(dx: Self.iconSize / 4, dy: Self.iconSize / 4)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { fade() } }
-        return .milliseconds(450)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { MainActor.assumeIsolated { fade() } }
+        return .milliseconds(200)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

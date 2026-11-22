@@ -137,7 +137,7 @@
     <div class="wrap frow-in">
       <div class="ftext">
         <h2 id="markdown-h" class="rv">Markdown, drawn in the page.</h2>
-        <p class="rv">Syntax hides until the caret reaches it. Tables, task lists, callouts and footnotes render in place. Math and Mermaid diagrams are drawn natively, with no JavaScript, and code blocks highlight 50 languages, with a Copy button.</p>
+        <p class="rv">Syntax hides until the caret reaches it. Tables, task lists, callouts and footnotes render in place. Math and Mermaid diagrams are drawn natively, with no JavaScript, and code blocks highlight more than 50 languages, with a Copy button.</p>
         <a class="fmore rv" href="/docs/markdown/">What Dewline reads<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
@@ -218,13 +218,14 @@
           <h3 id="g-writing">Writing</h3>
           <dl>
             <div><dt>Live or Source</dt><dd>Syntax hides until the caret reaches it. View &gt; Show Source (<kbd>⌥⌘U</kbd>) shows every character, with line numbers.</dd></div>
-            <div><dt>Tables</dt><dd>Tab moves between cells and adds a row at the end. Format &gt; Insert Row and Insert Column.</dd></div>
+            <div><dt>Tables</dt><dd>Tab moves between cells and adds a row at the end. Format &gt; Insert Row Above or Below, and Insert Column Left or Right.</dd></div>
             <div><dt>Paste and copy</dt><dd>Pasting from a web page or Mail gives Markdown. Copy as Markdown or as HTML.</dd></div>
             <div><dt>Images</dt><dd>Paste or drop an image and it is saved beside the note, with its original bytes.</dd></div>
             <div><dt>Vim mode</dt><dd>Motions, operators, text objects, registers and <code>:w</code>.</dd></div>
             <div><dt>Focus and typewriter</dt><dd>Dim every block but the caret’s, or keep its line in the middle.</dd></div>
             <div><dt>Spelling and word count</dt><dd>Spelling and Writing Tools skip code, math and links. The word count sits in the status bar.</dd></div>
             <div><dt>Code files</dt><dd>Source and config files open as code, highlighted, with line numbers.</dd></div>
+            <div><dt>Typst and LaTeX</dt><dd>A <code>.typ</code> or <code>.tex</code> file typesets when it is saved or an agent writes to it, in a sandbox, with the compiler you have installed. An error shows in the status bar with Go to Line.</dd></div>
           </dl>
         </section>
         <section class="fgroup rv" aria-labelledby="g-files-and-saving">
@@ -255,6 +256,10 @@
           <dl>
             <div><dt>Hook setup</dt><dd>Settings &gt; Agents or <code>dewline doctor --install-hooks</code>, with a backup of each file it changes.</dd></div>
             <div><dt>Autosave waits</dt><dd>While an agent’s edit is open, autosave and outside changes wait, up to 10 seconds.</dd></div>
+            <div><dt>Code changes as a diff</dt><dd>In a code file a change reads as a diff: old lines above the new, − and + in the gutter, and Revert and Keep on the stamp.</dd></div>
+            <div><dt>Changes off screen</dt><dd>A change above or below the view keeps its mark at the window’s right edge. One that lands there pins a chip, such as “1 more below · Backoff ⌃⌘↓”.</dd></div>
+            <div><dt>What’s left to review</dt><dd>Writer badges on sidebar rows and tabs count only the changes waiting for Keep or Revert, so they add up to the toolbar’s “N to review”.</dd></div>
+            <div><dt>Change, note or session</dt><dd><kbd>⌘</kbd> acts on one change, <kbd>⇧</kbd> on the note and <kbd>⌃</kbd> on the session: Keep Session is <kbd>⌃⌘↩</kbd>, Revert Session <kbd>⌃⌘⌫</kbd>.</dd></div>
             <div><dt>Shell commands</dt><dd>A change that lands during a Claude Code shell command says so on its stamp.</dd></div>
             <div><dt>Revert after typing</dt><dd>Revert still works after you type around a change. When it can’t, the stamp says why.</dd></div>
             <div><dt>Decisions</dt><dd><code>dewline changes</code> and the MCP decisions tool show agents what you kept and reverted, without the text.</dd></div>
@@ -297,7 +302,7 @@
       <div class="get rv">
         <a class="btn" href="/download">Download for Mac</a>
       </div>
-      <p class="meta rv">Version <span data-version>0.6.1</span>, signed and notarized. macOS 26 or later, Apple Silicon and Intel. <span><a class="text-link" href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest">Release notes</a> · <a class="text-link" href="/docs/first-steps/">First steps</a></span></p>
+      <p class="meta rv">Version <span data-version>0.7.2</span>, signed and notarized. macOS 26 or later, Apple Silicon and Intel. <span><a class="text-link" href="https://github.com/Dewline-ArkWerx-LLC/dewline/releases/latest">Release notes</a> · <a class="text-link" href="/docs/first-steps/">First steps</a></span></p>
     </div>
   </section>
 </main>

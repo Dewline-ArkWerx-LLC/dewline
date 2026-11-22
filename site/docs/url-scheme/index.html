@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>URL scheme · Dewline docs</title>
-<meta name="description" content="The dewline:// links: open and demo.">
+<meta name="description" content="The dewline:// links: open, demo and setup-hooks.">
 <meta name="doc-type" content="reference">
 <link rel="canonical" href="https://dewline.arkwerx.com/docs/url-scheme/">
 <meta name="color-scheme" content="light dark">
@@ -99,7 +99,7 @@
   <main class="dmain" id="main">
     <article class="prose">
       <h1>URL scheme</h1>
-      <p class="lead"><code>dewline://</code> links open a note at a line or run the Welcome demo. Any app that opens URLs can use them, and so can <code>open</code> in Terminal.</p>
+      <p class="lead"><code>dewline://</code> links open a note at a line, run the Welcome demo or open hook setup. Any app that opens URLs can use them, and so can <code>open</code> in Terminal.</p>
 
       <div class="table" tabindex="0" role="region" aria-label="The dewline:// links">
         <table>
@@ -107,6 +107,7 @@
           <tbody>
             <tr><td><a href="#open"><code>dewline://open</code></a></td><td>Opens a file, with the caret on a line when given.</td></tr>
             <tr><td><a href="#demo"><code>dewline://demo</code></a></td><td>Runs the change demo in Welcome.md.</td></tr>
+            <tr><td><a href="#setup-hooks"><code>dewline://setup-hooks</code></a></td><td>Opens the agent hook setup sheet.</td></tr>
           </tbody>
         </table>
       </div>
@@ -127,6 +128,9 @@
 
       <h2 id="demo"><code>dewline://demo</code></h2>
       <p>Runs the change demo on Welcome.md: a demo writer edits the note, and its changes are marked. Help &gt; Replay the Demo does the same.</p>
+
+      <h2 id="setup-hooks"><code>dewline://setup-hooks</code></h2>
+      <p>Opens the <a href="/docs/agents/#install">hook setup</a> sheet, which asks before it changes a file. Welcome.md uses it.</p>
 
       <h2 id="paths">Path rules</h2>
       <p><code>open</code> checks its path before it touches it:</p>

@@ -198,7 +198,7 @@
 
       <h2 id="saves">How a save checks the disk</h2>
       <p>A save writes only if the file still holds the bytes it was based on, checked by BLAKE3 hash. The new bytes go to a hidden sibling with the file's mode, owner, flags and extended attributes. One rename then replaces the file.</p>
-      <p>A symlink, a file with other hard links or one with an access control list is written in place, through the descriptor that was hashed. If that write fails, the original bytes go back.</p>
+      <p>A file with other hard links or an access control list is written in place, through the descriptor that was hashed. If that write fails, the original bytes go back. A symlink's target is replaced and the link is left as it is.</p>
 
       <h2 id="outside-change">An outside change, disk to screen</h2>
       <p>When git, a sync app, a script or an agent writes an open note, the change takes the same eight steps.</p>
@@ -289,7 +289,7 @@
       <p>Release builds leave collaboration out; the <code>collab</code> feature of <code>dewline-ffi</code> builds it in.</p>
       <ul>
         <li><strong>Mirror.</strong> One Loro document per shared note carries edits between Macs. The <code>.md</code> file on each Mac stays the source of truth.</li>
-        <li><strong>Transport.</strong> iroh 1.3.0, peer to peer, with a relay when no direct path opens. The invite carries the host's address, so nothing is published.</li>
+        <li><strong>Transport.</strong> iroh 1.4.1, peer to peer, with a relay when no direct path opens. The invite carries the host's address, so nothing is published.</li>
         <li><strong>Keys.</strong> Each message is sealed with XChaCha20-Poly1305 and signed with the sender's ed25519 key. Each approval or removal makes a new document key.</li>
         <li><strong>The seam.</strong> A collaborator's edit reaches the engine as one replace, outside your undo history, with the caret kept.</li>
       </ul>
@@ -308,10 +308,12 @@
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0005-math-engine.md">0005</a></td><td>RaTeX for math, over SwiftMath.</td></tr>
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0006-editor-architecture.md">0006</a></td><td>One parser, and what Rust may do on the keystroke path.</td></tr>
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0007-agent-attribution.md">0007</a></td><td>When a change gets an agent's name, per agent.</td></tr>
-            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a></td><td>syntect, its 16 syntaxes and its limits.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0008-code-highlighting.md">0008</a></td><td>syntect, its 56 fence languages and its limits.</td></tr>
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0009-collaboration.md">0009</a></td><td>Live collaboration: Loro, iroh, invites, keys and removal.</td></tr>
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0010-perf-budgets.md">0010</a></td><td>Four performance budgets reset after the third perf pass.</td></tr>
             <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0011-paid-sync-pricing.md">0011</a></td><td>The app is free to start; paid plans cover only services that run on our servers.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0012-cloud-sync.md">0012</a></td><td>Dewline Sync: whole files stored and forwarded as encrypted blobs, with no CRDT.</td></tr>
+            <tr><td><a href="https://github.com/Dewline-ArkWerx-LLC/dewline/blob/main/docs/decisions/0013-keymap-ladder.md">0013</a></td><td>One rule for the review keys, and Quick Open on ⌘P.</td></tr>
           </tbody>
         </table>
       </div>

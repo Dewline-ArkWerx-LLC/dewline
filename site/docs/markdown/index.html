@@ -119,7 +119,7 @@ a [link](https://example.com) and a [reference link][docs].
 
 [docs]: https://example.com/docs</code></pre>
       </div>
-      <p>Headings take the theme's heading color and size by level. A link shows its text in the link color. A thematic break draws a rule.</p>
+      <p>Headings take the theme's heading color and size by level. A link shows its text in the text color with a thin underline. A thematic break draws a rule.</p>
 
       <h2 id="gfm">GitHub extensions</h2>
       <h3 id="tables">Tables</h3>
@@ -129,7 +129,7 @@ a [link](https://example.com) and a [reference link][docs].
 | 1   |    12 |
 | 2   |     9 |</code></pre>
       </div>
-      <p>A table draws in place with rules between its columns and under its head, and each column takes its alignment from the delimiter row. The row the caret is on shows its source, pipes and all; the head and the delimiter row show theirs together. A table wider than the line width runs on toward the window's right edge, and one wider than the window wraps its cells in their columns.</p>
+      <p>A table draws in place with one rule under its head, and each column takes its alignment from the delimiter row. The row the caret is on shows its source, pipes and all; the head and the delimiter row show theirs together. A table wider than the line width runs on toward the window's right edge, and one wider than the window wraps its cells in their columns.</p>
 
       <h3 id="tasks">Task lists</h3>
       <div class="code" data-lang="Markdown">
@@ -253,7 +253,7 @@ flowchart LR
       <p>A diagram over 50 KB, of a type not listed, or slower than 250 ms shows its source and the error. C4, quadrant, radar, requirement, Sankey and timeline diagrams keep a light palette on a dark page.</p>
 
       <h2 id="code">Code blocks</h2>
-      <p>A fenced block takes syntax colors from the language after its opening fence. Dewline ships 16 grammars and highlights two more formats itself:</p>
+      <p>A fenced block takes syntax colors from the language after its opening fence. Dewline ships grammars for 56 languages and highlights two more formats, Diff and Markdown, itself. The most common, with their fence names:</p>
       <div class="table" tabindex="0" role="region" aria-label="Highlighted languages">
         <table>
           <thead><tr><th scope="col">Language</th><th scope="col">Fence names</th></tr></thead>
@@ -279,7 +279,8 @@ flowchart LR
           </tbody>
         </table>
       </div>
-      <p>A fence name is matched without regard to case, as a file extension or a language's name. A block with another language, or none, stays plain in the code font. Colors come from the theme. A line over 16 KB, or with over 2,000 color changes, stays plain. A line longer than the line width runs on toward the window's right edge, its block's background with it, and wraps there keeping its indent.</p>
+      <p>The rest are C#, Clojure, CMake, Dart, Dockerfile, Elixir, Erlang, F#, GraphQL, Groovy, Haskell, INI, Julia, Kotlin, LaTeX, Lua, Makefile, MATLAB, Nix, nginx, Objective-C and Objective-C++, OCaml, Perl, PHP, PowerShell, Protocol Buffers, R, regular expressions, Ruby, Sass and SCSS, Scala, Terraform, Typst, XML, Zig and x86-64 assembly.</p>
+      <p>A fence name is matched without regard to case, as a file extension or a language's name. A block in any other language, or none, stays plain in the code font. Colors come from the theme. A line over 16 KB, or with over 2,000 color changes, stays plain. A line longer than the line width runs on toward the window's right edge, its block's background with it, and wraps there keeping its indent.</p>
 
       <h2 id="not-supported">What stays as text</h2>
       <ul>

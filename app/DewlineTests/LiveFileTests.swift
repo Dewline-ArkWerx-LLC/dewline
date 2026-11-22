@@ -226,6 +226,8 @@ struct LiveFileTests {
         file.event { file.textView.revertChange(nil) }
         #expect(file.textView.string == "# Plan!\n\nShip on Friday.\n")
         #expect(file.live.changes[id] == nil)
+        let window = try #require(file.document.windowControllers.first as? MainWindowController)
+        #expect(window.statusBar.shown?.text == "Reverted \u{00B7} \u{2318}Z to undo")
         file.undo()
         #expect(file.textView.string == "# Plan!\n\nShip on Friday.\n\nAgent note.\n")
     }
@@ -583,7 +585,7 @@ struct LiveFileTests {
         await waitForMain { file.live.changes.values.contains { $0.origin == .agent(.claude, session: "s1") } }
         file.textView.setSelectedRange(NSRange(location: change.range.location + 1, length: 0))
         file.event { file.textView.revertChange(nil) }
-        #expect(file.undoManager.undoMenuItemTitle == "Undo Revert Claude's Change")
+        #expect(file.undoManager.undoMenuItemTitle == "Undo Revert Claude Code's Change")
         file.undo()
         #expect(file.textView.string == "# Plan!\n\nShip on Friday.\n\nAgent note.\n")
         // Your "!" from before the landing still undoes.

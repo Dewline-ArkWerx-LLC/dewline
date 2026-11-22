@@ -10,7 +10,7 @@ struct MarkWriter: Equatable {
 
     init(_ origin: ChangeEngine.Origin) {
         (name, writer) = switch origin {
-        case .agent(.claude, _): ("Claude", .claude)
+        case .agent(.claude, _): ("Claude Code", .claude)
         case .agent(.codex, _): ("Codex", .codex)
         case .agent(.cursor, _): ("Cursor", .cursor)
         case .agent(.demo, _): ("Demo agent", .demo)
@@ -32,7 +32,7 @@ struct MarkWriter: Equatable {
         dashed ? "the other" : "\(name)'s"
     }
 
-    /// The name as the margin stamp sets it, small capitals in the writer's ink: CLAUDE, GIT.
+    /// The name as the margin stamp sets it, small capitals in the writer's ink: CLAUDE CODE, GIT.
     @MainActor var stamp: NSAttributedString {
         NSAttributedString(string: name, attributes: [.font: Self.stampFont, .foregroundColor: color, .kern: 0.4])
     }
@@ -333,9 +333,11 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     group.addSublayer(fill)
                     tips.append((cell, id))
                 }
-                for line in trimmed(lines) where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
+                let trim = trimmed(lines)
+                for line in trim where line.frame.width >= 0.5 && !drawn.rows.contains(where: { NSLocationInRange(line.location, $0) }) {
                     let fill = CALayer()
-                    fill.frame = line.frame
+                    // A change within one line takes 2 pt either side, so a one-letter wash reads as a mark.
+                    fill.frame = trim.count == 1 ? line.frame.insetBy(dx: -2, dy: 0) : line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
                     group.addSublayer(fill)
                     // Dashed for another app; a solid 1 pt line at 35% ink for a named writer, which no spelling or

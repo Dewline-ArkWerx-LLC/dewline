@@ -4,10 +4,12 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Change marks: the stamp and the rail's pill say Claude Code; another app's and the demo's changes take a plum hue; removed text reads at 58% ink; a one-line wash pads 2 pt; Revert and Keep are small native buttons, always shown on a folded stamp; a revert says "Reverted · ⌘Z to undo" for 4 s; the column no longer slides when the rail shows; the rail's arrival pill sits at the end toward its change with a chevron, and heading ticks show while you point at the rail or scroll.
+- Rendering: dark-mode images at 85% brightness, inline code at 0.9 of the text, wrapped task items start under their label.
 - Typing above a marked change keeps its marks on their words; a short note opened while its window is behind draws all its text; a Mermaid chain with a labeled link (`a -->|x| b --> c`) draws every edge.
 - Writer badges on sidebar rows and tabs show a dot in the writer's ink and the count instead of a letter that read as git's (A, C, D, M, R); the name is in the tooltip and VoiceOver. Long tab names keep their extension, Find in Files has a labeled Replace toggle and one-line results, Quick Open says "opened now" and marks code files, and app buttons are standard macOS push buttons.
 - Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
-- A note opens with the caret at its start (past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
+- A note opens with the caret past its first-line H1 (or past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
 - Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.
 - Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
 - Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.

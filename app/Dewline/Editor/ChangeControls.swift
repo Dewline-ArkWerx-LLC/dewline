@@ -15,8 +15,7 @@ private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regul
     return label
 }
 
-/// A button that calls `action` when clicked: the prominent one filled with the theme's accent and set in paper, the
-/// others bare text in `ink2`.
+/// A small push button that calls `action` when clicked, the prominent one with the theme's accent bezel.
 @MainActor
 private final class ActionButton: NSButton {
     private var handler: () -> Void = {}
@@ -29,37 +28,17 @@ private final class ActionButton: NSButton {
         handler = action
         target = self
         self.action = #selector(clicked)
-        isBordered = false
-        wantsLayer = true
+        bezelStyle = .push
+        controlSize = .small
+        font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
         toolTip = shortcut.map { "\(title) (\($0))" }
         setAccessibilityLabel(label)
         paint()
         NotificationCenter.default.addObserver(self, selector: #selector(paint), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
-    override var intrinsicContentSize: NSSize {
-        let size = super.intrinsicContentSize
-        return NSSize(width: size.width + (prominent ? 24 : 8), height: 24)
-    }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        layer?.cornerRadius = 6
-        layer?.backgroundColor = prominent ? ThemeStore.shared.color(.accent).resolved(for: effectiveAppearance).cgColor : nil
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        paint()
-    }
-
     @objc private func paint() {
-        attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: prominent ? .medium : .regular),
-            .foregroundColor: ThemeStore.shared.color(prominent ? .paper : .ink2),
-        ])
-        needsDisplay = true
+        bezelColor = prominent ? ThemeStore.shared.color(.accent) : nil
     }
 
     @objc private func clicked() {
@@ -67,7 +46,7 @@ private final class ActionButton: NSButton {
     }
 }
 
-/// Removed text, struck, at ink 42% with the strike in the writer's color. A short removal on one line reads inline
+/// Removed text, struck, at ink 58% with the strike in the writer's color. A short removal on one line reads inline
 /// at its deletion point, in a gap the styler opens there; a longer one hangs under its paragraph.
 @MainActor
 final class Ghost: NSView, Hanging {
@@ -84,7 +63,7 @@ final class Ghost: NSView, Hanging {
         let font = ThemeStore.shared.bodyFont
         string = NSAttributedString(string: shown, attributes: [
             .font: font,
-            .foregroundColor: ThemeStore.shared.color(.ink).withAlphaComponent(0.42),
+            .foregroundColor: ThemeStore.shared.color(.ink).withAlphaComponent(0.58),
             .strikethroughStyle: NSUnderlineStyle.single.rawValue,
             .strikethroughColor: writer.color,
         ])
@@ -214,12 +193,13 @@ final class ConflictCard: NSView, Hanging {
     }
 }
 
-/// The focused change's stamp. In the margin, "CLAUDE 3:25 PM · 3 of 4" sits on the change's first text baseline
+/// The focused change's stamp. In the margin, "CLAUDE CODE 3:25 PM · 3 of 4" sits on the change's first text baseline
 /// and Revert and Keep on its second, the stamp's right edge 26 pt left of the text column; a narrower margin takes
-/// the compact stamp, "CLAUDE · 3 of 4" over Revert and Keep in 11 pt text. Only where the margin is narrower than the
+/// the compact stamp, "CLAUDE CODE · 3 of 4" over Revert and Keep in 11 pt text. Only where the margin is narrower than the
 /// compact stamp plus that 26 pt and a 24 pt gutter does it fold into a 30 pt bar under the block holding the change,
 /// on the writer's ink at 8%: writer, time and count on the left, Revert and Keep on the right. Revert and Keep share
-/// one width. Keep and Revert show on the stamp of the change at the caret and on a stamp under the pointer. No cursor
+/// one width. Keep and Revert show on the stamp of the change at the caret, on a stamp under the pointer and always on
+/// the folded bar. No cursor
 /// bar: no dark orange reaches 3:1 on Keep's cream fill, and in the gap it read as a separator.
 @MainActor
 final class ChangeStamp: NSView {
@@ -298,7 +278,7 @@ final class ChangeStamp: NSView {
     }
 
     private func showButtons() {
-        revert.isHidden = !(active || hovering)
+        revert.isHidden = !(active || hovering || folded)
         keep.isHidden = revert.isHidden
     }
 
@@ -363,7 +343,7 @@ final class ChangeStamp: NSView {
         revert.setAccessibilityLabel("Revert \(writer.possessive) change" + of)
         keep.setAccessibilityLabel("Keep \(writer.possessive) change" + of)
         // Set Up names no shell command's change, so a change during one doesn't offer it.
-        setUp.isHidden = !(offering && external && !shell)
+        setUp.isHidden = !(offering && external && !shell) || offeredHere
         if changed { needsDisplay = true }
         if external && !shell { offerHooks() }
     }
@@ -405,6 +385,11 @@ final class ChangeStamp: NSView {
         }
     }
 
+    /// The hook sheet has shown for this note's folder, so its Not Now holds for the link too.
+    private var offeredHere: Bool {
+        (window?.windowController as? MainWindowController)?.folder.map { HookSetup.offered(in: $0.url) } ?? false
+    }
+
     private func offerHooks() {
         guard !Self.offeredHooks, !Self.checkingHooks, ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         Self.checkingHooks = true
@@ -412,7 +397,7 @@ final class ChangeStamp: NSView {
             let report = await HookSetup.run(HookSetup.command(), ["doctor"], answers: 0)
             Self.checkingHooks = false
             guard report.ran, !HookSetup.missing(in: report.output).isEmpty else { return Self.offeredHooks = true }
-            guard let self, self.external, !self.shell, self.superview != nil else { return }
+            guard let self, self.external, !self.shell, self.superview != nil, !self.offeredHere else { return }
             Self.offeredHooks = true
             self.offering = true
             self.setUp.isHidden = false
@@ -420,8 +405,8 @@ final class ChangeStamp: NSView {
         }
     }
 
-    /// "CLAUDE 3:25 PM · 3 of 4": the writer in small capitals in its ink, the time with fixed-width digits and the
-    /// change's place in the window; "CLAUDE · 3 of 4" in the compact stamp.
+    /// "CLAUDE CODE 3:25 PM · 3 of 4": the writer in small capitals in its ink, the time with fixed-width digits and the
+    /// change's place in the window; "CLAUDE CODE · 3 of 4" in the compact stamp.
     private var line: NSAttributedString {
         line(compact: keep.form != .full && !folded)
     }
@@ -476,6 +461,7 @@ final class ChangeStamp: NSView {
     /// in the superview.
     func placeInMargin(right: CGFloat, first: CGFloat, second: CGFloat) {
         folded = false
+        showButtons()
         setCompact(width(compact: false) > right - Self.gutter)
         let width = width(compact: keep.form != .full)
         let top = first - ascent
@@ -504,6 +490,7 @@ final class ChangeStamp: NSView {
     /// Folded into a bar filling `rect`.
     func placeAsBar(_ rect: NSRect) {
         folded = true
+        showButtons()
         frame = rect
         baseline = ((Self.barHeight + NSFont.systemFont(ofSize: 11).capHeight) / 2).rounded()
         textX = 10
@@ -551,17 +538,17 @@ func readOnlyText(_ text: NSAttributedString) -> NSScrollView {
     return scroll
 }
 
-/// Revert (outlined), Keep (filled with the theme's accent, set in paper) and a quiet link, each its title alone; the
-/// keys are in the tooltip. Its width holds its title and its Option title, so holding Option moves nothing; the short
-/// form sets the title at 11 pt, the icon form its symbol alone.
+/// Revert and Keep as small push buttons, Keep with the theme's accent bezel, and a quiet link in the accent, each its
+/// title alone; the keys are in the tooltip. Its width holds its title and its Option title, so holding Option moves
+/// nothing; the short form sets the title at 10 pt, the icon form its symbol alone.
 @MainActor
 final class StampButton: NSButton {
     enum Style { case outlined, filled, link }
     enum Form { case full, short, icon }
 
     static let height: CGFloat = 22
-    private static let font = NSFont.systemFont(ofSize: 12, weight: .medium)
-    private static let shortFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+    private static let font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .small))
+    private static let shortFont = NSFont.systemFont(ofSize: 10)
     /// From the button's top to its label's baseline.
     static let labelBaseline = ((height + font.capHeight) / 2).rounded()
 
@@ -569,31 +556,44 @@ final class StampButton: NSButton {
     private let symbol: String?
     /// The title and action the button takes while Option is down.
     private let alternate: (title: String, action: Selector)?
+    private let plainTitle: String
     var handler: () -> Void
     var optionDown = false {
-        didSet { if optionDown != oldValue, alternate != nil { needsDisplay = true } }
+        didSet { if optionDown != oldValue, alternate != nil { show() } }
     }
     var form = Form.full {
-        didSet { if form != oldValue { needsDisplay = true } }
+        didSet { if form != oldValue { show() } }
     }
 
     init(_ title: String, style: Style, symbol: String? = nil, alternate: (title: String, action: Selector)? = nil, _ action: @escaping () -> Void) {
         self.style = style
         self.symbol = symbol
         self.alternate = alternate
+        plainTitle = title
         handler = action
         super.init(frame: .zero)
         self.title = title
-        isBordered = false
         target = self
         self.action = #selector(clicked)
+        if style == .link {
+            isBordered = false
+        } else {
+            bezelStyle = .push
+            controlSize = .small
+            if style == .filled { bezelColor = ThemeStore.shared.color(.accent) }
+        }
+        show()
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: ThemeStore.shared)
     }
 
     required init?(coder: NSCoder) {
         fatalError("StampButton is built in code")
     }
 
-    override var isFlipped: Bool { true }
+    @objc private func themeDidChange() {
+        if style == .filled { bezelColor = ThemeStore.shared.color(.accent) }
+        show()
+    }
 
     /// With Option down, the alternate action goes to the text view the stamp is in.
     @objc private func clicked() {
@@ -603,64 +603,39 @@ final class StampButton: NSButton {
     }
 
     private var shownTitle: String {
-        optionDown ? alternate?.title ?? title : title
+        optionDown ? alternate?.title ?? plainTitle : plainTitle
     }
 
-    private func label(_ title: String, _ form: Form = .full) -> NSAttributedString {
-        let store = ThemeStore.shared
+    private func show() {
         if style == .link {
-            return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)])
+            attributedTitle = NSAttributedString(string: plainTitle, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: ThemeStore.shared.color(.accent)])
+            return
         }
-        let font = form == .short ? Self.shortFont : Self.font
-        return NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: store.color(style == .filled ? .paper : .ink)])
+        if form == .icon, let symbolImage {
+            image = symbolImage
+            imagePosition = .imageOnly
+        } else {
+            image = nil
+            imagePosition = .noImage
+            title = shownTitle
+            font = form == .short ? Self.shortFont : Self.font
+        }
     }
 
     private var symbolImage: NSImage? {
-        let color = ThemeStore.shared.color(style == .filled ? .paper : .ink)
-        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        return symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config) }
+        symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold)) }
     }
 
     /// The button's width in `form`.
     func width(_ form: Form) -> CGFloat {
-        if style == .link { return ceil(label(title).size().width) }
+        if style == .link { return ceil(attributedTitle.size().width) }
         if form == .icon, symbolImage != nil { return 26 }
-        return ceil(8 + max(label(title, form).size().width, alternate.map { label($0.title, form).size().width } ?? 0) + 7)
+        let font = form == .short ? Self.shortFont : Self.font
+        let widest = ([plainTitle] + (alternate.map { [$0.title] } ?? [])).map { NSAttributedString(string: $0, attributes: [.font: font]).size().width }.max() ?? 0
+        return ceil(widest + 20)
     }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: width(form), height: style == .link ? 18 : Self.height)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let store = ThemeStore.shared
-        let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5.5, yRadius: 5.5)
-        switch style {
-        case .filled:
-            store.color(.accent).withAlphaComponent(isHighlighted ? 0.85 : 1).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-        case .outlined:
-            if isHighlighted {
-                store.color(.ink).withAlphaComponent(0.08).setFill()
-                box.fill()
-            }
-            store.color(.rule).setStroke()
-            box.lineWidth = 1
-            box.stroke()
-        case .link:
-            label(title).draw(at: .zero)
-            return
-        }
-        if form == .icon, let image = symbolImage {
-            let rect = NSRect(
-                x: ((bounds.width - image.size.width) / 2).rounded(), y: ((bounds.height - image.size.height) / 2).rounded(),
-                width: image.size.width, height: image.size.height)
-            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            return
-        }
-        let font = form == .short ? Self.shortFont : Self.font
-        let baseline = ((Self.height + font.capHeight) / 2).rounded()
-        let text = label(shownTitle, form)
-        text.draw(at: NSPoint(x: ((bounds.width - text.size().width) / 2).rounded(), y: baseline - font.ascender))
     }
 }

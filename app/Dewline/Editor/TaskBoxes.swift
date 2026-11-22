@@ -59,6 +59,15 @@ final class TaskBoxes {
                 var end = NSMaxRange(paragraph)
                 while end > NSMaxRange(local.range), [0x0A, 0x0D].contains(text.character(at: end - 1)) { end -= 1 }
                 let label = text.substring(with: NSRange(location: NSMaxRange(local.range), length: end - NSMaxRange(local.range)))
+                // Wrapped lines start under the label, as a bullet's do.
+                var start = NSMaxRange(local.range)
+                while start < end, text.character(at: start) == 0x20 { start += 1 }
+                if let style = styled.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle {
+                    let hung = style.mutableCopy() as! NSMutableParagraphStyle
+                    hung.headIndent = style.firstLineHeadIndent
+                        + styled.attributedSubstring(from: NSRange(location: paragraph.location, length: start - paragraph.location)).size().width
+                    styled.addAttribute(.paragraphStyle, value: hung, range: paragraph)
+                }
                 let mark = TaskMark(
                     at: local.range.location - paragraph.location, checked: checked, label: label.trimmingCharacters(in: .whitespaces),
                     stroke: store.color(.ink3), check: store.color(.signal)

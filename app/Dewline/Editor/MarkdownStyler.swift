@@ -452,8 +452,9 @@ extension MarkdownStyler {
                 case .link:
                     styled.addAttributes(Links.style(of: span, in: styled.mutableString), range: span.content)
                 case .inlineCode where !source:
+                    // At 0.9 of the text around it, so a code span sits in the line rather than over it.
                     styled.enumerateAttribute(.font, in: span.content) { value, run, _ in
-                        styled.addAttribute(.font, value: Self.code(matching: value as! NSFont), range: run)
+                        styled.addAttribute(.font, value: store.codeFont(size: (value as! NSFont).pointSize * 0.9), range: run)
                     }
                     styled.addAttribute(.dewlineCodeChip, value: true, range: span.range)
                 default:

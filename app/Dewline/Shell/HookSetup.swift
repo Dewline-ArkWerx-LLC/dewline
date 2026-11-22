@@ -192,6 +192,11 @@ enum HookSetup {
     /// Folders opened from the guide's setup list, whose hooks row already asked this launch.
     static var askedThisLaunch: Set<String> = []
 
+    /// Whether an offer's sheet has shown for `folder`.
+    static func offered(in folder: URL) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(folder.path)
+    }
+
     /// The changes no hook named, made outside a shell command: ones hooks would have named. The offer waits until one
     /// of them is kept or reverted, so it comes once the user has seen why hooks matter and doesn't cover the change.
     static func unnamedEdits(in changes: [UInt64: LiveFile.Change]) -> Set<UInt64> {

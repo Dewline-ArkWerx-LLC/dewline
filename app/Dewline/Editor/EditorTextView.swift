@@ -264,14 +264,17 @@ final class EditorTextView: CaretTextView {
             return
         }
         let padding = textContainer?.lineFragmentPadding ?? 0
-        let margin = max(32, ((width - ThemeStore.shared.measure) / 2 - padding).rounded(.down))
+        // The rail's width is kept out of the centering whether or not it takes the view's, overlay or legacy, so the
+        // column stays put when the rail shows.
+        let room = min(width, (enclosingScrollView?.frame.width ?? width) - Rail.width)
+        let margin = max(32, ((room - ThemeStore.shared.measure) / 2 - padding).rounded(.down))
         let top: CGFloat = metaLine == nil ? 24 : 24 + Self.metaRoom
         let height = typewriterMode ? max(top, ((enclosingScrollView?.contentView.bounds.height ?? 0) / 2).rounded()) : top
         if textContainerInset != NSSize(width: margin, height: height) {
             textContainerInset = NSSize(width: margin, height: height)
         }
         if let container = textContainer as? MeasureContainer {
-            let prose = max(width - 2 * margin, 0)
+            let prose = max(room - 2 * margin, 0)
             let wide = max(width - margin - 32, prose)
             if container.prose != prose || container.size.width != wide {
                 container.prose = prose

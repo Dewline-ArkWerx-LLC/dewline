@@ -17,18 +17,27 @@ else
     profile=release
 fi
 
-# rustup takes the toolchain from core/rust-toolchain.toml when cargo runs there.
-cd "$SRCROOT/../core"
 binaries=()
-for arch in $ARCHS; do
-    case $arch in
-        arm64) target=aarch64-apple-darwin ;;
-        x86_64) target=x86_64-apple-darwin ;;
-        *) echo "error: embed-cli.sh: no Rust target for $arch" >&2; exit 1 ;;
-    esac
-    cargo build --locked "$@" -p dewline-cli --target "$target"
-    binaries+=("$CARGO_TARGET_DIR/$target/$profile/dewline")
-done
+# CI's swift job sets DEWLINE_CLI to a command it restored from its core-artifacts cache; nothing else sets it.
+if [[ -n ${DEWLINE_CLI:-} ]]; then
+    if [[ $(lipo -archs "$DEWLINE_CLI") != "$ARCHS" ]]; then
+        echo "error: embed-cli.sh: $DEWLINE_CLI is not built for $ARCHS" >&2
+        exit 1
+    fi
+    binaries+=("$DEWLINE_CLI")
+else
+    # rustup takes the toolchain from core/rust-toolchain.toml when cargo runs there.
+    cd "$SRCROOT/../core"
+    for arch in $ARCHS; do
+        case $arch in
+            arm64) target=aarch64-apple-darwin ;;
+            x86_64) target=x86_64-apple-darwin ;;
+            *) echo "error: embed-cli.sh: no Rust target for $arch" >&2; exit 1 ;;
+        esac
+        cargo build --locked "$@" -p dewline-cli --target "$target"
+        binaries+=("$CARGO_TARGET_DIR/$target/$profile/dewline")
+    done
+fi
 
 helpers="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
 mkdir -p "$helpers"

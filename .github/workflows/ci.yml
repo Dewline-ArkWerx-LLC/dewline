@@ -115,16 +115,37 @@ jobs:
           echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      # The engine build (xcframework, Swift bindings, dewline command), keyed on every input it reads. A pull request
+      # whose key main has saved skips Rust. Main always builds from source and fails if that differs from the entry
+      # saved under the same key. The merge queue always builds from source.
+      - id: core-key
+        run: |
+          inputs=$({ git ls-files -s core scripts/build-xcframework.sh scripts/embed-cli.sh app/project.yml; env | grep -E '^(RUSTFLAGS|CARGO_|MACOSX_)' | sort; } | shasum | cut -c1-40)
+          echo "key=core-$ImageVersion-$inputs" >> "$GITHUB_OUTPUT"
+      - id: core
+        if: github.event_name != 'merge_group'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/core-artifacts
+          key: ${{ steps.core-key.outputs.key }}
+      - if: github.event_name == 'pull_request' && steps.core.outputs.cache-hit == 'true'
+        run: |
+          cp -R "$RUNNER_TEMP/core-artifacts/DewlineFFI.xcframework" Packages/MdCore/
+          mkdir -p Packages/MdCore/Sources
+          cp -R "$RUNNER_TEMP/core-artifacts/DewlineFFIBindings" Packages/MdCore/Sources/
+      - if: github.event_name != 'pull_request' || steps.core.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.99.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: github.event_name != 'pull_request' || steps.core.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: core -> target
           shared-key: ffi
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       # Host slice only: release-dry builds and checks the universal app on main.
-      - run: scripts/build-xcframework.sh
+      - if: github.event_name != 'pull_request' || steps.core.outputs.cache-hit != 'true'
+        run: scripts/build-xcframework.sh
       - run: xcodegen generate --spec app/project.yml
       # Xcode's compilation cache, keyed on the tracked sources and the runner image. Main builds it from empty and saves
       # it; pull requests restore the newest one; the merge queue builds without it.
@@ -142,12 +163,33 @@ jobs:
       - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO $ARCH $CACHE
         env:
           ARCH: ${{ github.event_name == 'pull_request' && 'ONLY_ACTIVE_ARCH=YES' || '' }}
+          DEWLINE_CLI: ${{ github.event_name == 'pull_request' && steps.core.outputs.cache-hit == 'true' && format('{0}/core-artifacts/dewline', runner.temp) || '' }}
           CACHE: ${{ github.event_name != 'merge_group' && format('COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH={0}/xcode-cas', runner.temp) || '' }}
       - if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/xcode-cas
           key: ${{ steps.cas.outputs.key }}
+      - name: Check the engine build against main's entry for the same key
+        if: github.event_name == 'push'
+        env:
+          HIT: ${{ steps.core.outputs.cache-hit }}
+        run: |
+          built=$RUNNER_TEMP/core-built
+          mkdir "$built"
+          cp -R Packages/MdCore/DewlineFFI.xcframework Packages/MdCore/Sources/DewlineFFIBindings "$built/"
+          cp "$CARGO_TARGET_DIR/aarch64-apple-darwin/release/dewline" "$built/"
+          if [[ $HIT == true ]]; then
+            diff -r "$RUNNER_TEMP/core-artifacts" "$built" || { echo "::error::the engine built from source differs from the cached build under the same key, so the key misses an input"; exit 1; }
+          else
+            rm -rf "$RUNNER_TEMP/core-artifacts"
+            mv "$built" "$RUNNER_TEMP/core-artifacts"
+          fi
+      - if: github.event_name == 'push' && steps.core.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/core-artifacts
+          key: ${{ steps.core-key.outputs.key }}
 
   # The release path with no secrets: the universal app from pinned inputs, its Mach-O and Info.plist checks, its DMG
   # signed ad hoc, and a feed signed with a key made for this run and checked by scripts/verify-feed.sh. Runs on main

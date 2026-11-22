@@ -170,8 +170,8 @@ struct AgentsPane: View {
                         .fixedSize()
                     }
                 } label: {
-                    Text("dewline command")
-                    Text(CommandLink.line(onPath: hooks.onPath, taken: taken))
+                    Text("Command-line tool")
+                    Text("Run \(Text("dewline").monospaced()) from a terminal. \(CommandLink.line(onPath: hooks.onPath, taken: taken))")
                 }
             }
             Section {
@@ -185,6 +185,10 @@ struct AgentsPane: View {
                     } label: {
                         Text("No named edit yet")
                         Text("Paste the prompt into an agent working in a folder Dewline has open.")
+                        Text(MainWindowController.testPrompt)
+                            .monospaced()
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
                     }
                 }
             } header: {
@@ -207,7 +211,7 @@ struct AgentsPane: View {
     private static func detail(_ agent: String) -> String {
         switch agent {
         case "claude": "Names Claude Code\u{2019}s edits. Edits from its shell commands show as \u{201C}\(ChangeStamp.duringShell)\u{201D}."
-        case "codex": "Names Codex\u{2019}s edits once you trust the hooks: type /hooks in Codex."
+        case "codex": "Names Codex\u{2019}s edits. In Codex, run /hooks and trust Dewline\u{2019}s hook."
         default: "Names the edits Cursor\u{2019}s agent reports. Tab edits, terminal commands and edits that only delete lines show as Another app."
         }
     }
@@ -217,11 +221,9 @@ struct AgentsPane: View {
         taken = CommandLink.taken()
     }
 
-    /// Copies the frontmost folder window's test prompt.
     private func copyTestPrompt() {
-        let folder = NSApp.orderedWindows.lazy.compactMap { ($0.windowController as? MainWindowController)?.folder?.url }.first
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(MainWindowController.testPrompt(in: folder ?? URL(filePath: NSHomeDirectory())), forType: .string)
+        NSPasteboard.general.setString(MainWindowController.testPrompt, forType: .string)
         copied = true
     }
 
@@ -231,8 +233,8 @@ struct AgentsPane: View {
         return "Last named edit " + date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
     }
 
-    /// The agent's name, what its hooks give and when they last named an edit, then its state with a symbol, then Set Up or
-    /// Remove, and Show File when it has a settings file, the buttons in a column that lines up across the rows.
+    /// The agent's name, what its hooks give, its settings file and when they last named an edit, then its state with a
+    /// symbol, Show in Finder when it has a settings file, and Set Up or Remove, which ends every row at the trailing edge.
     private func row(_ agent: HookStatus.Agent) -> some View {
         let (text, symbol, color): (String, String, Color) =
             switch (agent.installed, agent.needsTrust) {
@@ -247,9 +249,13 @@ struct AgentsPane: View {
                 } icon: {
                     Image(systemName: symbol).foregroundStyle(color)
                 }
-                .help(agent.needsTrust ? "Type /hooks in Codex to trust them." : "")
+                .help(agent.needsTrust ? "In Codex, run /hooks and trust Dewline\u{2019}s hook." : "")
+                if let file = agent.file, FileManager.default.fileExists(atPath: file) {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
+                        .fixedSize()
+                }
                 if agent.installed {
-                    Button { HookSetup.remove(agent.name) { _ in Task { await refresh() } } } label: {
+                    Button(role: .destructive) { HookSetup.remove(agent.name) { _ in Task { await refresh() } } } label: {
                         Text("Remove").frame(minWidth: 56)
                     }
                     .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
@@ -258,19 +264,14 @@ struct AgentsPane: View {
                         Text("Set Up\u{2026}").frame(minWidth: 56)
                     }
                 }
-                if let file = agent.file, FileManager.default.fileExists(atPath: file) {
-                    Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
-                        .fixedSize()
-                        .help((file as NSString).abbreviatingWithTildeInPath)
-                } else {
-                    Button("Show File") {}
-                        .fixedSize()
-                        .hidden()
-                }
             }
         } label: {
             Text(agent.title)
             Text(Self.detail(agent.name))
+            if let file = agent.file {
+                Text((file as NSString).abbreviatingWithTildeInPath)
+                    .monospaced()
+            }
             if let edit = Self.lastEdit(agent.name) {
                 Text(edit)
             }

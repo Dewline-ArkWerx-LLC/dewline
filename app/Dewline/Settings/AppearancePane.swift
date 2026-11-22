@@ -12,15 +12,14 @@ struct AppearancePane: View {
                 }
             }
             Section {
-                Picker("Mode", selection: $store.appearance) {
+                Picker(selection: $store.appearance) {
                     Text("Light").tag(ThemeStore.Appearance.light)
                     Text("Dark").tag(ThemeStore.Appearance.dark)
                     Text("Match system").tag(ThemeStore.Appearance.auto)
+                } label: {
+                    Text("Mode")
+                    Text("Match system follows macOS between the light theme and the dark one.")
                 }
-            } footer: {
-                Text("Match system follows macOS between the light theme and the dark one.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             FontSlots(store: store)
             Section {
@@ -107,7 +106,7 @@ private struct ThemeCard: View {
             if dark { store.darkTheme = theme } else { store.lightTheme = theme }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                MiniWindow(theme: theme, dark: dark)
+                MiniWindow(theme: theme, dark: dark, face: store.bodyFace)
                     .aspectRatio(1.55, contentMode: .fit)
                     .clipShape(card)
                     .overlay(card.strokeBorder(.separator, lineWidth: 1 / scale))
@@ -129,14 +128,16 @@ private struct ThemeCard: View {
 }
 
 /// The main window drawn small in a theme's colors: the sidebar on the chrome, a hairline, and the page with a title,
-/// two lines, and one outside change underlined in the accent.
+/// a line in the body face, an agent's change in Claude's hue with its bar in the margin, and Keep in the accent.
 private struct MiniWindow: View {
     let theme: Theme
     let dark: Bool
+    let face: String
 
     var body: some View {
         let colors = dark ? theme.darkColors : theme.lightColors
         let titleFont = Font(Chrome.brand(11, weight: 600))
+        let bodyFont = Font(Faces.font(face, size: 8))
         Canvas { context, size in
             func color(_ token: Token) -> Color {
                 Color(nsColor: colors[token] ?? colors[.ink2]!)
@@ -152,12 +153,14 @@ private struct MiniWindow: View {
             let page = CGRect(x: side.maxX + 1, y: 0, width: size.width - side.maxX - 1, height: size.height)
             let title = context.resolve(Text("Field notes").font(titleFont).foregroundStyle(color(.heading)))
             context.draw(title, at: CGPoint(x: page.minX + 10, y: page.minY + 12), anchor: .topLeading)
-            for (index, width) in [0.72, 0.5].enumerated() {
-                let bar = CGRect(x: page.minX + 10, y: page.minY + 32 + CGFloat(index) * 7, width: (page.width - 20) * width, height: 2)
-                context.fill(Path(roundedRect: bar, cornerRadius: 1), with: .color(color(.ink2).opacity(0.5)))
-            }
-            let mark = CGRect(x: page.minX + 10, y: page.minY + 37, width: (page.width - 20) * 0.3, height: 1)
-            context.fill(Path(mark), with: .color(color(.accent)))
+            let line = context.resolve(Text("The rain held off.").font(bodyFont).foregroundStyle(color(.ink)))
+            context.draw(line, at: CGPoint(x: page.minX + 10, y: page.minY + 30), anchor: .topLeading)
+            let change = CGRect(x: page.minX + 10, y: page.minY + 46, width: (page.width - 20) * 0.62, height: 2)
+            context.fill(Path(roundedRect: change, cornerRadius: 1), with: .color(color(.ink2).opacity(0.5)))
+            context.fill(Path(CGRect(x: change.minX, y: change.maxY + 1.5, width: change.width, height: 1)), with: .color(color(.writerClaude)))
+            context.fill(Path(CGRect(x: page.minX + 4, y: change.minY - 3, width: 1.5, height: 9)), with: .color(color(.writerClaude)))
+            let keep = CGRect(x: page.maxX - 32, y: size.height - 17, width: 22, height: 9)
+            context.fill(Path(roundedRect: keep, cornerRadius: 3), with: .color(color(.accent)))
         }
         .accessibilityHidden(true)
     }

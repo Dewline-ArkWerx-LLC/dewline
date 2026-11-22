@@ -1054,7 +1054,7 @@ struct JourneyTests {
         #expect(done[2].status == "Installed at /opt/homebrew/bin/dewline.")
         status.agents[0].installed = false
         let missing = await WelcomeGuide.setupRows(misplaced: false, status: status, isDefault: true)
-        #expect(missing[0].button == "Set Up\u{2026}")
+        #expect(missing[0].button == "Set Up Agent Hooks\u{2026}")
         #expect(missing[0].status == "Adds a hook to /Users/a/.claude/settings.json so the stamp says CLAUDE CODE.", "names the file it edits")
     }
 
@@ -1154,9 +1154,11 @@ struct JourneyTests {
             )
         ])
         #expect(HookSetup.summary(missing) == "Claude Code: PreToolUse to name the agent behind each edit; Stop to mark where each turn ends.")
-        #expect(HookSetup.scope(missing, in: URL(filePath: "/Users/a/relay")) == "Adds 2 entries to /Users/a/.claude/settings.json (every project).\nBackup saved beside it.")
-        let project = HookSetup.Missing(agent: "Claude Code", file: "/Users/a/relay/.claude/settings.json", entries: ["{}"])
-        #expect(HookSetup.scope([project], in: URL(filePath: "/Users/a/relay")) == "Adds 1 entry to /Users/a/relay/.claude/settings.json (this project only).\nBackup saved beside it.")
+        #expect(HookSetup.scope(missing, in: URL(filePath: "/Users/a/relay"))
+            == "Adds Dewline to 2 Claude Code hook events (PreToolUse, Stop) in /Users/a/.claude/settings.json, for every project.\nBackup saved beside it.")
+        let project = HookSetup.Missing(agent: "Claude Code", file: "/Users/a/relay/.claude/settings.json", events: ["Stop"], entries: ["{}"])
+        #expect(HookSetup.scope([project], in: URL(filePath: "/Users/a/relay"))
+            == "Adds Dewline to 1 Claude Code hook event (Stop) in /Users/a/relay/.claude/settings.json, for this project only.\nBackup saved beside it.")
         let vault = try Vault([:])
         defer { vault.remove() }
         let script = vault.root.appending(path: "asks.sh")

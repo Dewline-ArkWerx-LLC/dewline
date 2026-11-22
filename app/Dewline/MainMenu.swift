@@ -61,7 +61,7 @@ enum MainMenu {
         let window = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
         window.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Open\u{2026}", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
+        menu.addItem(withTitle: "Open\u{2026}", action: #selector(OpenPanel.run(_:)), keyEquivalent: "o").target = OpenPanel.self
         let folder = menu.addItem(withTitle: "Open Folder\u{2026}", action: #selector(AppDelegate.openFolder(_:)), keyEquivalent: "o")
         folder.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "").submenu = RecentMenu.menu()
@@ -294,5 +294,34 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Report an Issue…", action: #selector(Help.reportIssue(_:)), keyEquivalent: "").target = Help.self
         return menu
+    }
+}
+
+/// File > Open…: notes, or a folder, which opens in a window of its own, as Open Folder… does.
+@MainActor
+final class OpenPanel: NSObject {
+    @objc static func run(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        guard NSDocumentController.shared.runModalOpenPanel(panel, forTypes: types) == NSApplication.ModalResponse.OK.rawValue else { return }
+        open(panel.urls)
+    }
+
+    /// Every type a document class reads.
+    static var types: [String] {
+        NSDocumentController.shared.documentClassNames.flatMap { (NSClassFromString($0) as? NSDocument.Type)?.readableTypes ?? [] }
+    }
+
+    static func open(_ urls: [URL]) {
+        for url in urls {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                (NSApp.delegate as? AppDelegate)?.openFolder(at: url)
+            } else {
+                NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+                    if let error { NSApp.presentError(error) }
+                }
+            }
+        }
     }
 }

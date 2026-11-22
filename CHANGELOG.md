@@ -4,7 +4,9 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
 - Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
+- Earlier Versions shows each change with two lines around it, word by word in the writer's color, says under each row what it changed ("+12 words · Backoff"), folds an agent's turn into one row, shows a pin only where it applies, and fits a 620 pt window. Mermaid labels use the text font in 6 pt boxes, H1 tracking loosens to -0.01 em, and images take a 1 px edge in both themes (12% dimmer in dark).
 - A change waiting off screen keeps its mark at the window's right edge at rest, and one that lands there pins a chip ("1 more below · Backoff ⌃⌘↓") until it is on screen or decided.
 - Writer badges count only changes waiting for Keep or Revert, so they add up to "N to review", and say "1 change by Claude Code, not reviewed"; untracked files read New; the review menu heads each writer with its ink and count; the status bar says "Next change: spec.md ⌃⌘↓". Quick Open shows its prefixes, a magnifier and a stronger selection; Find in Files rows wrap to two lines, carry the badge and git letter, and use symbol toggles and the system find highlight.
 

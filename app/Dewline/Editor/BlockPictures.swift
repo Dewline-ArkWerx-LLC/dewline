@@ -53,13 +53,16 @@ struct PictureRequest: Hashable, Sendable {
     let scale: CGFloat
     /// The theme's colors in the view's appearance: a diagram takes them all and math the ink; an image takes none.
     let colors: DiagramColors?
+    /// A diagram's label face and size: the body's, at 0.85 of its size.
+    var labelFamily = ""
+    var labelSize: CGFloat = 14
 
     /// Renders off the main thread; an image is decoded no wider than `width` points.
     func render(width: CGFloat) -> Result<BlockPicture, RenderFailure> {
         Result { () throws(RenderFailure) in
             switch kind {
             case .mermaid:
-                let drawing = try mermaidDrawing(source, colors: colors!)
+                let drawing = try mermaidDrawing(source, colors: colors!, font: labelFamily, size: labelSize)
                 return BlockPicture(art: .drawing(drawing), size: drawing.size)
             case .math:
                 let drawing = try mathDrawing(source, size: 20, color: colors!.ink)

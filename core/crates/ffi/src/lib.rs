@@ -227,20 +227,33 @@ fn within_budget<T: Send + 'static>(
 }
 
 fn render_mermaid(source: String, colors: DiagramColors) -> Result<String, RenderError> {
-    mermaid_within(BUDGET, source, colors)
+    mermaid_within(BUDGET, source, colors, None)
 }
 
+/// A diagram in `colors` with its labels in the `font` family at `font_size` points.
 #[uniffi::export]
-pub fn draw_mermaid(source: String, colors: DiagramColors) -> Result<Drawing, RenderError> {
-    let tree = parse(&render_mermaid(source, colors)?)?;
+pub fn draw_mermaid(
+    source: String,
+    colors: DiagramColors,
+    font: String,
+    font_size: f32,
+) -> Result<Drawing, RenderError> {
+    let tree = parse(&mermaid_within(
+        BUDGET,
+        source,
+        colors,
+        Some((font, font_size)),
+    )?)?;
     let size = tree.size();
     Ok(outlines(&tree, size.width(), size.height(), 0.0))
 }
 
+/// The diagram as SVG, in the renderer's font unless `font` names a family and size. Nodes take 6 pt corners.
 fn mermaid_within(
     budget: Duration,
     source: String,
     colors: DiagramColors,
+    font: Option<(String, f32)>,
 ) -> Result<String, RenderError> {
     if source.len() > MAX_SOURCE {
         return Err(RenderError::TooLarge);
@@ -262,7 +275,11 @@ fn mermaid_within(
         });
     }
     LazyLock::force(&MERMAID_FONTS);
-    let theme = colors.theme(&known);
+    let mut theme = colors.theme(&known);
+    if let Some((family, size)) = font {
+        theme.font_family = format!("{family},{}", theme.font_family);
+        theme.font_size = size;
+    }
     let flowchart = matches!(known.as_str(), "flowchart" | "graph");
     let source = if flowchart {
         source
@@ -295,7 +312,8 @@ fn mermaid_within(
         if flowchart {
             clear_labels(&mut layout);
         }
-        Ok(mermaid_rs_renderer::render_svg(&layout, &theme, &config))
+        Ok(mermaid_rs_renderer::render_svg(&layout, &theme, &config)
+            .replace("rx=\"3\" ry=\"3\"", "rx=\"6\" ry=\"6\""))
     })
 }
 
@@ -884,6 +902,7 @@ mod tests {
              W -->|5xx or timeout| B[Backoff]\n  B --> Q\n  W -->|attempt 12| P[parked]"
                 .into(),
             night(),
+            None,
         )
         .unwrap();
         // The x and width of the rect just before `text`, or of the edge label rect named `edge`.
@@ -909,6 +928,7 @@ mod tests {
             Duration::from_secs(30),
             "flowchart LR\n  W -->|5xx| B[Backoff] --> Q\n  A[a-b] -.->|try again| C --> D".into(),
             night(),
+            None,
         )
         .unwrap();
         assert!(
@@ -936,6 +956,28 @@ mod tests {
     }
 
     #[test]
+    fn mermaid_nodes_round_and_labels_take_the_given_font() {
+        isolate();
+        let svg = mermaid_within(
+            Duration::from_secs(30),
+            "flowchart LR\n  a[Start] --> b[Stop]".into(),
+            night(),
+            Some(("Helvetica".into(), 13.5)),
+        )
+        .unwrap();
+        let start = &svg[..svg.find(">Start<").unwrap()];
+        let node = &start[start.rfind("<rect ").unwrap()..];
+        assert!(
+            node[..node.find("/>").unwrap()].contains("rx=\"6\" ry=\"6\""),
+            "{svg}"
+        );
+        assert!(
+            svg.contains("font-family=\"Helvetica,") && svg.contains("font-size=\"13.5\""),
+            "{svg}"
+        );
+    }
+
+    #[test]
     fn mermaid_folds_a_long_flow_into_the_column() {
         isolate();
         // Folding, not speed, is under test; a shared runner can overrun the production budget.
@@ -943,6 +985,7 @@ mod tests {
             Duration::from_secs(30),
             "flowchart LR\n  a[Write the draft] --> b[Agent edits] --> c[Review changes] --> d[Keep or revert] --> e[Save]".into(),
             night(),
+            None,
         )
         .unwrap();
         let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).unwrap();
@@ -1040,7 +1083,13 @@ mod tests {
     #[test]
     fn diagrams_draw_their_labels_as_outlines() {
         isolate();
-        let drawing = draw_mermaid("flowchart LR\n  a[Start] --> b[Stop]".into(), night()).unwrap();
+        let drawing = draw_mermaid(
+            "flowchart LR\n  a[Start] --> b[Stop]".into(),
+            night(),
+            "Helvetica".into(),
+            14.0,
+        )
+        .unwrap();
         let labels: Vec<_> = drawing
             .shapes
             .iter()

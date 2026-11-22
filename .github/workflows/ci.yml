@@ -116,7 +116,10 @@ jobs:
       # Host slice only: release-dry builds and checks the universal app on main.
       - run: scripts/build-xcframework.sh
       - run: xcodegen generate --spec app/project.yml
-      - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO
+      # Pull requests build the packages for the host only; the merge queue and main still build them for arm64 and x86_64.
+      - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO $ARCH
+        env:
+          ARCH: ${{ github.event_name == 'pull_request' && 'ONLY_ACTIVE_ARCH=YES' || '' }}
 
   # The release path with no secrets: the universal app from pinned inputs, its Mach-O and Info.plist checks, its DMG
   # signed ad hoc, and a feed signed with a key made for this run and checked by scripts/verify-feed.sh. Runs on main

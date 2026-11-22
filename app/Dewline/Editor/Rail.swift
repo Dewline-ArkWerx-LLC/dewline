@@ -5,8 +5,9 @@ import AppKit
 /// in its writer's ink at its place in the note, hollow for another app.
 /// Hovering a mark lights its change. A click on a tick scrolls to its heading and a click on a mark scrolls its
 /// change to the middle of the view; the track and the bracket scroll as the system's scroller does. Its labels draw in `labels`, over the page.
-/// It follows the system's scroller style: legacy keeps it on screen, overlay shows it while the note scrolls, the pointer
-/// is on it or a change's label is up, and fades it 1 s after.
+/// It follows the system's scroller style: legacy keeps it on screen, overlay shows it while the note scrolls or the
+/// pointer is on it, and fades it 1 s after. While a change waits for Keep or Revert, an overlay rail at rest still draws
+/// the waiting changes' marks, without the hairline or the bracket.
 final class Rail: NSScroller {
     static let width: CGFloat = 22
     /// The hairline's left edge; the ticks, marks and bracket caps center on it.
@@ -25,17 +26,13 @@ final class Rail: NSScroller {
     private weak var live: LiveFile?
     private var seen: Set<UInt64> = []
     private var hovering: NSPoint?
-    /// A change that landed off screen, or the first change ever to land, labeled for 4 s.
+    /// A change that landed off screen: its chip stays at the rail's end toward it until it is on screen or decided.
     private var arrival: UInt64?
-    /// The first change to land says the rail shows changes too.
-    private var introducing = false
-    private static let introduced = "RailIntroduced"
-    private var arrivalEnds: Task<Void, Never>?
     private var remeasure: Task<Void, Never>?
     private var items: [RailItem] = []
     private var scrolling = false
     private var settle: Timer?
-    private var showing = true
+    private(set) var showing = true
 
     override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat {
         width
@@ -88,11 +85,11 @@ final class Rail: NSScroller {
 
     /// Fades the overlay rail in or out in 200 ms; under Reduce Motion it comes and goes at once.
     private func updateShown() {
-        let shown = scrollerStyle == .legacy || scrolling || hovering != nil || arrival != nil
+        let shown = scrollerStyle == .legacy || scrolling || hovering != nil || !waiting.isEmpty
         guard shown != showing else { return }
         showing = shown
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
+            context.duration = Motion.current == .off ? 0 : 0.2
             animator().alphaValue = shown ? 1 : 0
         }
     }
@@ -105,28 +102,14 @@ final class Rail: NSScroller {
     @objc private func changesChanged(_ notification: Notification) {
         guard let textView, let live = notification.object as? LiveFile, live === textView.marks.live else { return }
         measure()
-        let fresh = marks.filter { !seen.contains($0.id) }
+        let fresh = waiting.filter { !seen.contains($0.id) }
         seen = Set(marks.map(\.id))
-        // A change that lands off screen says so once; one on screen has its stamp beside it.
+        // A change that lands off screen pins its chip; one on screen has its stamp beside it.
         guard let landed = fresh.last(where: { !onScreen($0.y) }) else { return }
-        let first = !UserDefaults.standard.bool(forKey: Self.introduced)
-        if first { UserDefaults.standard.set(true, forKey: Self.introduced) }
-        introducing = first
         arrival = landed.id
         labels.alphaValue = 0
         updateLabels()
-        fade(to: 1)
-        arrivalEnds?.cancel()
-        arrivalEnds = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(4))
-            guard !Task.isCancelled, let self else { return }
-            fade(to: 0)
-            try? await Task.sleep(for: .milliseconds(150))
-            arrival = nil
-            introducing = false
-            updateLabels()
-            labels.alphaValue = 1
-        }
+        fadeIn()
     }
 
     @objc private func measureSoon() {
@@ -231,14 +214,26 @@ final class Rail: NSScroller {
         marks.isEmpty && (!isEnabled || knobProportion >= 1)
     }
 
+    /// The marks of changes waiting for Keep or Revert; git's uncommitted changes are not among them.
+    private var waiting: [(id: UInt64, change: LiveFile.Change, y: CGFloat)] {
+        marks.filter { if case .git = $0.change.origin { false } else { true } }
+    }
+
+    /// An overlay rail the note isn't scrolling and the pointer isn't on.
+    private var resting: Bool {
+        scrollerStyle == .overlay && !scrolling && hovering == nil
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        guard !blank else {
+        guard !blank, !resting else {
             ThemeStore.shared.color(.paper).setFill()
-            return bounds.fill()
+            bounds.fill()
+            if !blank { drawMarks(waiting) }
+            return
         }
         drawKnobSlot(in: rect(for: .knobSlot), highlight: false)
         drawKnob()
-        drawMarks()
+        drawMarks(marks)
     }
 
     /// Paper, the hairline and, while the pointer is on the rail or the note scrolls, the heading ticks; while the
@@ -277,7 +272,7 @@ final class Rail: NSScroller {
 
     /// Each change's rule in its writer's ink, ringed in paper, hollow for another app as its underline is dashed; the
     /// labeled one has a halo.
-    private func drawMarks() {
+    private func drawMarks(_ marks: [(id: UInt64, change: LiveFile.Change, y: CGFloat)]) {
         let lit = hovering.flatMap { mark(at: $0) }?.id ?? arrival
         for mark in marks {
             let rect = markRect(mark.y)
@@ -360,13 +355,14 @@ final class Rail: NSScroller {
         return (writer, place, time)
     }
 
-    /// The label for a change: "⌄ Claude Code changed Steps  16:09  ⌃⌘↓", a chevron toward the change, with Next or
-    /// Previous Change's keys when the change is below or above the view, and "Changes show here too" when `intro`. It
-    /// fits `width`: the introduction goes first, then the heading loses its middle; nil when even a short heading is wider.
-    private static func label(writer: String, place: String, time: String, keys: String, intro: Bool, width: CGFloat, below: Bool) -> NSAttributedString? {
+    /// The label for an off-screen change: a chevron toward it, `lead` with its heading ("Claude Code changed Steps" at a
+    /// hovered mark, "1 more below · Steps" on the chip), the time if any, and Next or Previous Change's keys:
+    /// "⌄ Claude Code changed Steps  16:09  ⌃⌘↓". It fits `width` by cutting the heading's middle; nil when even a short
+    /// heading is wider.
+    private static func label(_ lead: (String) -> String, place: String, time: String?, keys: String, width: CGFloat, below: Bool) -> NSAttributedString? {
         let store = ThemeStore.shared
         let font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        func text(_ place: String, intro: Bool) -> NSAttributedString {
+        func text(_ place: String) -> NSAttributedString {
             let text = NSMutableAttributedString()
             let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [store.color(.ink2)]))
             if let chevron = NSImage(systemSymbolName: below ? "chevron.down" : "chevron.up", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
@@ -376,29 +372,25 @@ final class Rail: NSScroller {
                 text.append(NSAttributedString(attachment: attachment))
                 text.append(NSAttributedString(string: " ", attributes: [.font: font]))
             }
-            text.append(NSAttributedString(string: "\(writer) changed \(place)", attributes: [.font: font, .foregroundColor: store.color(.ink)]))
-            text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
-            if !keys.isEmpty {
-                text.append(NSAttributedString(string: "  " + keys, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
+            text.append(NSAttributedString(string: lead(place), attributes: [.font: font, .foregroundColor: store.color(.ink)]))
+            if let time {
+                text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
             }
-            if intro {
-                text.append(NSAttributedString(string: "  Changes show here too", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: store.color(.ink2)]))
-            }
+            text.append(NSAttributedString(string: "  " + keys, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
             return text
         }
-        if intro, text(place, intro: true).size().width <= width { return text(place, intro: true) }
         let characters = Array(place)
         for kept in stride(from: characters.count, through: min(characters.count, 6), by: -1) {
             let cut = kept == characters.count ? place : String(characters.prefix((kept + 1) / 2)) + "\u{2026}" + String(characters.suffix(kept / 2))
-            let shown = text(cut, intro: false)
+            let shown = text(cut)
             if shown.size().width <= width { return shown }
         }
         return nil
     }
 
-    /// A label at the hovered mark or the change that just landed (while the Changes pane is closed), when that change
-    /// is off screen, in the margin right of the text column, else every tick's name while the pointer is on a rail
-    /// that draws.
+    /// A label at the hovered mark when its change is off screen, else the chip for the change that landed off screen
+    /// (while the Changes pane is closed), in the margin right of the text column; else every tick's name while the
+    /// pointer is on a rail that draws.
     private func updateLabels() {
         defer {
             needsDisplay = true
@@ -412,17 +404,22 @@ final class Rail: NSScroller {
         let hovered = hovering.flatMap { mark(at: $0) }
         // The hovered mark lights its change in the page: a halo on its margin rules, its wash from 15% to 28%.
         textView.marks.lit = hovered?.id
+        if let landed = marks.first(where: { $0.id == arrival }), onScreen(landed.y) { arrival = nil }
         let reviewing = (textView.window?.windowController as? MainWindowController)?.showsChanges == true
         if let mark = hovered ?? (reviewing ? nil : marks.first(where: { $0.id == arrival })) {
             guard !onScreen(mark.y) else { return labels.items = [] }
             let (writer, place, time) = spoken(mark)
             let visible = textView.visibleRect
-            let keys = mark.y < visible.minY ? "\u{2303}\u{2318}\u{2191}" : mark.y > visible.maxY ? "\u{2303}\u{2318}\u{2193}" : ""
+            let below = mark.y > visible.maxY
+            let keys = below ? "\u{2303}\u{2318}\u{2193}" : "\u{2303}\u{2318}\u{2191}"
             // The pill's 8 pt sides, its 9 pt rule and 8 pt clear of the text column.
             let column = textView.textContainerOrigin.x + (textView.textContainer.map { $0.column - $0.lineFragmentPadding } ?? 0)
             let width = right - textView.convert(NSPoint(x: column, y: 0), to: labels).x - 8 - 25
-            let below = mark.y > visible.maxY
-            let text = Self.label(writer: writer, place: place, time: time, keys: keys, intro: introducing && hovered == nil, width: width, below: below)
+            let text = if hovered != nil {
+                Self.label({ "\(writer) changed \($0)" }, place: place, time: time, keys: keys, width: width, below: below)
+            } else {
+                Self.label({ "\(beyond(below: below)) more \(below ? "below" : "above") \u{00B7} \($0)" }, place: place, time: nil, keys: keys, width: width, below: below)
+            }
             // The pill sits at the rail's end toward its change, 12 pt in.
             let (top, bottom) = (center(0), center(textView.bounds.height))
             let inward: CGFloat = top < bottom ? 12 : -12
@@ -443,12 +440,17 @@ final class Rail: NSScroller {
         }
     }
 
-    /// The arrival label fades in and out in 150 ms; under Reduce Motion it comes and goes at once.
-    private func fade(to alpha: CGFloat) {
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    /// How many waiting changes sit below the view, or above it.
+    private func beyond(below: Bool) -> Int {
+        guard let visible = textView?.visibleRect else { return 0 }
+        return waiting.count { below ? $0.y > visible.maxY : $0.y < visible.minY }
+    }
+
+    /// The chip fades in in 150 ms; under Reduce Motion it comes at once.
+    private func fadeIn() {
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduce ? 0 : 0.15
-            labels.animator().alphaValue = alpha
+            context.duration = Motion.current == .off ? 0 : 0.15
+            labels.animator().alphaValue = 1
         }
     }
 

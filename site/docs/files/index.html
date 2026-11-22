@@ -169,7 +169,7 @@
         <li><b>Select a version</b> to see what differs.</li>
         <li><b>Click Restore</b>, or Open as Copy. A restore is one edit you can undo.</li>
       </ol>
-      <p>Dewline keeps a version when another app changes a note, before a merge and before a restore. Versions live in <code>~/Library/Application Support/dev.arkwerx.dewline/</code>.</p>
+      <p>Dewline keeps a version when another app changes a note, before a merge and before a restore. The version a write replaced is listed at the time it was written, so one write is one row. Versions live in <code>~/Library/Application Support/dev.arkwerx.dewline/</code>.</p>
       <details>
         <summary>How long versions are kept</summary>
         <p>A version stays while it is pinned, one of its note's 50 newest, or less than 30 days old. Pin one with its checkbox in the list. Versions are zstd-compressed and stored once per content, by BLAKE3 hash. Agent transcripts and settings files are never kept.</p>

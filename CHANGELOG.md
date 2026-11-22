@@ -16,6 +16,8 @@ What changed in each Dewline release, newest first.
 - Code files always open, and the sidebar, Quick Open and Find in Files list them; Settings > Editor drops Open code files.
 - The hook offer comes once you keep or revert another app's change, not as it lands, and names each settings file it edits and whether it reaches every project.
 - First run and Settings: Welcome.md is two sentences above the demo, the guide island clears the note and ends on Open a Folder…, the test prompt targets a new dewline-test.md and prints under its button, and the Settings window fits each pane.
+- A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it. ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note.
+- Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text.
 
 ## 0.6.1 (21 Nov 2026)
 

@@ -197,16 +197,16 @@ enum HookSetup {
         (UserDefaults.standard.stringArray(forKey: offeredKey) ?? []).contains(folder.path)
     }
 
-    /// True when `changes` hold a change no hook named, made outside a shell command: one hooks would have named. The
-    /// offer waits for it, so it comes once the user has seen why hooks matter.
-    static func unnamedEdit(in changes: [UInt64: LiveFile.Change]) -> Bool {
-        changes.values.contains { $0.marked && $0.origin == .external && !$0.shell }
+    /// The changes no hook named, made outside a shell command: ones hooks would have named. The offer waits until one
+    /// of them is kept or reverted, so it comes once the user has seen why hooks matter and doesn't cover the change.
+    static func unnamedEdits(in changes: [UInt64: LiveFile.Change]) -> Set<UInt64> {
+        Set(changes.filter { $0.value.marked && $0.value.origin == .external && !$0.value.shell }.keys)
     }
 
     /// Offers Set Up on `window` if an agent's hooks are missing, once for each folder that holds an agent's files;
-    /// doctor reads `folder`'s project settings too. Its window asks once an unnamed edit lands in a note there. A
-    /// folder counts as checked once doctor has run and found nothing missing or the sheet has shown, so Not Now holds
-    /// for that folder only.
+    /// doctor reads `folder`'s project settings too. Its window asks once an unnamed edit in a note there is kept or
+    /// reverted. A folder counts as checked once doctor has run and found nothing missing or the sheet has shown, so Not
+    /// Now holds for that folder only.
     static func offer(on window: NSWindow, in folder: URL) {
         let key = folder.path
         // While the guide runs it is the one thing asking; a later edit offers.
@@ -255,8 +255,8 @@ enum HookSetup {
                 return present(alert, on: window) { _ in done(true) }
             }
             alert.messageText = "Let Dewline see which agent made each edit"
-            alert.informativeText = "Hooks tell Dewline which agent made each edit. They send file paths and hashes, never content, and nothing leaves this Mac.\n\n"
-                + "Each settings file is backed up first. Remove the hooks any time in Settings > Agents."
+            alert.informativeText = scope(missing, in: folder) + "\n\n"
+                + "Hooks send file paths and hashes, never content, and nothing leaves this Mac. Remove them any time in Settings > Agents."
             alert.accessoryView = HookDetails(missing, command: command, alert: alert)
             alert.addButton(withTitle: "Add Hooks")
             alert.addButton(withTitle: "Not Now")
@@ -274,6 +274,17 @@ enum HookSetup {
                 }
             }
         }
+    }
+
+    /// The files Add Hooks changes and how far each reaches: "Adds 2 entries to ~/.claude/settings.json (every
+    /// project). Backup saved beside it." A file inside `folder` holds that project's settings.
+    static func scope(_ missing: [Missing], in folder: URL?) -> String {
+        let lines = missing.map { item in
+            let count = item.entries.count == 1 ? "1 entry" : "\(item.entries.count) entries"
+            let project = folder.map { item.file.hasPrefix($0.standardizedFileURL.path + "/") } ?? false
+            return "Adds \(count) to \((item.file as NSString).abbreviatingWithTildeInPath) (\(project ? "this project only" : "every project"))."
+        }
+        return (lines + [missing.count == 1 ? "Backup saved beside it." : "Backups saved beside each."]).joined(separator: "\n")
     }
 
     /// Settings > Agents > Remove: takes `agent`'s Dewline hooks out of its settings file, keeping a backup beside it.

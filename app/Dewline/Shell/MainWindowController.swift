@@ -130,7 +130,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(updateMinimumSize), name: NSSplitView.didResizeSubviewsNotification, object: split.splitView)
         updateMinimumSize()
-        statusBar.reserved = folder != nil
         Self.all.insert(self)
         if let folder {
             window.title = FileManager.default.displayName(atPath: folder.url.path)
@@ -188,7 +187,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// The page of a folder with no note open: what an agent's edit does, then what waits for review in the folder and
     /// what git has uncommitted, each file opening on Return or a click, or with nothing listed, how to pick or make a
     /// note; then Open CLAUDE.md (or README.md), the default, beside Set Up Agent Hooks… while no agent has them, and
-    /// Copy a Test Prompt.
+    /// Copy a Test Prompt with the prompt printed under it.
     private func emptyPage(in folder: URL) -> NSView {
         func label(_ text: String, _ ink: Token) -> NSTextField {
             let label = NSTextField(wrappingLabelWithString: text)
@@ -198,7 +197,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             label.preferredMaxLayoutWidth = 360
             return label
         }
-        let title = label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path)).", .ink)
+        let title = label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path))", .ink)
         title.font = .systemFont(ofSize: 18, weight: .semibold)
         let prose = [
             label("Ask an agent to edit a note here; the change shows marked, ready to keep or revert.", .ink2),
@@ -217,11 +216,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         buttons.spacing = 12
         if let suggested = ["CLAUDE.md", "README.md"].map({ folder.appending(path: $0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             let open = NSButton(title: "Open \(suggested.lastPathComponent)", target: self, action: #selector(openSuggested(_:)))
+            open.bezelStyle = .push
             open.identifier = NSUserInterfaceItemIdentifier(suggested.path)
             open.keyEquivalent = "\r"
             buttons.addArrangedSubview(open)
         }
         hookButton.target = self
+        hookButton.bezelStyle = .push
         hookButton.isHidden = true
         buttons.addArrangedSubview(hookButton)
         hookNote.font = Chrome.label
@@ -230,8 +231,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let tryIt = label(Self.hookHint(on: false), .ink2)
         hookHint = tryIt
         let copy = NSButton(title: "Copy a Test Prompt", target: self, action: #selector(copyTestPrompt(_:)))
-        copy.toolTip = Self.testPrompt(in: folder)
-        let test = NSStackView(views: [hookNote, copy, tryIt])
+        copy.bezelStyle = .push
+        let prompt = NSTextField(wrappingLabelWithString: Self.testPrompt)
+        prompt.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        prompt.textColor = Chrome.color(.ink)
+        prompt.alignment = .center
+        prompt.isSelectable = true
+        prompt.preferredMaxLayoutWidth = 360
+        let test = NSStackView(views: [hookNote, copy, prompt, tryIt])
         test.orientation = .vertical
         test.spacing = 6
         for view in [buttons, test] {
@@ -270,16 +277,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         on ? "Run it in Claude Code here; the edit shows up marked." : "Run it in Claude Code here; without hooks, the edit lands marked as Another app."
     }
 
-    /// A prompt that makes an agent edit a note here, for the first marked change.
-    static func testPrompt(in folder: URL) -> String {
-        let note = FileManager.default.fileExists(atPath: folder.appending(path: "README.md").path) ? "README.md" : "dewline-test.md"
-        return "Add a line \"Dewline test\" to the end of \(note)."
-    }
+    /// A prompt that makes an agent edit a note of its own, never one of the folder's, for the first marked change.
+    static let testPrompt = "Add a line \"Dewline test\" to the end of dewline-test.md."
 
     @objc private func copyTestPrompt(_ sender: Any?) {
-        guard let folder else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(Self.testPrompt(in: folder.url), forType: .string)
+        NSPasteboard.general.setString(Self.testPrompt, forType: .string)
         statusBar.post(.init(id: "prompt", kind: .result, text: "Copied. Paste it into Claude Code running in this folder.", untilTyping: true))
     }
 
@@ -373,9 +376,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         offerHooks()
     }
 
-    /// Offers hook setup for the folder once this tab's note shows an edit no hook named.
+    /// The note whose unnamed edits `unnamed` holds: those still undecided when its changes last changed.
+    private weak var unnamedIn: LiveFile?
+    private var unnamed: Set<UInt64> = []
+    /// True once an edit no hook named has been kept or reverted in this tab, which is when hook setup is offered.
+    private(set) var hookOfferDue = false
+
+    /// Offers hook setup for the folder once an edit no hook named, in this tab's note, has been kept or reverted.
     private func offerHooks() {
-        guard let window, let folder, let live = (document as? MarkdownDocument)?.live, HookSetup.unnamedEdit(in: live.changes) else { return }
+        guard let live = (document as? MarkdownDocument)?.live else { return }
+        if unnamedIn === live, !unnamed.isSubset(of: live.changes.keys) { hookOfferDue = true }
+        unnamedIn = live
+        unnamed = HookSetup.unnamedEdits(in: live.changes)
+        guard hookOfferDue, let window, let folder else { return }
         HookSetup.offer(on: window, in: folder.url)
     }
 
@@ -508,6 +521,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         let scrollView = EditorTextView.scrollView()
         let header = document.fileURL.flatMap { isAgentFile($0) ? frontMatterLine(of: text) : nil }
+        // A note keeps the status line's height, so a message never moves it; the empty page has none to move.
+        statusBar.reserved = folder != nil
         setPage(header.map { frontMatterPage($0, above: scrollView) } ?? scrollView)
         // Rendered blocks fit the column, so the text arrives once the view has its width.
         window?.layoutIfNeeded()
@@ -1299,7 +1314,6 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         rows = (waiting.isEmpty ? [] : [Row(text: "Waiting for you (\(waiting.count))")] + waiting)
             + (uncommitted.isEmpty ? [] : [Row(text: "Uncommitted in git (\(uncommitted.count))")] + uncommitted)
         table.reloadData()
-        if table.selectedRow < 0, let first = rows.firstIndex(where: { $0.url != nil }) { table.selectRowIndexes([first], byExtendingSelection: false) }
         height.constant = CGFloat(min(rows.count, 8)) * table.rowHeight
         isHidden = rows.isEmpty
         changed(rows.isEmpty)
@@ -1365,15 +1379,20 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         note.setContentCompressionResistancePriority(.required, for: .horizontal)
         let writer = NSTextField(labelWithAttributedString: row.writer?.stamp ?? NSAttributedString())
         writer.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let line = NSStackView(views: (row.writer == nil ? [] : [writer]) + [name, note])
+        let line = NSStackView(views: (row.writer == nil ? [] : [writer]) + [name])
         line.spacing = 12
-        line.translatesAutoresizingMaskIntoConstraints = false
         let cell = NSTableCellView()
-        cell.addSubview(line)
+        for view in [line, note] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(view)
+        }
+        // What waits sits in a column at the trailing edge, whatever the path's length.
         NSLayoutConstraint.activate([
             line.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
-            line.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -14),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: note.leadingAnchor, constant: -12),
             line.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            note.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -14),
+            note.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
         ])
         cell.setAccessibilityLabel([row.writer?.name, row.text, row.detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
         return cell

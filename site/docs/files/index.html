@@ -104,7 +104,7 @@
       <h2 id="new">Make a note</h2>
       <ol class="steps">
         <li><b>Select a folder</b> in the sidebar.</li>
-        <li><b>Press <span class="keys"><kbd>⌘</kbd><kbd>N</kbd></span></b>, or click <strong>+</strong> on the folder's row. <code>Untitled.md</code> opens, ready to type.</li>
+        <li><b>Press <span class="keys"><kbd>⌘</kbd><kbd>N</kbd></span></b>, or click New Note in the toolbar. <code>Untitled.md</code> opens, ready to type.</li>
         <li><b>Write a first line.</b> It becomes the note's name.</li>
       </ol>
       <p>New Folder is <span class="keys"><kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd></span>. With no folder open, Dewline asks where new notes go the first time and uses that folder from then on.</p>
@@ -132,7 +132,7 @@
           <tbody>
             <tr><td>Rename</td><td>Click the window title, or File &gt; Rename…, or select the sidebar row and press <kbd>↩</kbd></td></tr>
             <tr><td>Move</td><td>Drag the row onto another folder</td></tr>
-            <tr><td>Move to Trash</td><td>Select the row and press <span class="keys"><kbd>⌘</kbd><kbd>⌫</kbd></span></td></tr>
+            <tr><td>Move to Trash</td><td>Right-click the row, or File &gt; Move to Trash</td></tr>
             <tr><td>Duplicate, pin, show in Finder</td><td>Right-click the row</td></tr>
           </tbody>
         </table>
@@ -145,7 +145,7 @@
       <ul>
         <li>A save changes only the bytes you edited. Line endings and spacing stay as they were.</li>
         <li>A save never overwrites a newer copy. Dewline takes in another app's version first.</li>
-        <li>Notes must be UTF-8 text. Dewline opens <code>.md</code>, <code>.markdown</code>, <code>.mdown</code> and <code>.mkd</code> files; other files open in Quick Look.</li>
+        <li>Notes must be UTF-8 text. Dewline opens <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code>, <code>.mdc</code>, <code>.mdx</code> and <code>.qmd</code> files as notes, and source and config files as code; other files open in Quick Look.</li>
       </ul>
       <p><a href="/docs/architecture/#saves">Architecture</a> explains how a save checks the disk.</p>
 

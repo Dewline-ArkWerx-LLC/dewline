@@ -105,7 +105,7 @@
       <ol class="steps">
         <li><b>Choose File &gt; Export…</b> <span class="keys">(<kbd>⇧</kbd><kbd>⌘</kbd><kbd>E</kbd>)</span>. A save panel opens, named after the note.</li>
         <li><b>Pick a format</b> in the panel's Format menu. The file's extension follows it, and the panel starts on the format you used last.</li>
-        <li><b>Click Export.</b> The status bar says “Exported “Launch plan.pdf” · Show in Finder”.</li>
+        <li><b>Click Export.</b> A notice under the toolbar says “Exported “Launch plan.pdf””, with a Show in Finder button.</li>
       </ol>
       <p>Unsaved edits are included. To print instead, choose File &gt; Print… <span class="keys">(<kbd>⌥</kbd><kbd>⌘</kbd><kbd>P</kbd>)</span>.</p>
       <div class="table" tabindex="0" role="region" aria-label="Export formats">
@@ -143,6 +143,11 @@
         <p>HTML names your fonts without embedding them, so a reader without a font sees a fallback. The page carries a Content Security Policy that allows no scripts and loads nothing from the network.</p>
         <p>PDF and PNG are laid out from the same page in a web view that runs no script and follows no link.</p>
       </details>
+
+      <h2 id="typeset">Typst and LaTeX</h2>
+      <p>A <code>.typ</code> or <code>.tex</code> file opens as code. Each time Dewline saves it, or another app's write lands in it, Dewline typesets it with the <code>typst</code>, <code>latexmk</code> or <code>tectonic</code> you have installed. Dewline bundles no compiler; <a href="/docs/cli/#doctor"><code>dewline doctor</code></a> lists the ones it finds.</p>
+      <p>The status bar says how the run went, with Go to Line for an error. File &gt; Export… saves the PDF. The PDF and LaTeX's working files stay in Dewline's cache, never beside the source.</p>
+      <p>The compiler runs in a sandbox. It reads the folder, the system and your TeX folders, and writes only its build folder and caches. Only typst and tectonic reach the network, for packages. latexmk runs with shell escape off and ignores the folder's <code>.latexmkrc</code>.</p>
 
       <h2 id="command-line">Export from the command line</h2>
       <div class="code" data-lang="Terminal">

@@ -105,9 +105,9 @@
       <p>The command ships inside the app at <code>/Applications/Dewline.app/Contents/Helpers/dewline</code>. The Homebrew cask puts it on your PATH. Otherwise Settings &gt; Agents shows it as Not installed; Add links it into <code>/usr/local/bin</code>, or <code>~/.local/bin</code> when this account can't write there.</p>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline --version
-dewline 0.1.0</code></pre>
+dewline 0.7.2</code></pre>
       </div>
-      <p>Every example ran against the 0.1.0 build on 2 November 2026. Output shows the home folder as <code>/Users/you</code>.</p>
+      <p>The examples ran against the 0.1.0 build on 2 November 2026, except <code>--version</code> and <code>doctor</code>, which show 0.7.2. Output shows the home folder as <code>/Users/you</code>.</p>
 
       <h2 id="commands">Commands</h2>
       <div class="table" tabindex="0" role="region" aria-label="The dewline subcommands">
@@ -201,7 +201,7 @@ set -gx EDITOR "dewline open --wait"</code></pre>
 <pre tabindex="0"><code><span class="p">$ </span>dewline changes --json --session 9f2c51e0-demo
 [{"vendor":"claude","session":"9f2c51e0-demo","file":"/Users/you/Notes/projects/launch-plan.md","time":"2026-11-02T17:42:10Z","decision":"kept","excerpt_hash":"b8bd7e533ca4a32f8950b88300c840eb8b74fd14a30f4c54c916c7224b5e644a"}]</code></pre>
       </div>
-      <p>The JSON fields are <code>vendor</code> (such as <code>claude</code>), <code>session</code>, <code>file</code>, <code>time</code>, <code>decision</code> (<code>kept</code> or <code>reverted</code>) and <code>excerpt_hash</code>. The hash is BLAKE3 of the change's text; the log never holds the text. No decisions prints nothing and exits 0.</p>
+      <p>The JSON fields are <code>vendor</code> (such as <code>claude</code>), <code>session</code>, <code>file</code>, <code>time</code>, <code>decision</code> (<code>kept</code> or <code>reverted</code>) and <code>excerpt_hash</code>. The hash is BLAKE3 of the change's text; the log never holds the text. No decisions prints nothing, or <code>[]</code> with <code>--json</code>, and exits 0.</p>
 
       <h2 id="capture"><code>dewline capture</code></h2>
       <div class="code" data-lang="Usage">
@@ -236,10 +236,6 @@ dewline: /Users/you/Documents/Dewline/Inbox.md: there is nothing to capture</cod
       </dl>
       <p>The command writes HTML and DOCX itself, with no window. <a href="/docs/export/#command-line">Export</a> says how that output differs from the app's.</p>
       <p>Every other format goes to the app over the control socket, starting the app if it isn't running, and the command returns once the file is written. <code>FILE</code> must be a Markdown file and <code>OUT</code> must end in the format's extension. The app writes that one file and nothing else, except that <code>--to tex</code> and <code>--to md</code> also write a folder beside it named after <code>OUT</code>, such as <code>reading-files</code>, holding the diagrams and images.</p>
-      <aside class="callout caution">
-        <p class="callout-title">PDF from the command line fails in 0.1.0</p>
-        <p>In 0.1.0 the command hands a PDF export over through a link that names the wrong field, so no PDF is written and the command still exits 0. Export PDF from the app instead.</p>
-      </aside>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline export projects/launch-plan.md --to html
 <span class="p">$ </span>ls projects
@@ -274,28 +270,36 @@ dewline: /Users/you/keys: the folder holds .ssh</code></pre>
 
       <h2 id="doctor"><code>dewline doctor</code></h2>
       <div class="code" data-lang="Usage">
-<pre tabindex="0"><code>dewline doctor [--install-hooks | --links &lt;DIR&gt;]</code></pre>
+<pre tabindex="0"><code>dewline doctor [--install-hooks | --remove-hooks] [--agent &lt;claude|codex|cursor&gt;]
+dewline doctor --links &lt;DIR&gt;</code></pre>
       </div>
       <p>With no flag, it changes nothing. It reports whether the app matches this command, which agent hooks are in place, and which companion tools are on your PATH.</p>
       <div class="code" data-lang="Shell">
 <pre tabindex="0"><code><span class="p">$ </span>dewline doctor
-Version: app and command are both 0.1.0
+Version: app and command are both 0.7.2
 
 Agent hooks:
   Claude Code: installed in /Users/you/.claude/settings.json
-  Codex: PostToolUse missing from /Users/you/.codex/hooks.json
-  `dewline doctor --install-hooks` merges the missing ones in, asking first.
+  Codex: installed in /Users/you/.codex/hooks.json; needs trust: in Codex, open /hooks and trust each Dewline hook
+  Cursor: not installed; no /Users/you/.cursor
+  `dewline doctor --install-hooks` merges the missing ones in, and `--remove-hooks` takes them out, asking first.
 
 Companions:
   pandoc: /opt/homebrew/bin/pandoc
   typst: /opt/homebrew/bin/typst
+  latexmk: not installed; brew install --cask mactex
+  tectonic: /opt/homebrew/bin/tectonic
   vale: not installed; brew install vale
   harper-ls: not installed; brew install harper</code></pre>
       </div>
-      <p>The version check reads the app that holds the command, or <code>/Applications/Dewline.app</code>. A mismatch says to use the command inside the app. Settings &gt; Agents shows the same check: Claude Code as Installed or Not set up, Codex as Added or Not set up, since only Codex knows whether you trusted its hooks.</p>
+      <p>The version check reads the app that holds the command, or <code>/Applications/Dewline.app</code>. A mismatch says to use the command inside the app. For an agent with hooks missing, it names the events and prints each entry <code>--install-hooks</code> would add. Settings &gt; Agents shows the same check: each agent as Active, Installed, needs trust, or Not set up.</p>
       <dl>
         <dt><code>--install-hooks</code></dt>
-        <dd>Merges the missing hooks into <code>~/.claude/settings.json</code> and <code>~/.codex/hooks.json</code>. A hook whose <code>dewline</code> no longer exists, as after the app moved, counts as missing, and its command is replaced with this one's path. For each file it prints the entries and asks <code>Merge them in? [y/N]</code>, so it needs a terminal. It keeps every other key and hook. It copies the old file to <code>&lt;file&gt;.dewline-backup-&lt;seconds&gt;</code> first, and skips a file that changed after it was read. <a href="/docs/agents/#by-hand">Agents</a> shows the hooks it adds.</dd>
+        <dd>Merges the missing hooks into <code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code> and <code>~/.cursor/hooks.json</code>, skipping an agent whose folder doesn't exist. A hook whose <code>dewline</code> no longer exists, as after the app moved, counts as missing, and its command is replaced with this one's path. For each file it prints the entries and asks <code>Merge them into &lt;file&gt;? [y/N]</code>, so it needs a terminal. It keeps every other key and hook. It copies the old file to <code>&lt;file&gt;.dewline-backup-&lt;seconds&gt;</code> first, and stops at a file that changed after it was read, so you can run it again. <a href="/docs/agents/#by-hand">Agents</a> shows the hooks it adds.</dd>
+        <dt><code>--remove-hooks</code></dt>
+        <dd>Takes Dewline's hooks out of the same files. For each file it prints the entries and asks <code>Remove them from &lt;file&gt;? [y/N]</code>. It keeps every other key and hook, and a backup beside the file.</dd>
+        <dt><code>--agent &lt;claude|codex|cursor&gt;</code></dt>
+        <dd>Limits the check, <code>--install-hooks</code> or <code>--remove-hooks</code> to one agent.</dd>
         <dt><code>--links &lt;DIR&gt;</code></dt>
         <dd>Prints each broken relative link and CLAUDE.md <code>@import</code> in the Markdown files under <code>DIR</code>, and nothing else. A problem is <code>no such file</code>, <code>imports a file that imports it</code> or <code>more than 5 imports deep</code>. It skips hidden folders other than <code>.claude</code>, <code>.cursor</code> and <code>.github</code>, skips <code>node_modules</code> and <code>target</code>, and doesn't follow symlinked folders. It exits 1 when it finds any.</dd>
       </dl>
@@ -333,7 +337,7 @@ For more information, try '--help'.
           <thead><tr><th scope="col">Variable</th><th scope="col">What the command does with it</th></tr></thead>
           <tbody>
             <tr><td><code>HOME</code></td><td>Finds your home folder: the inbox, the decisions log, the app's socket, the agents' settings, and the folders <code>mcp</code> refuses.</td></tr>
-            <tr><td><code>PATH</code></td><td><code>doctor</code> looks for pandoc, typst, vale and harper-ls on it.</td></tr>
+            <tr><td><code>PATH</code></td><td><code>doctor</code> looks for pandoc, typst, latexmk, tectonic, vale and harper-ls on it.</td></tr>
             <tr><td><code>DEWLINE_SOCKET</code></td><td>Talks to the socket at this path instead of the app's. The command then never starts the app or brings it forward. Dewline's own tests use it.</td></tr>
           </tbody>
         </table>
@@ -349,8 +353,8 @@ For more information, try '--help'.
         <dd>The app appends one line per Keep or Revert of an agent's change, readable only by you. <code>changes</code> and the MCP <code>decisions</code> tool read it.</dd>
         <dt><code>…/dev.arkwerx.dewline/run/control.sock</code></dt>
         <dd><code>open</code>, <code>export</code> (except HTML and DOCX) and <code>notify</code> talk to the app here. The command checks that the app on the other end runs as you.</dd>
-        <dt><code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code></dt>
-        <dd><code>doctor</code> reads them. <code>doctor --install-hooks</code> writes them after you agree, with a backup beside each.</dd>
+        <dt><code>~/.claude/settings.json</code>, <code>~/.codex/hooks.json</code>, <code>~/.cursor/hooks.json</code></dt>
+        <dd><code>doctor</code> reads them. <code>doctor --install-hooks</code> and <code>--remove-hooks</code> write them after you agree, with a backup beside each.</dd>
       </dl>
     </article>
 

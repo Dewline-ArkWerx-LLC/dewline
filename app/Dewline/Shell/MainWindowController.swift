@@ -518,10 +518,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         textView.openNote = { [weak self] url, heading in self?.follow(url, heading: heading) }
         textView.findInFiles = folder == nil ? nil : { [weak self] tag in self?.sidebar.showSearch(tag) }
         textView.string = text
-        // Setting the string leaves the caret at its end; a note opens at its start, or past front matter, which stays
-        // folded until the caret goes into it. A resumed tab and Back and Forward restore their place once shown.
+        // Setting the string leaves the caret at its end; a note opens at its start, past a first-line H1, whose marker
+        // the caret would show, or past front matter, which stays folded until the caret goes into it. A resumed tab and
+        // Back and Forward restore their place once shown.
         let first = textView.styler.map.blocks(in: NSRange(location: 0, length: 0)).first
-        let start = first.map { $0.kind == .frontMatter ? min(NSMaxRange($0.range), textView.textStorage!.length) : 0 } ?? 0
+        let start = first.map { block in
+            let length = textView.textStorage!.length
+            if block.kind == .frontMatter { return min(NSMaxRange(block.range), length) }
+            guard case .heading(1) = block.kind else { return 0 }
+            return min(NSMaxRange((text as NSString).paragraphRange(for: block.range)), length)
+        } ?? 0
         textView.setSelectedRange(NSRange(location: start, length: 0))
         document.live?.attach(textView)
         // The editor's undo history is the document's, which counts its unsaved edits.

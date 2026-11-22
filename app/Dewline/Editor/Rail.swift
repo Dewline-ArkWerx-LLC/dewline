@@ -73,14 +73,15 @@ final class Rail: NSScroller {
 
     @objc private func scrolled() {
         if arrival != nil { updateLabels() }
-        guard scrollerStyle == .overlay else { return }
         scrolling = true
         updateShown()
+        needsDisplay = true
         settle?.invalidate()
         settle = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.scrolling = false
                 self?.updateShown()
+                self?.needsDisplay = true
             }
         }
     }
@@ -240,7 +241,8 @@ final class Rail: NSScroller {
         drawMarks()
     }
 
-    /// Paper, the hairline and the heading ticks; while the legend shows, the ticks are ink2 like their names.
+    /// Paper, the hairline and, while the pointer is on the rail or the note scrolls, the heading ticks; while the
+    /// legend shows, the ticks are ink2 like their names.
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
         ThemeStore.shared.color(.paper).setFill()
         bounds.fill()
@@ -248,12 +250,13 @@ final class Rail: NSScroller {
         ink(contrast ? 0.30 : 0.20, dark: contrast ? 0.30 : 0.16).setFill()
         NSRect(x: Self.line, y: slotRect.minY, width: 1, height: slotRect.height).fill()
         let legend = labels.items.contains { $0.rule == nil }
+        guard legend || hovering != nil || scrolling else { return }
         (legend ? ThemeStore.shared.color(.ink2) : ink(0.52, dark: 0.40)).setFill()
         for tick in ticks { tickRect(tick).fill() }
     }
 
-    /// The bracket: ink at 16% (28% under Increase Contrast) over the visible span, stroked 3 pt, its caps reaching the
-    /// hairline.
+    /// The bracket: ink at 16% (28% under Increase Contrast) over the visible span, stroked 3 pt in ink at 30% (45%), its
+    /// caps reaching the hairline.
     override func drawKnob() {
         let knob = usableParts == .allScrollerParts ? rect(for: .knob) : rect(for: .knobSlot)
         guard knob.height > 0 else { return }
@@ -267,7 +270,8 @@ final class Rail: NSScroller {
         path.line(to: NSPoint(x: 3, y: knob.minY + 1.5))
         path.line(to: NSPoint(x: 3, y: knob.maxY - 1.5))
         path.line(to: NSPoint(x: Self.line, y: knob.maxY - 1.5))
-        ThemeStore.shared.color(.ink3).setStroke()
+        let stroke: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.45 : 0.30
+        ink(stroke, dark: stroke).setStroke()
         path.stroke()
     }
 
@@ -356,14 +360,23 @@ final class Rail: NSScroller {
         return (writer, place, time)
     }
 
-    /// The label for a change: "Claude changed Steps  16:09  ⌃⌘↓", with Next or Previous Change's keys when the change
-    /// is below or above the view, and "Changes show here too" when `intro`. It fits `width`: the introduction goes
-    /// first, then the heading loses its middle; nil when even a short heading is wider.
-    private static func label(writer: String, place: String, time: String, keys: String, intro: Bool, width: CGFloat) -> NSAttributedString? {
+    /// The label for a change: "⌄ Claude Code changed Steps  16:09  ⌃⌘↓", a chevron toward the change, with Next or
+    /// Previous Change's keys when the change is below or above the view, and "Changes show here too" when `intro`. It
+    /// fits `width`: the introduction goes first, then the heading loses its middle; nil when even a short heading is wider.
+    private static func label(writer: String, place: String, time: String, keys: String, intro: Bool, width: CGFloat, below: Bool) -> NSAttributedString? {
         let store = ThemeStore.shared
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
         func text(_ place: String, intro: Bool) -> NSAttributedString {
-            let text = NSMutableAttributedString(
-                string: "\(writer) changed \(place)", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)])
+            let text = NSMutableAttributedString()
+            let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [store.color(.ink2)]))
+            if let chevron = NSImage(systemSymbolName: below ? "chevron.down" : "chevron.up", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+                let attachment = NSTextAttachment()
+                attachment.image = chevron
+                attachment.bounds = NSRect(x: 0, y: ((font.capHeight - chevron.size.height) / 2).rounded(), width: chevron.size.width, height: chevron.size.height)
+                text.append(NSAttributedString(attachment: attachment))
+                text.append(NSAttributedString(string: " ", attributes: [.font: font]))
+            }
+            text.append(NSAttributedString(string: "\(writer) changed \(place)", attributes: [.font: font, .foregroundColor: store.color(.ink)]))
             text.append(NSAttributedString(string: "  " + time, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: store.color(.ink2)]))
             if !keys.isEmpty {
                 text.append(NSAttributedString(string: "  " + keys, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: store.color(.ink)]))
@@ -408,8 +421,13 @@ final class Rail: NSScroller {
             // The pill's 8 pt sides, its 9 pt rule and 8 pt clear of the text column.
             let column = textView.textContainerOrigin.x + (textView.textContainer.map { $0.column - $0.lineFragmentPadding } ?? 0)
             let width = right - textView.convert(NSPoint(x: column, y: 0), to: labels).x - 8 - 25
-            let text = Self.label(writer: writer, place: place, time: time, keys: keys, intro: introducing && hovered == nil, width: width)
-            labels.items = text.map { [RailLabels.Item(text: $0, center: center(mark.y), right: right, rule: MarkWriter(mark.change.origin).color)] } ?? []
+            let below = mark.y > visible.maxY
+            let text = Self.label(writer: writer, place: place, time: time, keys: keys, intro: introducing && hovered == nil, width: width, below: below)
+            // The pill sits at the rail's end toward its change, 12 pt in.
+            let (top, bottom) = (center(0), center(textView.bounds.height))
+            let inward: CGFloat = top < bottom ? 12 : -12
+            let pinned = hovered != nil ? center(mark.y) : below ? bottom - inward : top + inward
+            labels.items = text.map { [RailLabels.Item(text: $0, center: pinned, right: right, rule: MarkWriter(mark.change.origin).color)] } ?? []
         } else if hovering != nil, !blank {
             // Where names would overlap, the higher heading keeps its name.
             var taken: [CGFloat] = []

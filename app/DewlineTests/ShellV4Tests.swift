@@ -60,9 +60,9 @@ struct ShellV4Tests {
         #expect(main.tabName == "Launch plan")
         #expect(main.savedState?.hasPrefix("Saved") == true)
         #expect(main.wordCount.hasSuffix("words"))
-        #expect(main.textView?.selectedRange() == NSRange(location: 0, length: 0), "a note opens at its start")
+        #expect(main.textView?.selectedRange() == NSRange(location: 14, length: 0), "a note opens past its H1")
         await main.placeUpdate?.value
-        #expect(main.statusBar.idle == "Launch plan.md:1:1", "the idle status bar names the caret's place")
+        #expect(main.statusBar.idle == "Launch plan.md:2:1", "the idle status bar names the caret's place")
     }
 
     @Test func eachTabsTitleRowHoldsTheWindowsTabs() async throws {

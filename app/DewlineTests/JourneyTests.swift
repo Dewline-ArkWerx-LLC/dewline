@@ -466,7 +466,7 @@ struct JourneyTests {
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: 0, length: 0))
         let stamp = try #require(Self.stamp(in: tab))
-        #expect(stamp.accessibilityLabel()?.hasPrefix("Claude, ") == true && stamp.accessibilityLabel()?.hasSuffix(", saved, 1 of 4") == true)
+        #expect(stamp.accessibilityLabel()?.hasPrefix("Claude Code, ") == true && stamp.accessibilityLabel()?.hasSuffix(", saved, 1 of 4") == true)
         #expect(tab.textView.changeToDecide == changes[0].id)
         tab.live.revert(changes[1].id)
         #expect(tab.marked.map(\.id) == [changes[0].id, changes[2].id, changes[3].id])
@@ -1197,7 +1197,7 @@ struct JourneyTests {
         await waitForMain { tab.marked.count == 4 }
         let changes = tab.marked
         tab.textView.setSelectedRange(NSRange(location: changes[2].change.range.location, length: 0))
-        #expect(try #require(Self.stamp(in: tab)).subviews.contains { $0.accessibilityLabel() == "Revert Claude's change, 3 of 4" })
+        #expect(try #require(Self.stamp(in: tab)).subviews.contains { $0.accessibilityLabel() == "Revert Claude Code's change, 3 of 4" })
         tab.textView.revertChange(nil)
         #expect(tab.marked.map(\.id) == [changes[0].id, changes[1].id, changes[3].id])
         #expect(tab.textView.changeToDecide == changes[3].id)

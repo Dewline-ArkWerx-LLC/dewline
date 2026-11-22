@@ -130,7 +130,7 @@ final class BlockFragment: NSTextLayoutFragment {
         case .picture(let picture, _):
             let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y), size: picture.size)
             guard case .image = picture.art, NSAppearance.currentDrawing().isDark else { return picture.draw(in: frame, of: context) }
-            // On a dark page an embedded image draws at 88% brightness in 6 pt corners with a 1 px rim, and a link card
+            // On a dark page an embedded image draws at 85% brightness in 6 pt corners with a 1 px rim, and a link card
             // takes a faint 1 pt rim, so a light one reads as placed.
             context.setStrokeColor(CGColor(gray: 1, alpha: 0.08))
             guard picture.kind == .image else {
@@ -146,7 +146,7 @@ final class BlockFragment: NSTextLayoutFragment {
             context.beginTransparencyLayer(in: frame, auxiliaryInfo: nil)
             picture.draw(in: frame, of: context)
             context.setBlendMode(.sourceAtop)
-            context.setFillColor(CGColor(gray: 0, alpha: 0.12))
+            context.setFillColor(CGColor(gray: 0, alpha: 0.15))
             context.fill(frame)
             context.endTransparencyLayer()
             context.restoreGState()

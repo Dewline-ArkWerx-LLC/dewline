@@ -443,6 +443,19 @@ struct WritingModeTests {
         #expect(layout.textViewportLayoutController.viewportRange?.endLocation.compare(layout.documentRange.endLocation) == .orderedSame)
     }
 
+    @Test func theColumnKeepsTheRailsRoomInEveryScrollerStyle() throws {
+        let editor = Editor("# Plan\n\nShip it.\n")
+        let scrollView = try #require(editor.view.enclosingScrollView)
+        var margins: [CGFloat] = []
+        for style in [NSScroller.Style.legacy, .overlay] {
+            scrollView.scrollerStyle = style
+            scrollView.tile()
+            editor.view.setFrameSize(scrollView.contentSize)
+            margins.append(editor.view.textContainerInset.width)
+        }
+        #expect(margins[0] == margins[1])
+    }
+
     @Test func typewriterLetsTheEndsReachTheMiddle() {
         let editor = Editor("text")
         let height = editor.view.enclosingScrollView!.contentView.bounds.height

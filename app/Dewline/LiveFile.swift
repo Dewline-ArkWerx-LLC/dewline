@@ -45,6 +45,7 @@ final class LiveFile {
         NotificationCenter.default.post(name: Self.changesDidChange, object: self)
     }
     static let changesDidChange = Notification.Name("LiveFileChangesDidChange")
+    private var receiptEnds: Task<Void, Never>?
     /// A revert left a change pending for text typed inside it; the note's stamp asks whether to revert over it.
     static let revertRefused = Notification.Name("LiveFileRevertRefused")
     /// The file's snapshots, newest first, as last read off the main thread for the Snapshots menu.
@@ -622,11 +623,22 @@ final class LiveFile {
         // A decision that edits the text is kept by the save that follows.
         if let replacement {
             textView.replaceAsOneEdit(pending.range, with: replacement, named: Self.name(decision, pending))
+            if decision == .other, !pending.conflict, let window = textView.window { receipt(in: window) }
         } else {
             keepMarks()
         }
         if pending.conflict, !changes.values.contains(where: \.conflict), autosaveRefused {
             Task { await autosave() }
+        }
+    }
+
+    /// "Reverted · ⌘Z to undo" in the status bar for 4 s.
+    private func receipt(in window: NSWindow) {
+        receiptEnds?.cancel()
+        StatusBar.post(.init(id: "reverted", kind: .result, text: "Reverted \u{00B7} \u{2318}Z to undo"), in: window)
+        receiptEnds = Task { [weak window] in
+            guard (try? await Task.sleep(for: .seconds(4))) != nil, let window else { return }
+            StatusBar.clear("reverted", in: window)
         }
     }
 

@@ -4,6 +4,7 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
 - A change waiting off screen keeps its mark at the window's right edge at rest, and one that lands there pins a chip ("1 more below · Backoff ⌃⌘↓") until it is on screen or decided.
 
 ## 0.7.0 (22 Nov 2026)

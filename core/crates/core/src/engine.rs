@@ -719,6 +719,9 @@ impl Engine {
         };
         if origin != Origin::External && !private {
             self.store.relabel(&path, &to, UNKNOWN, &origin.label())?;
+            for hash in chain.iter().flat_map(|chain| &chain.through) {
+                self.store.relabel(&path, hash, UNKNOWN, &origin.label())?;
+            }
         }
         let (edits, covering, conflicts) = if unmerged && buffer != theirs {
             let (start, end, theirs) = differing(buffer, &theirs);
@@ -1216,7 +1219,14 @@ impl Engine {
                         });
                     }
                     if let Some(label) = label {
-                        relabels.push((d.path.clone(), to, label, origin.label(), d.private));
+                        relabels.push((
+                            d.path.clone(),
+                            to,
+                            label,
+                            origin.label(),
+                            d.private,
+                            chain.through,
+                        ));
                     }
                 }
                 if let Some(pending) = d.landing.as_mut()
@@ -1234,6 +1244,7 @@ impl Engine {
                         pending.origin.label(),
                         origin.label(),
                         d.private,
+                        chain.through.clone(),
                     ));
                     pending.origin = origin.clone();
                     pending.chain = Some(chain);
@@ -1252,10 +1263,13 @@ impl Engine {
                 }
             }
         }
-        for (path, hash, from, to, private) in relabels {
+        for (path, hash, from, to, private, through) in relabels {
             if !private {
                 // The menu's label is all a failed relabel leaves wrong.
                 let _ = self.store.relabel(&path, &hash, &from, &to);
+                for hash in through {
+                    let _ = self.store.relabel(&path, &hash, UNKNOWN, &to);
+                }
             }
         }
         Ok(updates)
@@ -2133,6 +2147,61 @@ mod tests {
         fx.tick(6_000);
         assert_eq!(fx.engine.restore(doc, &history[1], &buffer).unwrap(), "a\n");
         assert_eq!(fx.engine.snapshots(doc).unwrap(), history);
+    }
+
+    /// Two hooked writes inside one second, the first seen before the
+    /// second lands: both versions name the agent, not only the last.
+    #[test]
+    fn a_chain_names_every_version_it_wrote() {
+        let fx = fixture();
+        let path = fx.file("notes.md", "a\n");
+        let (doc, text) = opened(&fx.engine, &path);
+        for (id, from, to) in [("t1", "a\n", "a\nb\n"), ("t2", "a\nb\n", "a\nb\nc\n")] {
+            let pre = claim("PreToolUse", "s1", id, &path, from, Some(to));
+            fx.engine.claim(pre).unwrap();
+            fx.replace(&path, to);
+            if id == "t1" {
+                assert!(fx.engine.observe(doc).unwrap());
+            }
+            let post = claim("PostToolUse", "s1", id, &path, to, None);
+            fx.engine.claim(post).unwrap();
+        }
+        fx.land(doc, &text, 1);
+        assert_eq!(
+            fx.origins(&path),
+            [
+                ("a\n".to_owned(), UNKNOWN.to_owned()),
+                ("a\nb\n".to_owned(), "claude:s1".to_owned()),
+                ("a\nb\nc\n".to_owned(), "claude:s1".to_owned()),
+            ]
+        );
+    }
+
+    /// The same two writes named by hooks that report after the landing.
+    #[test]
+    fn a_late_chain_names_every_version_it_wrote() {
+        let fx = fixture();
+        let path = fx.file("notes.md", "a\n");
+        let (doc, text) = opened(&fx.engine, &path);
+        fx.replace(&path, "a\nb\n");
+        assert!(fx.engine.observe(doc).unwrap());
+        fx.replace(&path, "a\nb\nc\n");
+        let (landing, _) = fx.land(doc, &text, 1);
+        assert_eq!(landing.origin, Origin::External);
+        for (id, from, to) in [("t1", "a\n", "a\nb\n"), ("t2", "a\nb\n", "a\nb\nc\n")] {
+            let pre = claim("PreToolUse", "s1", id, &path, from, Some(to));
+            fx.engine.claim(pre).unwrap();
+            let post = claim("PostToolUse", "s1", id, &path, to, None);
+            fx.engine.claim(post).unwrap();
+        }
+        assert_eq!(
+            fx.origins(&path),
+            [
+                ("a\n".to_owned(), UNKNOWN.to_owned()),
+                ("a\nb\n".to_owned(), "claude:s1".to_owned()),
+                ("a\nb\nc\n".to_owned(), "claude:s1".to_owned()),
+            ]
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ What changed in each Dewline release, newest first.
 
 - A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it. ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note.
 - Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text.
+- Writer badges on sidebar rows and tabs show a dot in the writer's ink and the count instead of a letter that read as git's (A, C, D, M, R); the name is in the tooltip and VoiceOver. Long tab names keep their extension, Find in Files has a labeled Replace toggle and one-line results, Quick Open says "opened now" and marks code files, and app buttons are standard macOS push buttons.
 - Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
 - A note opens with the caret at its start (past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
 - Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.

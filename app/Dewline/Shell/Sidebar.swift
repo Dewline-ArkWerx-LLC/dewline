@@ -116,8 +116,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// The location of the heading whose section is at the top of the page.
     private var section: Int?
     private var showsIgnored: Bool
-    /// Whether the Outline holds one heading, and so is collapsed.
-    private var oneHeading = false
     /// The rows are listed once the window has drawn its first frame; until then the sidebar shows empty.
     private var filled = false
     /// The open file as `show` last had it before the rows were listed.
@@ -418,23 +416,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         listHeadings()
     }
 
+    /// Lists the headings; one heading tells nothing the note's first line doesn't, so it lists none, and a window
+    /// without a folder hides the Outline until a second comes.
     private func listHeadings() {
-        var rows = headings.map { SidebarNode(.heading($0)) }
+        var rows = headings.count > 1 ? headings.map { SidebarNode(.heading($0)) } : []
         if rows.count > 12, !showsAllHeadings {
             rows = rows.prefix(12) + [SidebarNode(.more(rows.count))]
         }
         outlineSection.children = rows
         reload()
-        // One heading tells nothing the note's first line doesn't; its section stays shut until a second comes.
-        if rows.count == 1 {
-            outlineView.collapseItem(outlineSection)
-        } else if oneHeading {
-            outlineView.expandItem(outlineSection)
-        }
-        oneHeading = rows.count == 1
     }
 
-    /// Sets in medium the heading whose section holds `location`.
+    /// Marks the heading whose section holds `location`.
     func markSection(at location: Int) {
         guard folder == nil || showsOutline else { return }
         let current = headings.last { $0.location <= location }?.location
@@ -1198,7 +1191,7 @@ func relativeTime(_ date: Date, now: Date = .now) -> String {
 }
 
 /// One sidebar row other than a file's: a section label, a heading, or a note, which lines up with file names. Text is
-/// `ink2`; the current heading's is `ink`.
+/// `ink2`; the current heading's is `ink` in the same face, with a 2 pt accent bar at the row's leading edge.
 private final class SidebarCell: NSTableCellView, ChromeSelectable {
     static let header = NSUserInterfaceItemIdentifier("header")
     static let heading = NSUserInterfaceItemIdentifier("heading")
@@ -1206,6 +1199,7 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
 
     private var indent: NSLayoutConstraint?
     private var current = false
+    private let bar = NSView()
 
     var selected = false {
         didSet { paint() }
@@ -1235,6 +1229,17 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
             let indent = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20)
             self.indent = indent
             constraints.append(indent)
+            bar.wantsLayer = true
+            bar.layer?.cornerRadius = 1
+            bar.isHidden = true
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(bar)
+            constraints += [
+                bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: -4),
+                bar.widthAnchor.constraint(equalToConstant: 2),
+                bar.centerYAnchor.constraint(equalTo: centerYAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 14),
+            ]
         default:
             label.font = Chrome.small
             constraints.append(label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22))
@@ -1257,9 +1262,8 @@ private final class SidebarCell: NSTableCellView, ChromeSelectable {
             textField?.textColor = Chrome.color(.ink2)
             return
         }
-        if identifier == Self.heading {
-            textField?.font = current ? .systemFont(ofSize: Chrome.size(.callout), weight: .medium) : Chrome.small
-        }
+        bar.isHidden = !current
+        bar.layer?.backgroundColor = Chrome.color(.accent).cgColor
         textField?.textColor = Chrome.color(selected || current ? .ink : .ink2)
     }
 

@@ -132,123 +132,39 @@ enum Keycap {
     }
 }
 
-/// A chrome button drawn by Dewline: a text button in `ink2` (`ink` under the pointer); bordered, `ink` on a `keycap`
-/// fill with a `hairline` edge; or, filled, the accent with `paper` for its text. 6 pt radius, 28 pt tall. Keycaps
-/// follow the title. Under Full Keyboard Access it takes the focus, with the system's ring, and Space or Return
-/// presses it.
-final class ChromeButton: NSControl {
+/// A button that runs a closure: `.push`, the accent's bezel when `.filled` for the one action a sheet or island leads
+/// with, and `.inline` for `.text`, such as Skip and Done. Regular size; rows and bars set `controlSize` to `.small`.
+final class ChromeButton: NSButton {
     enum Style {
         case text, bordered, filled
     }
 
-    private let title: String
-    private let keys: [String]
     private let style: Style
     private let handler: () -> Void
-    private var hovering = false {
-        didSet { needsDisplay = true }
-    }
-    private var pressed = false {
-        didSet { needsDisplay = true }
-    }
 
-    init(_ title: String, keys: [String] = [], style: Style = .text, label: String? = nil, _ handler: @escaping () -> Void) {
-        self.title = title
-        self.keys = keys
+    init(_ title: String, style: Style = .text, label: String? = nil, _ handler: @escaping () -> Void) {
         self.style = style
         self.handler = handler
         super.init(frame: .zero)
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
-        setAccessibilityLabel(label ?? title)
-        toolTip = keys.isEmpty ? nil : "\(title) (\(keys.joined()))"
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+        self.title = title
+        bezelStyle = style == .text ? .inline : .push
+        target = self
+        action = #selector(press)
+        if let label { setAccessibilityLabel(label) }
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        themeDidChange()
     }
 
     required init?(coder: NSCoder) {
         fatalError("ChromeButton is built in code")
     }
 
-    override var isFlipped: Bool { true }
-
-    private var titleFont: NSFont { style == .filled ? Chrome.labelActive : Chrome.label }
-
-    override var intrinsicContentSize: NSSize {
-        let text = ceil((title as NSString).size(withAttributes: [.font: titleFont]).width)
-        let caps = keys.isEmpty ? 0 : 8 + Keycap.width(keys)
-        return NSSize(width: (style == .text ? 6 : 14) * 2 + text + caps, height: 28)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let filled = style == .filled
-        if filled {
-            Chrome.color(.accent).withAlphaComponent(pressed ? 0.82 : 1).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-        } else if style == .bordered {
-            let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-            Chrome.color(.keycap).setFill()
-            shape.fill()
-            if hovering || pressed {
-                Chrome.hover.setFill()
-                shape.fill()
-            }
-            Chrome.color(.hairline).setStroke()
-            shape.lineWidth = 1
-            shape.stroke()
-        }
-        let color: NSColor = filled ? Chrome.color(.paper) : Chrome.color(hovering || pressed || style == .bordered ? .ink : .ink2)
-        let attributes: [NSAttributedString.Key: Any] = [.font: titleFont, .foregroundColor: color]
-        let size = (title as NSString).size(withAttributes: attributes)
-        let x: CGFloat = style == .text ? 6 : 14
-        (title as NSString).draw(at: NSPoint(x: x, y: bounds.midY - size.height / 2), withAttributes: attributes)
-        if !keys.isEmpty {
-            Keycap.draw(keys, x: x + ceil(size.width) + 8, midY: bounds.midY, onFill: filled, alpha: isEnabled ? 1 : 0.6)
-        }
-    }
-
-    override var acceptsFirstResponder: Bool { isEnabled && takesKeyboardFocus }
-
-    override var focusRingMaskBounds: NSRect { bounds }
-
-    override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-    }
-
-    override func keyDown(with event: NSEvent) {
-        guard isEnabled, pressesOnKey(event) else { return super.keyDown(with: event) }
+    @objc private func press() {
         handler()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard isEnabled else { return }
-        pressed = true
-        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            let inside = bounds.contains(convert(next.locationInWindow, from: nil))
-            if next.type == .leftMouseUp {
-                pressed = false
-                if inside { handler() }
-                return
-            }
-            pressed = inside
-        }
-    }
-
-    override func accessibilityPerformPress() -> Bool {
-        handler()
-        return true
     }
 
     @objc private func themeDidChange() {
-        needsDisplay = true
+        bezelColor = style == .filled ? Chrome.color(.accent) : nil
     }
 }
 

@@ -5,6 +5,7 @@ What changed in each Dewline release, newest first.
 ## Unreleased
 
 - List bullets move with their lines, a period after inline code stays on the code's line, struck text sits flush or hangs when it would push its line, and a rewrite across lines hangs its old text as one block.
+- Code-file changes read as a diff (old lines above, − and + with numbers in the gutter) with Revert and Keep on the stamp and a build error on it; every stamp shows Keep filled and its keys, sized from the body text; a revert leaves "Reverted · ⌘Z" in the margin; a named writer's insert drops the solid underline unless Differentiate Without Color or Increase Contrast is on.
 
 ## 0.7.0 (22 Nov 2026)
 

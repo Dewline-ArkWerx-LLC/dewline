@@ -37,15 +37,16 @@ struct MarkWriter: Equatable {
         NSAttributedString(string: name, attributes: [.font: Self.stampFont, .foregroundColor: color, .kern: 0.4])
     }
 
-    /// SF Pro semibold with both cases set as small capitals.
-    @MainActor static let stampFont: NSFont = {
-        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    /// SF Pro semibold at the stamp's text size, with both cases set as small capitals.
+    @MainActor static var stampFont: NSFont {
+        let size = ChangeStamp.textSize
+        let font = NSFont.systemFont(ofSize: size, weight: .semibold)
         let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: [
             [NSFontDescriptor.FeatureKey.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
             [NSFontDescriptor.FeatureKey.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
         ]])
-        return NSFont(descriptor: descriptor, size: 11) ?? font
-    }()
+        return NSFont(descriptor: descriptor, size: size) ?? font
+    }
 
     /// "Claude changed 2 places".
     func spoken(places: Int) -> String {
@@ -102,6 +103,10 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     private(set) var reach: CGFloat = 0
     private var dirty = false
     private var observing: NSView?
+    /// The inline ghosts were taken out for a new width: they come back once their gaps close.
+    private var remeasuring = false
+    /// The "Reverted" receipts showing in the margin.
+    private(set) var receipts: [NSTextField] = []
 
     static let fade: CFTimeInterval = 0.2
     private static let gap: CGFloat = 6
@@ -121,14 +126,28 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     override var isFlipped: Bool { true }
 
-    /// The margin labels come and go with the width.
+    /// The margin labels come and go with the width, and an inline ghost is measured again against its line.
     override func setFrameSize(_ newSize: NSSize) {
         let widened = newSize.width != frame.width
         super.setFrameSize(newSize)
         if widened, !changes.isEmpty {
             dirty = true
             textView?.needsLayout = true
+            remeasureInline()
         }
+    }
+
+    /// Takes out the inline ghosts and, once the styler has closed their gaps, places them again, inline only where
+    /// each still fits the rest of its line.
+    private func remeasureInline() {
+        let inline = hangers.filter { Self.isInline($0.value.view) }
+        guard !inline.isEmpty else { return }
+        for (id, hanger) in inline {
+            hanger.view.removeFromSuperview()
+            hangers[id] = nil
+        }
+        remeasuring = true
+        reserve(inline.map(\.value.anchor))
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -225,6 +244,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     /// line, spaced from a word on either side, else hanging.
     private func ghost(_ parts: [(text: String, struck: Bool)], for change: LiveFile.Change, inline: Int?) -> Ghost {
         let writer = MarkWriter(change.origin)
+        if let textView, code {
+            let base = textView.styler.baseAttributes
+            return Ghost(
+                parts, writer: writer, inlineUpTo: 0, font: base[.font] as? NSFont ?? ThemeStore.shared.bodyFont,
+                style: base[.paragraphStyle] as? NSParagraphStyle ?? .default)
+        }
         guard let inline, let text = textView?.textStorage?.mutableString else { return Ghost(parts, writer: writer, inlineUpTo: 0) }
         func word(_ character: unichar) -> Bool {
             Unicode.Scalar(character).map { CharacterSet.alphanumerics.contains($0) } ?? false
@@ -252,12 +277,17 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
 
     /// Changes that rewrite more than one line, or more than three runs in one paragraph, read as one, since gaps for
     /// so many ghosts would move each other: their paragraphs' old text hangs under them, struck where it was removed,
-    /// under the first change's key.
+    /// under the first change's key. In a code file every removal reads this way, its old lines set above the new
+    /// ones from their first line's start, as a diff does.
     private func rewrites(in text: NSString) -> [(key: UInt64, members: [UInt64], hang: Int, parts: [(text: String, struck: Bool)])] {
+        let code = code
         var regions: [(range: NSRange, members: [(id: UInt64, change: LiveFile.Change)])] = []
         let shown = changes.filter { !$0.value.conflict && NSMaxRange($0.value.range) <= text.length }
         for (id, change) in shown.sorted(by: { $0.value.range.location < $1.value.range.location }) {
-            let paragraphs = text.paragraphRange(for: change.range)
+            let at = change.range.location
+            // Whole lines taken out between two lines are their own region, holding no line of the text.
+            let between = code && change.range.length == 0 && (at == 0 || [0x0A, 0x0D].contains(text.character(at: at - 1)))
+            let paragraphs = between ? NSRange(location: at, length: 0) : text.paragraphRange(for: change.range)
             if let last = regions.last, paragraphs.location < NSMaxRange(last.range) {
                 regions[regions.count - 1].range = NSUnionRange(last.range, paragraphs)
                 regions[regions.count - 1].members.append((id, change))
@@ -268,7 +298,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         return regions.compactMap { region in
             let removing = region.members.filter { !$0.change.removed.allSatisfy(\.isWhitespace) }.count
             let lines = region.members.contains { $0.change.removed.contains(where: \.isNewline) || text.substring(with: $0.change.range).contains(where: \.isNewline) }
-            guard removing > 1, lines || removing > 3 else { return nil }
+            guard code ? removing > 0 : removing > 1 && (lines || removing > 3) else { return nil }
             var parts: [(text: String, struck: Bool)] = []
             var at = region.range.location
             for (_, change) in region.members {
@@ -277,7 +307,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 at = max(at, NSMaxRange(change.range))
             }
             if NSMaxRange(region.range) > at { parts.append((text.substring(with: NSRange(location: at, length: NSMaxRange(region.range) - at)), false)) }
-            let hang = min(max(NSMaxRange(region.range) - 1, 0), max(text.length - 1, 0))
+            let hang = min(max(code ? region.range.location : NSMaxRange(region.range) - 1, 0), max(text.length - 1, 0))
             return (region.members[0].id, region.members.map(\.id), hang, parts)
         }
     }
@@ -294,9 +324,18 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 }
                 self.dirty = true
                 textView.needsLayout = true
+                if self.remeasuring {
+                    self.remeasuring = false
+                    self.updateHangers()
+                }
             }
         }
         CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    /// Whether the text is a code file's.
+    private var code: Bool {
+        textView?.styler.code != nil
     }
 
     private var columnWidth: CGFloat {
@@ -305,16 +344,19 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
     }
 
     private func measureHangers() {
-        let width = columnWidth
-        for hanger in hangers.values where hanger.view.frame.width != width && !Self.isInline(hanger.view) {
+        for hanger in hangers.values where !Self.isInline(hanger.view) {
+            // A code file's column has no end: its old lines take their own width.
+            let width = code ? (hanger.view as? Ghost)?.naturalWidth ?? columnWidth : columnWidth
+            guard hanger.view.frame.width != width else { continue }
             hanger.view.setFrameSize(NSSize(width: width, height: (hanger.view as? Hanging)?.height(for: width) ?? 0))
         }
     }
 
     /// Space to reserve under the paragraphs holding these offsets, or above them (`before`), for the styler.
     func space(in range: NSRange) -> [(anchor: Int, height: CGFloat, before: Bool)] {
+        let code = code
         var space = hangers.values.filter { NSLocationInRange($0.anchor, range) && !Self.isInline($0.view) }
-            .map { ($0.anchor, $0.view.frame.height + 2 * Self.gap, false) }
+            .map { code && $0.view is Ghost ? ($0.anchor, $0.view.frame.height, true) : ($0.anchor, $0.view.frame.height + 2 * Self.gap, false) }
         if let fold, !fold.end, NSLocationInRange(fold.target, range) { space.append((fold.target, ChangeStamp.barHeight + 2 * Self.gap, fold.before)) }
         return space
     }
@@ -353,11 +395,15 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let wash = contrast ? (dark ? 0.30 : 0.22) : (dark ? 0.24 : 0.15)
         let rule: CGFloat = contrast ? 3 : 2
         let ruleWidth: CGFloat = contrast ? 4 : 3
+        // A named writer's text takes a solid underline as well as its wash only for those who need more than hue.
+        let underlined = contrast || NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
+        let current = stamped
         let left = textView.textContainerOrigin.x + (textView.textContainer?.lineFragmentPadding ?? 0)
         let now = CACurrentMediaTime()
         let motion = Motion.current != .off
         let storage = textView.textStorage!
         var hung: [UInt64: CGFloat] = [:]
+        var above: [UInt64: CGFloat] = [:]
         var ruled: [(key: String, rules: [NSRect], color: NSColor)] = []
         // Hangers under one paragraph stack in change order; each change in it anchors at its own offset.
         func paragraph(_ anchor: Int) -> NSRange {
@@ -375,6 +421,14 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 ghost.frame.origin = NSPoint(x: gap.frame.minX + glyph.size().width + kern - width + ghost.lead, y: gap.frame.minY + gap.baseline - ghost.ascent)
                 continue
             }
+            // A code file's old lines sit above the lines that replaced them, in the space before their first line.
+            if code, hanger.view is Ghost {
+                guard let fragment = fragment(at: hanger.anchor) else { continue }
+                let y = textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
+                hanger.view.frame.origin = NSPoint(x: left, y: y)
+                above[id] = y
+                continue
+            }
             guard let top = textBottom(at: hanger.anchor) else { continue }
             let stacked = hangers.filter { $0.key < id && !Self.isInline($0.value.view) && paragraph($0.value.anchor) == paragraph(hanger.anchor) }
                 .map { $0.value.view.frame.height + Self.gap }
@@ -382,7 +436,9 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             hanger.view.frame.origin = NSPoint(x: left, y: y)
             hung[id] = y + hanger.view.frame.height
         }
-        for (id, change) in changes where NSMaxRange(change.range) <= storage.length {
+        // Rules already drawn: a change whose rule runs beside an earlier one's takes a tick at its first line.
+        var drawn: [NSRect] = []
+        for (id, change) in changes.sorted(by: { $0.value.range.location < $1.value.range.location }) where NSMaxRange(change.range) <= storage.length {
             let writer = MarkWriter(change.origin)
             let color = writer.color.resolved(for: effectiveAppearance)
             let group = CALayer()
@@ -390,6 +446,9 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             var rows = Self.rows(lines, in: storage.mutableString)
             if rows.isEmpty, let line = lineRect(at: change.range.location) { rows = [line] }
             if let bottom = hung[id], let last = rows.last { rows[rows.count - 1].size.height = bottom - last.minY }
+            if let top = above[id], let first = rows.first, top < first.minY {
+                rows[0] = NSRect(x: first.minX, y: top, width: first.width, height: first.maxY - top)
+            }
             guard !rows.isEmpty else { continue }
             if !change.conflict {
                 painted[id] = change.range
@@ -409,8 +468,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     fill.frame = trim.count == 1 ? line.frame.insetBy(dx: -2, dy: 0) : line.frame
                     fill.backgroundColor = color.withAlphaComponent(id == lit ? wash + 0.13 : wash).cgColor
                     group.addSublayer(fill)
-                    // Dashed for another app; a solid 1 pt line at 35% ink for a named writer, which no spelling or
-                    // grammar flag looks like.
+                    // Dashed for another app, always; a solid 1 pt line at 35% ink for a named writer, which no
+                    // spelling or grammar flag looks like, under Differentiate Without Color or Increase Contrast.
+                    guard writer.dashed || underlined else {
+                        tips.append((line.frame, id))
+                        continue
+                    }
                     let underline = CAShapeLayer()
                     let width = writer.dashed ? rule : 1
                     let y = line.frame.minY + line.baseline + (writer.dashed ? rule + 1 : 2.5)
@@ -428,8 +491,17 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             // One rule from the change's first row to its last; in a quote, the quote's rule in the writer's ink.
             let x = quoted(change.range.location) ? left : max(left - Self.ruleInset, 4)
             let span = rows.dropFirst().reduce(rows[0]) { $0.union($1) }
-            let rules = [NSRect(x: x, y: span.minY + 2, width: ruleWidth, height: max(span.height - 4, 4))]
+            // The change Keep and Revert decide takes a rule a point heavier.
+            let width = id == current ? ruleWidth + 1 : ruleWidth
+            let rules = [NSRect(x: x, y: span.minY + 2, width: width, height: max(span.height - 4, 4))]
             if !change.conflict { ruled.append((Review.key(change.origin), rules, color)) }
+            if drawn.contains(where: { $0.minY < rules[0].maxY && rules[0].minY < $0.maxY }) {
+                let tick = CALayer()
+                tick.frame = NSRect(x: x - 6, y: (rows[0].midY - 0.75).rounded(), width: 4, height: 1.5)
+                tick.backgroundColor = color.cgColor
+                group.addSublayer(tick)
+            }
+            drawn += rules
             for frame in rules {
                 if id == lit {
                     let halo = CALayer()
@@ -440,7 +512,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 }
                 let mark = CALayer()
                 mark.frame = frame
-                mark.cornerRadius = ruleWidth / 2
+                mark.cornerRadius = width / 2
                 mark.backgroundColor = color.cgColor
                 group.addSublayer(mark)
                 tips.append((frame.insetBy(dx: -6, dy: 0), id))
@@ -474,6 +546,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         CATransaction.commit()
         for tip in tips { addToolTip(tip.rect, owner: self, userData: nil) }
         placeStamp(left: left, hung: hung)
+        // A code file's ruler marks the old and new lines.
+        if code { textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true }
     }
 
     private struct Segment {
@@ -709,7 +783,6 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                     continue
                 }
                 stamp.isHidden = false
-                stamp.active = stamp === primary
                 stamp.placeInMargin(right: left - ChangeStamp.inset, first: first, second: second)
                 let shift = bottom + 8 - stamp.frame.minY
                 if shift > 0 { stamp.placeInMargin(right: left - ChangeStamp.inset, first: first + shift, second: second + shift) }
@@ -731,8 +804,9 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             }
             guard let y else { return primary.isHidden = true }
             primary.isHidden = false
-            primary.active = true
-            primary.placeAsBar(NSRect(x: left, y: y + Self.gap, width: columnWidth, height: ChangeStamp.barHeight))
+            // A code file's column has no end: the bar ends at the view's.
+            let width = code ? min(columnWidth, max(textView.visibleRect.maxX - left - 16, 0)) : columnWidth
+            primary.placeAsBar(NSRect(x: left, y: y + Self.gap, width: width, height: ChangeStamp.barHeight))
             setReach(fold.end ? primary.frame.maxY + Self.gap + textView.textContainerInset.height : 0)
         }
     }
@@ -754,9 +828,11 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let group = group(of: id)
         let external = change.origin == .external
         let place = live.map { Review.place(of: id, in: $0, window: textView.window) } ?? (index: 1, total: changes.count)
+        let numbers = textView.enclosingScrollView?.verticalRulerView as? LineNumbers
         stamp.show(
             MarkWriter(change.origin), at: landed[id] ?? .now, index: place.index, of: place.total, external: external,
-            shell: external && change.shell, refused: group.contains { changes[$0]?.refused == true })
+            shell: external && change.shell, refused: group.contains { changes[$0]?.refused == true },
+            error: group.lazy.compactMap { self.changes[$0].flatMap { numbers?.error(in: $0.range) } }.first)
     }
 
     /// A stamp's first and second text baselines in the margin, beside the change in `range`.
@@ -810,6 +886,54 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let old = self.fold
         self.fold = fold
         reserve([old?.target, fold?.target].compactMap { $0 })
+    }
+
+    /// The marks lay out again, as after an edit: the typesetting errors the stamp shows changed.
+    func refresh() {
+        storageEdited()
+    }
+
+    /// "Reverted · ⌘Z" for 4 s where the margin stamp on `id` stood, before the revert takes it away.
+    func reverted(_ id: UInt64) {
+        guard let textView, let stamp = stamps.values.first(where: { $0.change == id && !$0.view.isHidden && !$0.view.folded })?.view else { return }
+        let receipt = NSTextField(labelWithString: "Reverted \u{00B7} \u{2318}Z")
+        receipt.font = .systemFont(ofSize: ChangeStamp.textSize)
+        receipt.textColor = ThemeStore.shared.color(.ink2)
+        let size = receipt.fittingSize
+        receipt.frame = NSRect(x: stamp.frame.maxX - size.width, y: stamp.frame.minY, width: size.width, height: size.height)
+        receipt.wantsLayer = true
+        textView.addSubview(receipt)
+        receipts.append(receipt)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self, weak receipt] in
+            MainActor.assumeIsolated {
+                guard let receipt else { return }
+                self?.receipts.removeAll { $0 === receipt }
+                guard Motion.current != .off else { return receipt.removeFromSuperview() }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = Self.fade
+                    receipt.animator().alphaValue = 0
+                } completionHandler: {
+                    MainActor.assumeIsolated { receipt.removeFromSuperview() }
+                }
+            }
+        }
+    }
+
+    /// In a code file, each ghost's old lines, set above the line that starts at `at`, with the lines the changes
+    /// above it added, which their old numbers lack; and the ranges the changes wrote.
+    var diff: (removed: [(at: Int, lines: Int, added: Int)], written: [NSRange]) {
+        guard code, let text = textView?.textStorage?.mutableString else { return ([], []) }
+        func breaks(_ string: String) -> Int {
+            string.reduce(0) { $1.isNewline ? $0 + 1 : $0 }
+        }
+        let shown = changes.values.filter { !$0.conflict && NSMaxRange($0.range) <= text.length }
+        let removed = hangers.compactMap { id, hanger -> (at: Int, lines: Int, added: Int)? in
+            guard let ghost = hanger.view as? Ghost, changes[id] != nil else { return nil }
+            let at = text.paragraphRange(for: NSRange(location: hanger.anchor, length: 0)).location
+            let added = shown.filter { NSMaxRange($0.range) <= at }.reduce(0) { $0 + breaks(text.substring(with: $1.range)) - breaks($1.removed) }
+            return (at, breaks(ghost.shown) + 1, added)
+        }
+        return (removed, shown.filter { $0.range.length > 0 }.map(\.range))
     }
 
     private func decideStamp(_ key: String, keep: Bool) {

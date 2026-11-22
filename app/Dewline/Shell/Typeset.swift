@@ -96,12 +96,12 @@ enum Typeset {
         switch outcome {
         case .missing(let text):
             clean[url] = nil
-            numbers?.errors = []
+            numbers?.errors = [:]
             StatusBar.post(.init(id: message, kind: .setup, text: text), in: window)
         case .failed(let diagnostics, let log):
             clean[url] = nil
             let errors = diagnostics.filter(\.error)
-            numbers?.errors = Set(errors.filter { $0.file == url }.map(\.line))
+            numbers?.errors = Dictionary(errors.filter { $0.file == url }.map { ($0.line, $0.message) }) { first, _ in first }
             let last = log.split(whereSeparator: \.isNewline).last.map(String.init) ?? ""
             var text = errors.first.map { "\(count(errors.count, "error")) \u{00B7} \($0.place) \($0.message)" } ?? "Typesetting failed: \(last)"
             var actions = actions(errors, from: window)
@@ -113,7 +113,7 @@ enum Typeset {
             StatusBar.post(.init(id: message, kind: .problem, text: text, actions: actions), in: window)
         case .done(let pdf, let warnings):
             clean[url] = pdf
-            numbers?.errors = []
+            numbers?.errors = [:]
             let open = StatusBar.Message.Action(title: "Open PDF") { _ in NSWorkspace.shared.open(pdf) }
             if let first = warnings.first {
                 let text = "\(count(warnings.count, "warning")) \u{00B7} \(first.place) \(first.message)"

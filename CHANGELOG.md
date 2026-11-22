@@ -2,26 +2,25 @@
 
 What changed in each Dewline release, newest first.
 
-## Unreleased
+## 0.7.0 (22 Nov 2026)
 
-- Change marks: the stamp and the rail's pill say Claude Code; another app's and the demo's changes take a plum hue; removed text reads at 58% ink; a one-line wash pads 2 pt; Revert and Keep are small native buttons, always shown on a folded stamp; a revert says "Reverted · ⌘Z to undo" for 4 s; the column no longer slides when the rail shows; the rail's arrival pill sits at the end toward its change with a chevron, and heading ticks show while you point at the rail or scroll.
-- Rendering: dark-mode images at 85% brightness, inline code at 0.9 of the text, wrapped task items start under their label.
-- Typing above a marked change keeps its marks on their words; a short note opened while its window is behind draws all its text; a Mermaid chain with a labeled link (`a -->|x| b --> c`) draws every edge.
-- Writer badges on sidebar rows and tabs show a dot in the writer's ink and the count instead of a letter that read as git's (A, C, D, M, R); the name is in the tooltip and VoiceOver. Long tab names keep their extension, Find in Files has a labeled Replace toggle and one-line results, Quick Open says "opened now" and marks code files, and app buttons are standard macOS push buttons.
-- Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
-- A note opens with the caret past its first-line H1 (or past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
+Review keys follow one rule, agent changes are marked with the writer's color instead of a letter, and marks stay on their words while you type above them.
+
+- Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013). Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
+- Typing above a marked change keeps its marks on their words. A short note opened while its window is behind draws all its text. A Mermaid chain with a labeled link (`a -->|x| b --> c`) draws every edge.
+- ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note. A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it.
+- Change stamps say Claude Code in full. Revert and Keep are small native buttons with their keys in the tooltip and VoiceOver's help, and stay visible on a folded stamp. A revert says "Reverted · ⌘Z to undo" for 4 s. Another app's and the demo's changes take a plum hue, removed text reads at 58% ink, and the column no longer slides when the rail appears.
+- Writer badges on sidebar rows and tabs are a dot in the writer's ink and the count, instead of a letter that read as git's (A, C, D, M, R); the name is in the tooltip and VoiceOver.
+- Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text. A wrapped diff line hangs past the + and − gutter, and the diff scrolls to its first difference.
+- A note opens with the caret past its first-line H1 or front matter, not at its end; a restored tab and Back and Forward still return to where you were.
 - Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.
-- Review keys follow one rule: Return keeps and Delete reverts; ⌘ acts on one change, Shift on the note, Control on the session. Keep Session moves to ⌃⌘↩, beside Revert Session (⌃⌘⌫) (decision 0013).
-- Quick Open moves to ⌘P and Print to ⌥⌘P; ⇧⌘O no longer opens Quick Open.
-- The hook offer waits for the first change another app makes in an open note, instead of coming when a folder opens.
-- Settings > Agents says whether the `dewline` command is installed, and where, with Add when it isn't.
+- The hook offer comes once you keep or revert the first change another app makes in an open note, not when a folder opens, and names each settings file it edits and whether it reaches every project.
 - Code files always open, and the sidebar, Quick Open and Find in Files list them; Settings > Editor drops Open code files.
-- The hook offer comes once you keep or revert another app's change, not as it lands, and names each settings file it edits and whether it reaches every project.
-- First run and Settings: Welcome.md is two sentences above the demo, the guide island clears the note and ends on Open a Folder…, the test prompt targets a new dewline-test.md and prints under its button, and the Settings window fits each pane.
-- A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it. ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note.
-- Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text.
-- Earlier Versions: a wrapped diff line hangs past the + and − gutter, the diff scrolls to its first difference, and the list drops its column headers.
-- The status bar shows a hint such as "Next: spec.md ⌃⌘↓" beside the caret's place instead of over it, and drops it once the caret moves, the window goes behind another or a change lands.
+- Settings > Agents says whether the `dewline` command is installed, and where, with Add when it isn't. The Settings window fits each pane.
+- First run: Welcome.md is two sentences above the demo, the guide clears the note and ends on Open a Folder…, and the test prompt targets a new dewline-test.md and prints under its button.
+- Long tab names keep their extension, Find in Files has a labeled Replace toggle and one-line results, Quick Open marks code files, and app buttons are standard macOS push buttons.
+- The status bar shows a hint such as "Next: spec.md ⌃⌘↓" beside the caret's place instead of over it, and drops it once the caret moves or a change lands.
+- Dark-mode images draw at 85% brightness, inline code at 0.9 of the text size, and wrapped task items start under their label.
 
 ## 0.6.1 (21 Nov 2026)
 

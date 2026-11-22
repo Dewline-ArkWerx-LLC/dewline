@@ -264,6 +264,15 @@ fn mermaid_within(
     LazyLock::force(&MERMAID_FONTS);
     let theme = colors.theme(&known);
     let flowchart = matches!(known.as_str(), "flowchart" | "graph");
+    let source = if flowchart {
+        source
+            .lines()
+            .map(|line| split_chain(line).unwrap_or_else(|| line.to_owned()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        source
+    };
     within_budget(budget, move || {
         let graph = mermaid_rs_renderer::parse_mermaid_strict(&source)
             .map_err(|error| error.to_string())?
@@ -288,6 +297,62 @@ fn mermaid_within(
         }
         Ok(mermaid_rs_renderer::render_svg(&layout, &theme, &config))
     })
+}
+
+/// One edge per link of a chain that labels a link, as `a -->|x| b --> c`: mermaid-rs-renderer 0.3.1 splits a chain only
+/// when no link has a pipe label, and reads that line as one edge to a node named `b --> c`. A link is a run of two or
+/// more of `-=.<>` holding a dash or an equals sign, outside brackets, quotes and labels.
+fn split_chain(line: &str) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let (mut nodes, mut links) = (vec![String::new()], Vec::<String>::new());
+    let (mut depth, mut quoted, mut labeled) = (0, false, false);
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        i += 1;
+        let open = depth == 0 && !quoted;
+        match ch {
+            '"' => quoted = !quoted,
+            '[' | '(' | '{' if !quoted => depth += 1,
+            ']' | ')' | '}' if !quoted => depth -= 1,
+            '|' if open && !links.is_empty() && nodes.last()?.trim().is_empty() => {
+                let end = i + chars[i..].iter().position(|&c| c == '|')?;
+                links.last_mut()?.extend(&chars[i - 1..=end]);
+                (i, labeled) = (end + 1, true);
+                continue;
+            }
+            '-' | '=' | '.' | '<' | '>' if open => {
+                let run = i - 1
+                    + chars[i - 1..]
+                        .iter()
+                        .take_while(|c| "-=.<>".contains(**c))
+                        .count();
+                let link: String = chars[i - 1..run].iter().collect();
+                i = run;
+                if link.chars().count() >= 2 && link.contains(['-', '=']) {
+                    links.push(link);
+                    nodes.push(String::new());
+                } else {
+                    nodes.last_mut()?.push_str(&link);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        nodes.last_mut()?.push(ch);
+    }
+    if links.len() < 2 || !labeled || nodes.iter().any(|node| node.trim().is_empty()) {
+        return None;
+    }
+    let indent = &line[..line.len() - line.trim_start().len()];
+    Some(
+        links
+            .iter()
+            .enumerate()
+            .map(|(n, link)| format!("{indent}{} {link} {}", nodes[n].trim(), nodes[n + 1].trim()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// Moves each edge label that covers a node, an earlier label or another edge to the first clear spot beside its edge,
@@ -835,6 +900,32 @@ mod tests {
             number(label, "x") >= number(node, "x") + number(node, "width"),
             "{svg}"
         );
+    }
+
+    #[test]
+    fn mermaid_draws_each_link_of_a_labeled_chain() {
+        isolate();
+        let svg = mermaid_within(
+            Duration::from_secs(30),
+            "flowchart LR\n  W -->|5xx| B[Backoff] --> Q\n  A[a-b] -.->|try again| C --> D".into(),
+            night(),
+        )
+        .unwrap();
+        assert!(
+            svg.contains(">Backoff<") && !svg.contains("[Backoff]"),
+            "{svg}"
+        );
+        assert!(
+            svg.contains(">5xx<") && svg.contains(">try again<"),
+            "{svg}"
+        );
+        assert!(svg.contains("data-edge-id=\"edge-3\""), "{svg}");
+        assert_eq!(
+            split_chain("  W -->|5xx| B[Backoff] --> Q").as_deref(),
+            Some("  W -->|5xx| B[Backoff]\n  B[Backoff] --> Q")
+        );
+        assert_eq!(split_chain("  W -->|re-try| B"), None);
+        assert_eq!(split_chain("  a --> b --> c"), None);
     }
 
     #[test]

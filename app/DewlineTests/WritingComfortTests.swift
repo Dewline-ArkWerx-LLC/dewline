@@ -428,6 +428,21 @@ struct WritingModeTests {
         #expect(dimmed(editor.view).isEmpty)
     }
 
+    @Test func aNoteLaysOutItsViewportOnLoadAndAsItsWindowShows() throws {
+        let scrollView = EditorTextView.scrollView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scrollView
+        let view = try #require(scrollView.documentView as? EditorTextView)
+        let layout = try #require(view.textLayoutManager)
+        // A window behind the front one draws nothing yet: the load itself lays the viewport out.
+        view.string = "# Standup\n\n- Shipped the retry queue\n- Reviewed the backoff\n"
+        #expect(layout.textViewportLayoutController.viewportRange?.endLocation.compare(layout.documentRange.endLocation) == .orderedSame)
+        view.textStorage!.append(NSAttributedString(string: "- Third item\n"))
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        #expect(layout.textViewportLayoutController.viewportRange?.endLocation.compare(layout.documentRange.endLocation) == .orderedSame)
+    }
+
     @Test func typewriterLetsTheEndsReachTheMiddle() {
         let editor = Editor("text")
         let height = editor.view.enclosingScrollView!.contentView.bounds.height

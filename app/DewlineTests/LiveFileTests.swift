@@ -106,6 +106,26 @@ struct LiveFileTests {
         #expect(file.textView.string == "# Plan!\n\nShip on Friday.\n\nAgent note.\n")
     }
 
+    @Test func typingAboveAChangeKeepsItsMarksOnItsWords() async throws {
+        let file = try OpenFile("# Plan\n\nWe could maybe ship Friday.\n", events: true)
+        defer { file.close() }
+        file.type("!", at: 6)
+        try Data("# Plan\n\nWe ship Friday, if QA signs off.\n".utf8).write(to: file.url, options: .atomic)
+        await file.live.refresh()
+        let before = file.live.changes.filter(\.value.marked).mapValues { (file.textView.string as NSString).substring(with: $0.range) }
+        #expect(!before.isEmpty)
+        file.type("ab", at: 0)
+        for (id, words) in before {
+            let range = try #require(file.live.changes[id]?.range)
+            #expect((file.textView.string as NSString).substring(with: range) == words)
+        }
+        // The marks hear of the move once the edit is done.
+        await waitForMain {
+            file.textView.marks.relayout()
+            return before.keys.allSatisfy { file.textView.marks.painted[$0] == file.live.changes[$0]?.range }
+        }
+    }
+
     @Test func removedTextHangsStruckUnderItsLine() async throws {
         let file = try OpenFile("# Plan\n\nShip on Friday.\n\nOld note.\n")
         defer { file.close() }

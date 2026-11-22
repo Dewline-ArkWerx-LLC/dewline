@@ -216,6 +216,25 @@ final class EditorTextView: CaretTextView {
         styler.highlights.recolor()
     }
 
+    override var string: String {
+        didSet { redrawViewport() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let center = NotificationCenter.default
+        center.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+        guard let window else { return }
+        center.addObserver(self, selector: #selector(redrawViewport), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+    }
+
+    /// A note opened while its window is behind can lay its viewport out at TextKit 2's estimates and leave lines
+    /// undrawn until a resize; laying the viewport out again after a load and as the window shows draws every line.
+    @objc private func redrawViewport() {
+        textLayoutManager?.textViewportLayoutController.layoutViewport()
+        needsDisplay = true
+    }
+
     /// Rendered diagrams and math take the colors of the appearance they were drawn in.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

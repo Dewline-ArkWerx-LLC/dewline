@@ -462,8 +462,14 @@ jobs:
           if [[ $CHANNEL == beta ]]; then prerelease=(--prerelease); fi
           gh release create "v$VERSION" --draft --verify-tag "${prerelease[@]}" --title "Dewline $VERSION" \
             --notes-file "$RUNNER_TEMP/body.md" "$dmg" "$a/signed/SHA256SUMS" "$a/unsigned/sbom.cdx.json" "$a/feed/appcast.xml"
-          digest=$(gh api "repos/$GH_REPO/releases?per_page=30" | jq -r --arg tag "v$VERSION" --arg name "Dewline-$VERSION.dmg" \
-            '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $name) | .digest')
+          # The releases list can lag a new draft by a few seconds (v0.7.1 read it back empty). This waits only for the draft
+          # to appear; a digest that differs fails at once.
+          for _ in {1..10}; do
+            digest=$(gh api "repos/$GH_REPO/releases?per_page=30" | jq -r --arg tag "v$VERSION" --arg name "Dewline-$VERSION.dmg" \
+              '.[] | select(.tag_name == $tag) | .assets[] | select(.name == $name) | .digest')
+            [[ -n $digest ]] && break
+            sleep 3
+          done
           [[ $digest == "sha256:$DMG_SHA256" ]] || { echo "::error::the uploaded DMG's digest is $digest"; exit 1; }
           latest=true
           if [[ $CHANNEL == beta ]]; then latest=false; fi

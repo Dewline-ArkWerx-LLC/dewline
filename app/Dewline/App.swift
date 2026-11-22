@@ -596,3 +596,4 @@ extension AppDelegate: NSMenuItemValidation {
         }
     }
 }
+

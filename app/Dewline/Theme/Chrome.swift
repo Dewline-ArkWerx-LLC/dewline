@@ -133,7 +133,7 @@ enum Keycap {
 }
 
 /// A button that runs a closure: `.push`, the accent's bezel when `.filled` for the one action a sheet or island leads
-/// with, and `.inline` for `.text`, such as Skip and Done. Regular size; rows and bars set `controlSize` to `.small`.
+/// with, and borderless in `ink2` for `.text`, such as Skip. Regular size; rows and bars set `controlSize` to `.small`.
 final class ChromeButton: NSButton {
     enum Style {
         case text, bordered, filled
@@ -147,7 +147,7 @@ final class ChromeButton: NSButton {
         self.handler = handler
         super.init(frame: .zero)
         self.title = title
-        bezelStyle = style == .text ? .inline : .push
+        if style == .text { isBordered = false } else { bezelStyle = .push }
         target = self
         action = #selector(press)
         if let label { setAccessibilityLabel(label) }
@@ -165,6 +165,7 @@ final class ChromeButton: NSButton {
 
     @objc private func themeDidChange() {
         bezelColor = style == .filled ? Chrome.color(.accent) : nil
+        if style == .text { contentTintColor = Chrome.color(.ink2) }
     }
 }
 

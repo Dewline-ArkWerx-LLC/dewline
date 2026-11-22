@@ -30,6 +30,7 @@ struct AppearancePane: View {
                     HStack {
                         Text(text)
                             .monospacedDigit()
+                            .foregroundStyle(.primary)
                         Slider(value: Binding { store.lineHeight } set: { store.lineHeight = ($0 * 100).rounded() / 100 },
                                in: ThemeStore.lineHeights, step: 0.05) { Text("Line height") }
                             .labelsHidden()
@@ -70,6 +71,7 @@ struct AppearancePane: View {
             HStack {
                 Text(text)
                     .monospacedDigit()
+                    .foregroundStyle(.primary)
                 Stepper(label, value: Binding { value.wrappedValue } set: { value.wrappedValue = ($0 * 100).rounded() / 100 },
                         in: range, step: step)
                     .labelsHidden()

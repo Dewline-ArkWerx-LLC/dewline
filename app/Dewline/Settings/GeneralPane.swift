@@ -54,14 +54,13 @@ struct GeneralPane: View {
                 }
             } header: {
                 Text("Files")
-            } footer: {
-                if updates.updater == nil {
+            }
+            if updates.updater == nil {
+                Section("Updates") {
                     Text("This build does not update itself.")
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            if updates.updater != nil {
+            } else {
                 Section {
                     Toggle("Check automatically", isOn: Binding { updates.automaticChecks } set: { updates.setAutomaticChecks($0) })
                     Toggle(isOn: Binding { updates.beta } set: { updates.setBeta($0) }) {

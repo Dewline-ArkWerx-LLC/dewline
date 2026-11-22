@@ -108,8 +108,8 @@ struct ShellV4Tests {
         let origins: [ChangeEngine.Origin] = [.git(action: nil), .external, .agent(.claude, session: "s"), .agent(.demo, session: "d")]
         let widths = origins.map { WaitingBadge.width([WaitingCount(writer: MarkWriter($0), count: 2)]) }
         #expect(Set(widths).count == 1, "a dot, not a letter, so every writer's badge is the same width")
-        #expect(WaitingBadge.tip([WaitingCount(writer: MarkWriter(.external), count: 2)]) == "Another app: 2 changes waiting")
-        #expect(WaitingCount(writer: MarkWriter(.git(action: nil)), count: 1).spoken == "1 git change waiting")
+        #expect(WaitingBadge.tip([WaitingCount(writer: MarkWriter(.external), count: 2)]) == "2 changes by Another app, not reviewed")
+        #expect(WaitingCount(writer: MarkWriter(.agent(.claude, session: "s")), count: 1).spoken == "1 change by Claude Code, not reviewed")
     }
 
     @Test func aLongTabNameLosesItsMiddleAndKeepsItsExtension() {

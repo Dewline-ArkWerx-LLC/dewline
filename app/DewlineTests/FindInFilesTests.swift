@@ -132,7 +132,7 @@ struct FindInFilesTests {
         let line = try #require(results.view(atColumn: 0, row: 1, makeIfNecessary: true))
         #expect(line.accessibilityLabel() == "Line 1: # Plan")
         #expect(results.view(atColumn: 0, row: 0, makeIfNecessary: true)?.accessibilityLabel() == "a.md, notes, 2 matches")
-        #expect(results.rect(ofRow: 1).height == 24 && results.rect(ofRow: 2).height == 24, "every match is one line")
+        #expect(results.rect(ofRow: 1).height == 24 && results.rect(ofRow: 2).height == 24, "a match that fits is one line")
         #expect(visible(NSButton.self).contains { $0.title == "Replace" }, "Replace is a labeled toggle")
 
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))

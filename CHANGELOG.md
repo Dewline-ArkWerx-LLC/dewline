@@ -6,6 +6,7 @@ What changed in each Dewline release, newest first.
 
 - Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
 - A change waiting off screen keeps its mark at the window's right edge at rest, and one that lands there pins a chip ("1 more below · Backoff ⌃⌘↓") until it is on screen or decided.
+- Writer badges count only changes waiting for Keep or Revert, so they add up to "N to review", and say "1 change by Claude Code, not reviewed"; untracked files read New; the review menu heads each writer with its ink and count; the status bar says "Next change: spec.md ⌃⌘↓". Quick Open shows its prefixes, a magnifier and a stronger selection; Find in Files rows wrap to two lines, carry the badge and git letter, and use symbol toggles and the system find highlight.
 
 ## 0.7.0 (22 Nov 2026)
 

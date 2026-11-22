@@ -188,10 +188,9 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.92em; }
 .shot figcaption { margin-top: 1rem; font-size: 0.9375rem; line-height: 1.5; color: var(--body); text-wrap: pretty; }
 .shot figcaption code { color: var(--ink); }
 .chapter .shot { margin-top: 2rem; }
-.chapter .shot figcaption { font-family: var(--sans); }
 
 /* The story: a heading beside its prose. */
-.story { padding-block: clamp(1.5rem, 3vw, 2.5rem); }
+.story { padding-block: clamp(1.5rem, 3vw, 2.5rem); border-top: 1px solid var(--rule); }
 .chapter {
   display: grid; grid-template-columns: minmax(0, 24rem) minmax(0, 38rem); gap: 1rem clamp(2.5rem, 6vw, 6rem);
   padding-block: clamp(2.25rem, 4vw, 3.25rem); border-top: 1px solid var(--rule);
@@ -201,9 +200,9 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.92em; }
   font: 450 clamp(1.75rem, 1.3rem + 1.4vw, 2.5rem)/1.12 var(--serif);
   font-variation-settings: "opsz" 60; letter-spacing: -0.01em; color: var(--ink); text-wrap: balance;
 }
-.prose-x { font: 400 1.1875rem/1.7 var(--serif); font-variation-settings: "opsz" 18; color: var(--body); }
+.prose-x { font: 400 1.0625rem/1.6 var(--sans); color: var(--body); }
 .chapter .fig { font: 400 0.92em/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
-kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
+kbd { font: 400 0.95em/1 var(--chrome); color: var(--ink); white-space: nowrap; }
 
 /* The scene: the agent pain beside a capture, signed off on the last line. */
 .scene { border-top: 1px solid var(--rule); }
@@ -216,7 +215,6 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   font-variation-settings: "opsz" 60; letter-spacing: -0.008em; color: var(--ink); text-wrap: balance;
 }
 .scene-copy p { margin-top: 1rem; text-wrap: pretty; }
-.scene-copy kbd { font: 400 0.95em/1 var(--chrome); }
 .signoff { font: 470 1.5rem/1.2 var(--serif); font-variation-settings: "opsz" 36; color: var(--ink); }
 .scene-copy .signoff { margin-top: 1.75rem; }
 
@@ -291,7 +289,7 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
   .close .mark { box-shadow: 0 0 0 1px rgba(225, 235, 230, 0.12); }
 }
 .close h2 { font: 450 clamp(2.5rem, 1.6rem + 2.6vw, 3.75rem)/1.05 var(--serif); font-variation-settings: "opsz" 72; letter-spacing: -0.015em; color: var(--ink); }
-.close-lead { margin: 1.25rem auto 0; max-width: 30rem; font: 400 1.1875rem/1.6 var(--serif); font-variation-settings: "opsz" 18; }
+.close-lead { margin: 1.25rem auto 0; max-width: 30rem; font-size: 1.0625rem; line-height: 1.6; }
 .close .get { margin-top: 2rem; justify-content: center; }
 .close .meta { margin: 1.25rem auto 0; max-width: 28rem; line-height: 1.6; text-wrap: balance; }
 .close .meta span:not([data-version]) { display: block; margin-top: 0.25rem; }
@@ -315,8 +313,7 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 @media (max-width: 40rem) {
   .top nav .opt { display: none; }
   .get .btn { width: 100%; }
-  .get-brew { max-width: none; }
-  .cmd code { white-space: normal; overflow-wrap: anywhere; }
+  .get-brew { display: none; }
   .compare, .compare tbody, .compare tr, .compare th, .compare td { display: block; }
   .compare thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .compare tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--rule); padding-block: 0.875rem; }
@@ -395,8 +392,3 @@ kbd { font-size: 0.8em; color: var(--ink); white-space: nowrap; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes mark { from { opacity: 0.4; transform: scale(0.6); } }
 @keyframes wipe { from { clip-path: inset(0 0 100% 0 round 0.75rem); } to { clip-path: inset(0 round 0.75rem); } }
-@keyframes s-clip { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
-@keyframes s-strike { from { transform: scaleX(0); } }
-@keyframes s-bar { from { transform: scaleY(0); } }
-@keyframes s-stamp { from { opacity: 0; transform: translateY(4px); } }
-@keyframes s-acts { from { opacity: 0; transform: translateY(8px); } }

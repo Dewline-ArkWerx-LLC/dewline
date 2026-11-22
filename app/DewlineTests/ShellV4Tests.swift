@@ -104,6 +104,63 @@ struct ShellV4Tests {
         #expect(names == ["CLAUDE.md", "plan.md"])
     }
 
+    @Test func writerBadgesShowADotAndTheCountNeverALetter() {
+        let origins: [ChangeEngine.Origin] = [.git(action: nil), .external, .agent(.claude, session: "s"), .agent(.demo, session: "d")]
+        let widths = origins.map { WaitingBadge.width([WaitingCount(writer: MarkWriter($0), count: 2)]) }
+        #expect(Set(widths).count == 1, "a dot, not a letter, so every writer's badge is the same width")
+        #expect(WaitingBadge.tip([WaitingCount(writer: MarkWriter(.external), count: 2)]) == "Another app: 2 changes waiting")
+        #expect(WaitingCount(writer: MarkWriter(.git(action: nil)), count: 1).spoken == "1 git change waiting")
+    }
+
+    @Test func aLongTabNameLosesItsMiddleAndKeepsItsExtension() {
+        let title = "0003-retries-in-postgres.md"
+        let fitted = TabStrip.fit(title, stem: 24, in: 120)
+        let width = ceil((fitted as NSString).size(withAttributes: [.font: Chrome.label]).width)
+        #expect(fitted.hasPrefix("0003") && fitted.contains("\u{2026}") && fitted.hasSuffix("gres.md"))
+        #expect(width <= 120 && width > 104, "the name runs to the tab's end")
+        #expect(TabStrip.fit("spec-for-the-retry-queue.md \u{00B7} api", stem: 24, in: 120).hasSuffix(".md \u{00B7} api"))
+        #expect(TabStrip.fit(title, stem: 24, in: 400) == title)
+    }
+
+    @Test func chromeButtonsArePushButtonsAndSkipIsInline() {
+        var pressed = 0
+        let done = ChromeButton("Done") { pressed += 1 }
+        let setUp = ChromeButton("Set Up", style: .bordered) {}
+        let open = ChromeButton("Open a Folder\u{2026}", style: .filled) {}
+        #expect(done.bezelStyle == .inline && setUp.bezelStyle == .push && open.bezelStyle == .push)
+        #expect(open.bezelColor != nil && setUp.bezelColor == nil)
+        done.performClick(nil)
+        #expect(pressed == 1)
+    }
+
+    @Test func theOutlineHidesWhileTheNoteHasOneHeading() async throws {
+        Offscreen.install()
+        defer { Offscreen.uninstall() }
+        let root = try folder(["plan.md": "# Plan\n\nShip it.\n\n## Steps\n"])
+        let main = MainWindowController(folder: nil)
+        main.display(try document(root.appending(path: "plan.md")))
+        main.showWindow(nil)
+        defer { close([main]) }
+        func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
+        let outline = try #require(all(main.window!.contentView!).compactMap { $0 as? NSOutlineView }.first)
+        func rows() -> [String] {
+            (0..<outline.numberOfRows).compactMap { row in
+                switch (outline.item(atRow: row) as? SidebarNode)?.kind {
+                case .section(let title): title
+                case .heading(let heading): heading.title
+                default: nil
+                }
+            }
+        }
+        await waitForMain { rows() == ["Outline", "Plan", "Steps"] }
+        #expect(rows() == ["Outline", "Plan", "Steps"])
+        let text = try #require(main.textView)
+        let steps = (text.string as NSString).range(of: "\n## Steps")
+        text.insertText("", replacementRange: steps)
+        await waitForMain { rows().isEmpty }
+        #expect(rows().isEmpty, "one heading tells nothing the note's first line doesn't")
+    }
+
     @Test func showSidebarReachesTheSplitFromTheText() async throws {
         Offscreen.install()
         defer { Offscreen.uninstall() }

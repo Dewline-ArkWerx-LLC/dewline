@@ -1,11 +1,11 @@
 import AppKit
 
-/// The hovered code block's language and a Copy button, at the well's top right in Live: the label in SF Mono `ink2`,
-/// the button filled `Chrome.hover` under the pointer. Copy puts the code between the fences on the pasteboard.
+/// The hovered code block's language and a small push button, Copy, at the well's top right in Live: the label in SF
+/// Mono `ink2`. Copy puts the code between the fences on the pasteboard.
 @MainActor
 final class CodeBar: NSView {
     private let label = NSTextField(labelWithString: "")
-    private let copy = CopyButton()
+    private let copy = NSButton(title: "Copy", target: nil, action: nil)
     /// The code between the hovered block's fences.
     private var code = ""
     /// The hovered block's fenced span start, nil while the pointer is off every block.
@@ -16,6 +16,9 @@ final class CodeBar: NSView {
     init() {
         super.init(frame: .zero)
         label.font = Chrome.mono(11)
+        copy.bezelStyle = .push
+        copy.controlSize = .small
+        copy.setAccessibilityLabel("Copy code")
         copy.target = self
         copy.action = #selector(copyCode)
         let row = NSStackView(views: [label, copy])
@@ -46,7 +49,7 @@ final class CodeBar: NSView {
         label.isHidden = language.isEmpty
         copy.title = "Copy"
         let size = fittingSize
-        frame = NSRect(x: well.maxX - size.width - 8, y: well.minY + 4, width: size.width, height: 20)
+        frame = NSRect(x: well.maxX - size.width - 8, y: well.minY + 4, width: size.width, height: size.height)
         fade(in: true)
     }
 
@@ -75,57 +78,9 @@ final class CodeBar: NSView {
 
     @objc private func themeDidChange() {
         label.textColor = Chrome.color(.ink2)
-        copy.needsDisplay = true
     }
 
     override var isFlipped: Bool { true }
-}
-
-/// "Copy" in SF Mono `ink2` on a 4 pt rounded `Chrome.hover` fill while the pointer is on it.
-private final class CopyButton: NSButton {
-    private var hovering = false {
-        didSet { needsDisplay = true }
-    }
-
-    init() {
-        super.init(frame: .zero)
-        isBordered = false
-        setAccessibilityLabel("Copy code")
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var title: String {
-        didSet { invalidateIntrinsicContentSize() }
-    }
-
-    private var attributes: [NSAttributedString.Key: Any] {
-        [.font: Chrome.mono(11), .foregroundColor: Chrome.color(.ink2)]
-    }
-
-    override var intrinsicContentSize: NSSize {
-        let size = (title as NSString).size(withAttributes: attributes)
-        return NSSize(width: ceil(size.width) + 12, height: 20)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if hovering {
-            Chrome.hover.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
-        }
-        let size = (title as NSString).size(withAttributes: attributes)
-        (title as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attributes)
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-    }
 }
 
 extension EditorTextView {

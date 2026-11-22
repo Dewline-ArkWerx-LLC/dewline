@@ -1,9 +1,9 @@
 import AppKit
 
-/// The palette: one opaque Station panel over the window in front. Shift-Cmd-P opens it on ">",
+/// The palette: one Station panel on the popover material over the window in front. Shift-Cmd-P opens it on ">",
 /// the menu bar's enabled commands and the settings; Shift-Cmd-O opens it empty, which finds notes and code files by
 /// name in the window's open tabs, its folder, Recents and Pinned. "@" lists the open file's headings, ":" goes to a
-/// line, "#" finds headings across the folder and "?" lists these prefixes; "notes@intro" and "notes:42" reach into a file. A typed prefix
+/// line, "#" finds headings across the folder and "?" lists these prefixes; "notes@intro" (or "notes#intro") and "notes:42" reach into a file. A typed prefix
 /// turns into a scope chip in front of the field, and Delete on the empty field takes it back.
 final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private static var shared: QuickOpenPanel?
@@ -21,7 +21,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         panel.present(commands: commands)
     }
 
-    private enum Mode {
+    enum Mode: Equatable {
         case files(String)
         case fileLine(String, Int?)
         case fileHeadings(String, String)
@@ -65,7 +65,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         ("@", "Headings in this file"),
         (":", "Go to a line"),
         ("#", "Headings in the folder"),
-        ("", "Files by name (add @ or : to reach into one)"),
+        ("", "Files by name (add @ or # and a heading, or : and a line, to reach into one)"),
     ]
     /// The scope chip's word for each prefix.
     private static let scopes: [Character: String] = [">": "Commands", "@": "Outline", ":": "Line", "#": "Headings", "?": "Help"]
@@ -79,7 +79,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private let chip = ScopeChip()
     private let rule = PaletteRule()
     private let table = QuickOpenTable()
-    private let fade = TopFade()
     private let empty = NSTextField(labelWithString: "")
     private let background = PanelBackground()
     private var listHeight: NSLayoutConstraint?
@@ -175,12 +174,9 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         empty.font = Chrome.label
         empty.alignment = .center
-        fade.isHidden = true
-        for view in [input, rule, scroll, fade, empty] as [NSView] {
+        for view in [input, rule, scroll, empty] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -198,10 +194,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             listHeight,
-            fade.topAnchor.constraint(equalTo: scroll.topAnchor),
-            fade.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            fade.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            fade.heightAnchor.constraint(equalToConstant: 24),
             empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             empty.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
             empty.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
@@ -209,10 +201,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         return root
     }
 
-    /// The top fade shows once the list scrolls under it.
-    @objc private func scrolled(_ notification: Notification) {
-        fade.isHidden = ((notification.object as? NSClipView)?.bounds.minY ?? 0) <= 0
-    }
 
     /// What the palette searches: the scope's prefix, then the field.
     private var query: String {
@@ -289,7 +277,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private func placeCaret() {
         guard let editor = field.currentEditor() as? NSTextView else { return }
         let theme = ThemeStore.shared
-        editor.insertionPointColor = theme.color(.signal)
+        editor.insertionPointColor = theme.color(.cursor)
         editor.selectedTextAttributes = [.backgroundColor: theme.color(.selection)]
         editor.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0)
     }
@@ -297,13 +285,13 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     /// The theme's colors on the panel's own views; rows take them as they draw.
     private func recolor() {
         let theme = ThemeStore.shared
-        for view in [background, rule, chip, fade, mark] as [NSView] {
+        for view in [background.edge, rule, chip, mark] as [NSView] {
             view.needsDisplay = true
         }
         field.textColor = theme.color(.ink)
         empty.textColor = theme.color(.ink3)
         if let editor = field.currentEditor() as? NSTextView {
-            editor.insertionPointColor = theme.color(.signal)
+            editor.insertionPointColor = theme.color(.cursor)
             editor.selectedTextAttributes = [.backgroundColor: theme.color(.selection)]
         }
     }
@@ -361,7 +349,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         if choices == nil, case .files = Self.mode(of: query) { refresh() }
     }
 
-    private static func mode(of query: String) -> Mode {
+    static func mode(of query: String) -> Mode {
         guard let first = query.first else { return .files("") }
         let rest = String(query.dropFirst())
         switch first {
@@ -372,7 +360,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case "?": return .help
         default: break
         }
-        if let at = query.lastIndex(of: "@") {
+        if let at = query.lastIndex(where: { $0 == "@" || $0 == "#" }) {
             return .fileHeadings(String(query[..<at]), String(query[query.index(after: at)...]))
         }
         if let colon = query.lastIndex(of: ":") {
@@ -896,15 +884,16 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             let folderPath = text.nameStart > 0 ? path.substring(to: text.nameStart - 1) : folder.map { FileManager.default.displayName(atPath: $0.url.path) } ?? ""
             let writer = touched[result.file.url.path]?.writer
             let place = result.file.boost.map { $0 < tabCount ? "open" : $0 >= tabCount + recentCount ? "pinned" : "" } ?? ""
-            let detail = line.map { "line \($0)" } ?? writer.map { "\($0.name) changes waiting" }
-                ?? recents[result.file.url.path].map { relativeTime($0) } ?? place
+            let opened = line == nil && writer == nil ? recents[result.file.url.path].map { "opened \(relativeTime($0))" } : nil
+            let detail = line.map { "line \($0)" } ?? writer.map { "\($0.name) changes waiting" } ?? opened ?? place
             let positions = result.positions.compactMap { $0 >= text.nameStart ? $0 - text.nameStart : nil }
-            content.lead = writer.map { .dot($0.color) } ?? .symbol("doc.text")
-            let style: PaletteCell.Segment.Style = FolderEntry(url: result.file.url, isFolder: false).isCode ? .code : .title
+            let isCode = FolderEntry(url: result.file.url, isFolder: false).isCode
+            content.lead = writer.map { .dot($0.color) } ?? .symbol(isCode ? "chevron.left.forwardslash.chevron.right" : "doc.text")
+            let style: PaletteCell.Segment.Style = isCode ? .code : .title
             content.title = [.init(name, positions: positions, style: style, dimUnmatched: !positions.isEmpty)]
             let folderName = (folderPath as NSString).lastPathComponent
             content.subtitle = folderName
-            content.trailing = .text(detail)
+            content.trailing = opened == nil ? .text(detail) : .aside(detail)
             content.hints = [("↩", "open"), ("⌘↩", "new tab")]
             content.spoken = spoken([name, folderPath, detail])
         case .command(let hit):
@@ -1021,6 +1010,8 @@ private final class PaletteCell: NSView, ChromeSelectable {
     enum Trailing {
         case empty
         case text(String)
+        /// Text in `ink3`, such as when a file was opened.
+        case aside(String)
         case keys([String])
     }
 
@@ -1084,8 +1075,9 @@ private final class PaletteCell: NSView, ChromeSelectable {
         switch content.trailing {
         case .empty:
             break
-        case .text(let text) where !text.isEmpty && !hinting:
-            let string = NSAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink2)])
+        case .text(let text) where !text.isEmpty && !hinting, .aside(let text) where !text.isEmpty && !hinting:
+            let ink: Token = if case .aside = content.trailing { .ink3 } else { .ink2 }
+            let string = NSAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(ink)])
             let size = string.size()
             string.draw(at: NSPoint(x: right - size.width, y: titleY - size.height / 2))
             right -= ceil(size.width) + 12
@@ -1335,9 +1327,46 @@ private enum ShortcutHint {
     }
 }
 
-/// The panel's ground: opaque `raised` at a 14 pt radius with a `strokeSubtle` edge, and in dark a 1 pt highlight of
-/// `ink` at 6% along the inside of the top edge. No vibrancy.
-private final class PanelBackground: NSView {
+/// The panel's ground: the `.popover` material at a 14 pt radius with a `strokeSubtle` edge, and in dark a 1 pt
+/// highlight of `ink` at 6% along the inside of the top edge.
+private final class PanelBackground: NSVisualEffectView {
+    let edge = PanelEdge()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .popover
+        blendingMode = .behindWindow
+        state = .active
+        maskImage = Self.mask
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(edge)
+        NSLayoutConstraint.activate([
+            edge.topAnchor.constraint(equalTo: topAnchor),
+            edge.bottomAnchor.constraint(equalTo: bottomAnchor),
+            edge.leadingAnchor.constraint(equalTo: leadingAnchor),
+            edge.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("PanelBackground is built in code")
+    }
+
+    /// The rounded shape, stretched from its corners.
+    private static let mask: NSImage = {
+        let image = NSImage(size: NSSize(width: 29, height: 29), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        image.resizingMode = .stretch
+        return image
+    }()
+}
+
+/// The background's edge and dark highlight, under the panel's content.
+private final class PanelEdge: NSView {
     private let highlight = NSView()
 
     override init(frame: NSRect) {
@@ -1355,13 +1384,12 @@ private final class PanelBackground: NSView {
     }
 
     required init?(coder: NSCoder) {
-        fatalError("PanelBackground is built in code")
+        fatalError("PanelEdge is built in code")
     }
 
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = Chrome.color(.raised).cgColor
         layer?.borderColor = Chrome.strokeSubtle.cgColor
         layer?.borderWidth = 1
         layer?.cornerRadius = 14
@@ -1412,15 +1440,5 @@ private final class ScopeChip: NSView {
         let string = string
         let size = string.size()
         string.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
-    }
-}
-
-/// A 24 pt fade from the panel's color at the top of the list, shown while rows scroll under it.
-private final class TopFade: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let raised = Chrome.color(.raised)
-        NSGradient(starting: raised, ending: raised.withAlphaComponent(0))?.draw(in: bounds, angle: -90)
     }
 }

@@ -82,8 +82,8 @@
       <div class="hero-slot">
         <figure class="shot">
           <picture>
-            <source srcset="/img/claude-md-dark.webp" media="(prefers-color-scheme: dark)">
-            <img src="/img/claude-md-light.webp" width="1400" height="877" alt="CLAUDE.md open in Dewline. Under Rules, a new line reads Never edit CLAUDE.md, underlined in the agent’s ink. Beside it the stamp reads CLAUDE, saved, with Revert and Keep." fetchpriority="high">
+            <source media="(prefers-color-scheme: dark)" srcset="/img/claude-md-dark.webp">
+            <img src="/img/claude-md-light.webp" width="860" height="285" alt="CLAUDE.md open in Dewline. Under Rules, a new line reads Never edit CLAUDE.md, tinted in the agent’s ink. Beside it the stamp reads CLAUDE, 1 of 1, with Revert and Keep." fetchpriority="high">
           </picture>
           <figcaption>Told the agent to stop editing <code>CLAUDE.md</code>. It added that to <code>CLAUDE.md</code>.</figcaption>
         </figure>
@@ -101,10 +101,12 @@
       </div>
       <figure class="shot rv">
           <picture>
-            <source srcset="/img/decisions-dark.webp" media="(prefers-color-scheme: dark)">
-            <img src="/img/decisions-light.webp" width="1400" height="658" alt="plan.md open in Dewline. The heading Open questions is struck through and Decisions is written above it in the agent’s ink. The questions under it are unchanged. The stamp reads CLAUDE, saved, with Revert and Keep." loading="lazy" decoding="async">
+            <source media="(max-width: 40rem) and (prefers-color-scheme: dark)" srcset="/img/second-intro-sm-dark.webp" width="990" height="160">
+            <source media="(max-width: 40rem)" srcset="/img/second-intro-sm-light.webp" width="990" height="160">
+            <source media="(prefers-color-scheme: dark)" srcset="/img/second-intro-dark.webp">
+            <img src="/img/second-intro-light.webp" width="1360" height="440" alt="A plan in Dewline. Its two-sentence intro is struck through whole, with Retries move to Postgres. written above it in the agent’s ink, and the Updated date changed. The stamp reads CLAUDE, 1 of 2, with Revert and Keep." loading="lazy" decoding="async">
           </picture>
-          <figcaption>Asked it to tidy up <code>plan.md</code>. The open questions are now Decisions.</figcaption>
+          <figcaption>Asked for a second opinion on the intro. Got a second intro.</figcaption>
         </figure>
     </div>
   </section>
@@ -117,8 +119,10 @@
           <p class="rv">Before an outside write lands in an open note, we keep the version you had. File&nbsp;&gt; Earlier Versions… (<kbd>⌥⌘Y</kbd>) lists them by writer and time, and a restore is one undo. A save never lands on a newer copy.</p>
           <figure class="shot rv">
           <picture>
-            <source srcset="/img/earlier-versions-dark.webp" media="(prefers-color-scheme: dark)">
-            <img src="/img/earlier-versions-light.webp" width="1400" height="848" alt="The Earlier Versions sheet for plan.md, listing five versions from the same minute: Another app, You, Claude Code, Claude Code, and You (Revert), with Restore and Open as Copy." loading="lazy" decoding="async">
+            <source media="(max-width: 40rem) and (prefers-color-scheme: dark)" srcset="/img/earlier-versions-sm-dark.webp" width="620" height="474">
+            <source media="(max-width: 40rem)" srcset="/img/earlier-versions-sm-light.webp" width="620" height="474">
+            <source media="(prefers-color-scheme: dark)" srcset="/img/earlier-versions-dark.webp">
+            <img src="/img/earlier-versions-light.webp" width="1400" height="445" alt="The Earlier Versions sheet for plan.md, listing five versions: Another app, You, Claude Code, Claude Code and You (Revert). The selected Claude Code version shows its difference from the current text: the Friday line struck and rewritten." loading="lazy" decoding="async">
           </picture>
           <figcaption>Another app, You, Claude Code twice, then You (Revert).</figcaption>
         </figure>
@@ -144,7 +148,7 @@
       <h2 class="rv">What’s in the app</h2>
       <dl class="feats">
         <div class="rv"><dt>Writing</dt><dd>Syntax hides until the caret reaches it. Math and Mermaid, drawn natively.</dd></div>
-        <div class="rv"><dt>Reviewing</dt><dd>Changes (<kbd>⇧⌘R</kbd>) lists every change waiting, by writer. <kbd>Y</kbd> keeps, <kbd>X</kbd> reverts.</dd></div>
+        <div class="rv"><dt>Reviewing</dt><dd>Changes (<kbd>⇧⌘R</kbd>) lists every change waiting, grouped by writer. Keep or revert each one from the keyboard.</dd></div>
         <div class="rv"><dt>Finding</dt><dd>Quick Open, find in files, wikilinks, #tags.</dd></div>
         <div class="rv"><dt>Saving</dt><dd>Plain Markdown in place, never over a newer copy.</dd></div>
         <div class="rv"><dt>Sharing</dt><dd>Ten export formats, from PDF to EPUB.</dd></div>

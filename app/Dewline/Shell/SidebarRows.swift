@@ -434,10 +434,10 @@ final class SidebarFileCell: NSTableCellView {
     }
 }
 
-/// The writer badge: a 16 pt capsule in the ink of the writer with the most changes waiting at 14%, holding that
-/// writer's initial in its ink and the count of all of them in SF Mono 11 `ink`: "C 3". A note counts its own changes,
-/// a closed folder the sum of the notes under it; the tooltip names each writer. The tabs and their "+N" menu draw the
-/// same badge.
+/// The writer badge: a 16 pt capsule in the ink of the writer with the most changes waiting at 14%, holding a 6 pt dot
+/// in that ink and the count of all of them in SF Mono 11 `ink`: "● 3". No letter, so it never reads as git's. A note
+/// counts its own changes, a closed folder the sum of the notes under it; the tooltip and VoiceOver name each writer.
+/// The tabs and their "+N" menu draw the same badge.
 final class WaitingBadge: NSView {
     static let height: CGFloat = 16
     private static let font = Chrome.mono(11, weight: .medium)
@@ -466,29 +466,29 @@ final class WaitingBadge: NSView {
         waiting.isEmpty ? nil : waiting.map(\.tip).joined(separator: "\n")
     }
 
-    /// The initial and the count, set, and the writer's ink.
-    private static func parts(_ waiting: [WaitingCount]) -> (initial: NSAttributedString, count: NSAttributedString, ink: NSColor)? {
+    private static let dot: CGFloat = 6
+
+    /// The count, set, and the ink of the writer with the most changes waiting.
+    private static func parts(_ waiting: [WaitingCount]) -> (count: NSAttributedString, ink: NSColor)? {
         guard let first = waiting.max(by: { $0.count < $1.count }) else { return nil }
-        let ink = first.writer.color
-        let initial = NSAttributedString(string: first.writer.writer.initial, attributes: [.font: Chrome.mono(11, weight: .semibold), .foregroundColor: ink])
         let total = waiting.reduce(0) { $0 + $1.count }
         let count = NSAttributedString(string: "\(total)", attributes: [.font: font, .foregroundColor: Chrome.color(.ink)])
-        return (initial, count, ink)
+        return (count, first.writer.color)
     }
 
-    /// 5 pt, the initial, 3 pt, the count, 5 pt; 0 when nothing waits.
+    /// 5 pt, the dot, 3 pt, the count, 5 pt; 0 when nothing waits.
     static func width(_ waiting: [WaitingCount]) -> CGFloat {
-        guard let (initial, count, _) = parts(waiting) else { return 0 }
-        return 5 + ceil(initial.size().width) + 3 + ceil(count.size().width) + 5
+        guard let (count, _) = parts(waiting) else { return 0 }
+        return 5 + dot + 3 + ceil(count.size().width) + 5
     }
 
     static func draw(_ waiting: [WaitingCount], in rect: NSRect) {
-        guard let (initial, count, ink) = parts(waiting) else { return }
+        guard let (count, ink) = parts(waiting) else { return }
         ink.withAlphaComponent(0.14).setFill()
         NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
-        let x = rect.minX + 5 + ceil(initial.size().width) + 3
-        initial.draw(at: NSPoint(x: rect.minX + 5, y: rect.midY - initial.size().height / 2))
-        count.draw(at: NSPoint(x: x, y: rect.midY - count.size().height / 2))
+        ink.setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.minX + 5, y: rect.midY - dot / 2, width: dot, height: dot)).fill()
+        count.draw(at: NSPoint(x: rect.minX + 5 + dot + 3, y: rect.midY - count.size().height / 2))
     }
 
     /// The badge as an image, for a menu row.

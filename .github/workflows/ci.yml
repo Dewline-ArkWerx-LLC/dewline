@@ -124,10 +124,28 @@ jobs:
       # Host slice only: release-dry builds and checks the universal app on main.
       - run: scripts/build-xcframework.sh
       - run: xcodegen generate --spec app/project.yml
+      # Xcode's compilation cache, keyed on the tracked sources and the runner image. Main builds it from empty and saves
+      # it; pull requests restore the newest one; the merge queue builds without it.
+      - id: cas
+        run: |
+          echo "prefix=xcode-cas-$ImageVersion-" >> "$GITHUB_OUTPUT"
+          echo "key=xcode-cas-$ImageVersion-$(git ls-files -s app Packages core | shasum | cut -c1-40)" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/xcode-cas
+          key: ${{ steps.cas.outputs.key }}
+          restore-keys: ${{ steps.cas.outputs.prefix }}
       # Pull requests build the packages for the host only; the merge queue and main still build them for arm64 and x86_64.
-      - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO $ARCH
+      - run: xcodebuild test -project app/Dewline.xcodeproj -scheme Dewline -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO $ARCH $CACHE
         env:
           ARCH: ${{ github.event_name == 'pull_request' && 'ONLY_ACTIVE_ARCH=YES' || '' }}
+          CACHE: ${{ github.event_name != 'merge_group' && format('COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH={0}/xcode-cas', runner.temp) || '' }}
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/xcode-cas
+          key: ${{ steps.cas.outputs.key }}
 
   # The release path with no secrets: the universal app from pinned inputs, its Mach-O and Info.plist checks, its DMG
   # signed ad hoc, and a feed signed with a key made for this run and checked by scripts/verify-feed.sh. Runs on main

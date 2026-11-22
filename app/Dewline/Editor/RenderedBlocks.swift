@@ -122,6 +122,7 @@ final class RenderedBlocks {
     private func request(for block: RenderedBlock, in textView: EditorTextView) -> PictureRequest {
         var source = block.source
         var colors: DiagramColors?
+        let body = ThemeStore.shared.bodyFont
         switch block.kind {
         case .mermaid, .math:
             func rgba(_ token: Token) -> UInt32 {
@@ -137,7 +138,12 @@ final class RenderedBlocks {
         case .image, .frontMatter:
             source = textView.documentFolder.map { $0.appending(path: block.source).standardizedFileURL.path } ?? ""
         }
-        return PictureRequest(kind: block.kind, source: source, scale: textView.pictureScale, colors: colors)
+        var request = PictureRequest(kind: block.kind, source: source, scale: textView.pictureScale, colors: colors)
+        if block.kind == .mermaid {
+            request.labelFamily = body.familyName ?? ""
+            request.labelSize = (body.pointSize * 0.85 * 2).rounded() / 2
+        }
+        return request
     }
 
     /// Folds front matter to one dim line naming its field count; its other lines collapse.

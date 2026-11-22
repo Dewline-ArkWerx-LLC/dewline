@@ -7,6 +7,7 @@ What changed in each Dewline release, newest first.
 - The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
 - First run and setup: the guide points at the stamp's Revert button, Skip and Done read as buttons, the status bar keeps its height once shown, and Set Up Agent Hooks… opens one sheet that leads with what hooks send and names the events. A folder's empty page leads with Copy a Test Prompt, and File > Open… takes a folder.
 - Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
+- Earlier Versions shows each change with two lines around it, word by word in the writer's color, says under each row what it changed ("+12 words · Backoff"), folds an agent's turn into one row, shows a pin only where it applies, and fits a 620 pt window. Mermaid labels use the text font in 6 pt boxes, H1 tracking loosens to -0.01 em, and images take a 1 px edge in both themes (12% dimmer in dark).
 
 ## 0.7.0 (22 Nov 2026)
 

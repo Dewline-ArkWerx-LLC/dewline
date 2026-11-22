@@ -93,10 +93,10 @@ final class FileSearch {
     }
 }
 
-/// Find in Files in the sidebar (synthesis 2.7): a disclosure for Replace and a search field, Match Case, Whole Word and
-/// Regular Expression under it with the close button back to Files, the replace field while Replace is disclosed, a line
-/// counting the matches, then the matches grouped by file, each on up to two lines with the match marked and a note's
-/// markup in `ink3`. Every row ends 16 pt from the trailing edge. It searches the open tabs, then the folder's notes,
+/// Find in Files in the sidebar (synthesis 2.7): a search field with the close button back to Files, Match Case, Whole
+/// Word and Regular Expression under it with the Replace toggle, the replace field while Replace is on, a line counting
+/// the matches, then the matches grouped by file, each on one line from a little before the match, with the match marked
+/// and a note's markup in `ink3`. Every row ends 16 pt from the trailing edge. It searches the open tabs, then the folder's notes,
 /// then its code. A `path:` term in the query searches only the files whose path in the folder holds it.
 final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// Opens a file from the results, at a match when there is one, in a new tab when asked.
@@ -109,7 +109,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     private let search = FileSearch()
     private let field = NSSearchField()
     private let options = NSSegmentedControl()
-    private let replaceToggle = NSButton()
+    private let replaceToggle = NSButton(title: "Replace", target: nil, action: nil)
     private let replacement = NSTextField()
     private let replaceButton = NSButton(title: "Replace All", target: nil, action: nil)
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -149,7 +149,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         }
         options.trackingMode = .selectAny
         options.segmentCount = 3
-        options.setImage(NSImage(systemSymbolName: "textformat", accessibilityDescription: "Match Case"), forSegment: 0)
+        options.setLabel("Aa", forSegment: 0)
         options.setLabel("Word", forSegment: 1)
         options.setLabel(".*", forSegment: 2)
         options.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
@@ -157,12 +157,10 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
             options.setToolTip(name, forSegment: segment)
             options.setWidth(segment == 1 ? 0 : 28, forSegment: segment)
         }
-        replaceToggle.bezelStyle = .disclosure
+        replaceToggle.bezelStyle = .accessoryBar
         replaceToggle.setButtonType(.pushOnPushOff)
-        replaceToggle.title = ""
         replaceToggle.state = .off
-        replaceToggle.toolTip = "Replace"
-        replaceToggle.setAccessibilityLabel("Replace")
+        replaceToggle.toolTip = "Replace matches"
         replaceToggle.target = self
         replaceToggle.action = #selector(toggleReplace)
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Back to Files")
@@ -226,16 +224,15 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
         self.statusUnderOptions = statusUnderOptions
         statusUnderReplace = status.topAnchor.constraint(equalTo: replacement.bottomAnchor, constant: 6)
         NSLayoutConstraint.activate([
-            replaceToggle.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 6),
-            replaceToggle.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             field.topAnchor.constraint(equalTo: safe.topAnchor, constant: 8),
-            field.leadingAnchor.constraint(equalTo: replaceToggle.trailingAnchor, constant: 2),
-            field.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
+            field.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 16),
+            closeButton.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 6),
+            closeButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
+            closeButton.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             options.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6),
             options.leadingAnchor.constraint(equalTo: field.leadingAnchor),
-            closeButton.leadingAnchor.constraint(greaterThanOrEqualTo: options.trailingAnchor, constant: 6),
-            closeButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
-            closeButton.centerYAnchor.constraint(equalTo: options.centerYAnchor),
+            replaceToggle.leadingAnchor.constraint(equalTo: options.trailingAnchor, constant: 6),
+            replaceToggle.centerYAnchor.constraint(equalTo: options.centerYAnchor),
             replacement.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 6),
             replacement.leadingAnchor.constraint(equalTo: field.leadingAnchor),
             replaceButton.leadingAnchor.constraint(equalTo: replacement.trailingAnchor, constant: 6),
@@ -553,7 +550,7 @@ final class FindInFilesController: NSViewController, NSSearchFieldDelegate, NSOu
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        item is ResultFile ? 26 : 36
+        item is ResultFile ? 26 : 24
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
@@ -692,14 +689,14 @@ private final class FileResultCell: NSTableCellView {
     }
 }
 
-/// A match's row: its line number in `ink2`, then the line on up to two lines in `ink`, a note's markup in `ink3`, with
-/// the match on the theme's find highlight, all `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
+/// A match's row: its line number in `ink2`, then the line on one line in `ink`, cut at the end, a note's markup in
+/// `ink3`, with the match on the theme's find highlight, all `paper` on the focused list's selection. The line is not the cell's `textField`, which a source list restyles,
 /// dropping the highlight.
 private final class LineResultCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("searchLine")
 
     private let number = NSTextField(labelWithString: "")
-    private let line = NSTextField(wrappingLabelWithString: "")
+    private let line = NSTextField(labelWithString: "")
     private var match: TextMatch?
     private var markup = false
 
@@ -708,8 +705,7 @@ private final class LineResultCell: NSTableCellView {
         identifier = Self.identifier
         number.font = .monospacedDigitSystemFont(ofSize: Chrome.size(.subheadline), weight: .regular)
         number.alignment = .right
-        line.maximumNumberOfLines = 2
-        line.cell?.truncatesLastVisibleLine = true
+        line.lineBreakMode = .byTruncatingTail
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for view in [number, line] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -721,7 +717,7 @@ private final class LineResultCell: NSTableCellView {
             number.firstBaselineAnchor.constraint(equalTo: line.firstBaselineAnchor),
             line.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 6),
             line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            line.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            line.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(render), name: ThemeStore.didChange, object: nil)
     }
@@ -732,11 +728,6 @@ private final class LineResultCell: NSTableCellView {
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { render() }
-    }
-
-    override func layout() {
-        line.preferredMaxLayoutWidth = max(bounds.width - 36 - 16, 0)
-        super.layout()
     }
 
     func show(_ match: TextMatch, markup: Bool) {
@@ -753,7 +744,7 @@ private final class LineResultCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         number.textColor = Chrome.color(selected ? .paper : .ink2)
         let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byWordWrapping
+        style.lineBreakMode = .byTruncatingTail
         let ink = Chrome.color(selected ? .paper : .ink)
         let (preview, range) = Self.centered(match.preview, on: match.previewRange)
         let text = NSMutableAttributedString(string: preview, attributes: [

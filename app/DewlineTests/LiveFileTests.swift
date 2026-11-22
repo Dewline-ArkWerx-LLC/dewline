@@ -115,11 +115,14 @@ struct LiveFileTests {
         let before = file.live.changes.filter(\.value.marked).mapValues { (file.textView.string as NSString).substring(with: $0.range) }
         #expect(!before.isEmpty)
         file.type("ab", at: 0)
-        file.textView.marks.relayout()
         for (id, words) in before {
             let range = try #require(file.live.changes[id]?.range)
             #expect((file.textView.string as NSString).substring(with: range) == words)
-            #expect(file.textView.marks.painted[id] == range)
+        }
+        // The marks hear of the move once the edit is done.
+        await waitForMain {
+            file.textView.marks.relayout()
+            return before.keys.allSatisfy { file.textView.marks.painted[$0] == file.live.changes[$0]?.range }
         }
     }
 

@@ -2,8 +2,11 @@
 
 What changed in each Dewline release, newest first.
 
-## Unreleased
+## 0.7.2 (22 Nov 2026)
 
+Source lines line up with prose in short notes, and a security fix in a sync dependency.
+
+- The `url` library moves to 2.5.9, which fixes a stack overflow on deeply nested `blob:` URLs (RUSTSEC-2026-0592). Only the sync code's networking libraries use it.
 - In a note too short to scroll, Source keeps prose's baselines at prose's line pitch instead of setting every line 2 pt lower.
 
 ## 0.7.1 (22 Nov 2026)

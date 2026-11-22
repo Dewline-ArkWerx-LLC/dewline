@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "dewline-cli"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "blake3",
  "clap",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "dewline-core"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "blake3",
  "flate2",
@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "dewline-ffi"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "dewline-core",
  "dewline-sync",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "dewline-sync"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "blake3",
  "chacha20poly1305",

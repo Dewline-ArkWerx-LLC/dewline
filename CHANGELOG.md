@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- Earlier Versions names the agent on every version one of its turns wrote, not only the last, when two writes land within a second.
+
 ## 0.7.0 (22 Nov 2026)
 
 Review keys follow one rule, agent changes are marked with the writer's color instead of a letter, and marks stay on their words while you type above them.

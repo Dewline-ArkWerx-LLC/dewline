@@ -769,6 +769,10 @@ struct JourneyTests {
         #expect(shown.string.contains("Three."))
         let struck = shown.attribute(.strikethroughStyle, at: (shown.string as NSString).range(of: "Three.").location, effectiveRange: nil) as? Int
         #expect(struck == NSUnderlineStyle.single.rawValue)
+        // A wrapped line's rows hang past the gutter, where its first row's text starts.
+        let style = try #require(shown.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        let gutter = ("+ " as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]).width
+        #expect(style.firstLineHeadIndent == 0 && style.headIndent == gutter)
 
         // The oldest version, restored as one undoable edit.
         await sheet.select(sheet.rows.count - 1)

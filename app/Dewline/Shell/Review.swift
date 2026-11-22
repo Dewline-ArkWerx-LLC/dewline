@@ -34,9 +34,10 @@ enum Review {
         return (counts.reduce(0, +), counts.count { $0 > 0 })
     }
 
-    /// A marked change landed: its session's latest time.
+    /// A marked change landed: its session's latest time, and the note's status bar drops what was only until then.
     static func landed(_ live: LiveFile, _ change: UInt64) {
         if let origin = live.changes[change]?.origin { times[key(origin)] = Date() }
+        (NSDocumentController.shared.document(for: live.url)?.windowControllers.first as? MainWindowController)?.statusBar.typed()
     }
 
     /// Next Change and Previous Change: reveals the marked change after or before the caret, then the first or last one

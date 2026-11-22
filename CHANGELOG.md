@@ -20,6 +20,8 @@ What changed in each Dewline release, newest first.
 - First run and Settings: Welcome.md is two sentences above the demo, the guide island clears the note and ends on Open a Folder…, the test prompt targets a new dewline-test.md and prints under its button, and the Settings window fits each pane.
 - A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it. ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note.
 - Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text.
+- Earlier Versions: a wrapped diff line hangs past the + and − gutter, the diff scrolls to its first difference, and the list drops its column headers.
+- The status bar shows a hint such as "Next: spec.md ⌃⌘↓" beside the caret's place instead of over it, and drops it once the caret moves, the window goes behind another or a change lands.
 
 ## 0.6.1 (21 Nov 2026)
 

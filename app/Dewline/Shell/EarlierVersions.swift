@@ -44,15 +44,14 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     private func build() {
         let column = NSTableColumn(identifier: .init("Version"))
-        column.title = "Version"
         column.resizingMask = .autoresizingMask
         let pins = NSTableColumn(identifier: .init("Pinned"))
-        pins.title = "Pinned"
         pins.width = 52
         pins.resizingMask = []
         table.addTableColumn(column)
         table.addTableColumn(pins)
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        table.headerView = nil
         table.style = .inset
         table.rowHeight = 32
         table.dataSource = self
@@ -195,7 +194,15 @@ final class EarlierVersions: NSObject, NSTableViewDataSource, NSTableViewDelegat
             self.text = text
             restore.isEnabled = text != buffer
             copy.isEnabled = text != buffer
-            diff.textStorage?.setAttributedString(Self.difference(from: buffer, to: text))
+            let shown = Self.difference(from: buffer, to: text)
+            diff.textStorage?.setAttributedString(shown)
+            var first: NSRange?
+            shown.enumerateAttribute(.backgroundColor, in: NSRange(location: 0, length: shown.length)) { tint, range, stop in
+                guard tint != nil else { return }
+                first = range
+                stop.pointee = true
+            }
+            if let first { diff.scrollRangeToVisible(first) }
         }
     }
 
@@ -293,7 +300,7 @@ extension EarlierVersions {
 
     /// What restoring `old` over `current` does, line by line, in full: lines it brings back after + on the theme's
     /// git-added tint, lines it removes struck after − on its code-deleted tint, the rest in ink 2. The same text shows
-    /// all in ink 2.
+    /// all in ink 2. A wrapped line's rows start past the gutter.
     static func difference(from current: String, to old: String) -> NSAttributedString {
         func lines(_ text: String) -> [String] {
             let lines = text.components(separatedBy: "\n")
@@ -332,9 +339,11 @@ extension EarlierVersions {
         }
         let added = tint(.gitAdded, 0.16)
         let deleted = tint(.codeDeleted, 0.14)
+        let hanging = NSMutableParagraphStyle()
+        hanging.headIndent = ("+ " as NSString).size(withAttributes: [.font: font]).width
         let out = NSMutableAttributedString()
         for (line, kind) in lines {
-            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: hanging]
             let gutter: String
             switch kind {
             case .same:

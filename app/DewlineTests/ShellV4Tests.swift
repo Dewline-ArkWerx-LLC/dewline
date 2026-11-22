@@ -226,6 +226,13 @@ struct ShellV4Tests {
         bar.reserved = false
         bar.idle = "docs/spec.md:3:5"
         #expect(!bar.isHidden && bar.shown == nil)
+        // A message shows beside the place, in the same face from the same inset.
+        bar.post(.init(id: "step", kind: .result, text: "Next: spec.md", untilTyping: true))
+        func labels(_ view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { [$0 as? NSTextField].compactMap(\.self) + labels($0) }
+        }
+        #expect(labels(bar).map(\.stringValue) == ["docs/spec.md:3:5", "Next: spec.md"])
+        #expect(Set(labels(bar).map(\.font)).count == 1)
         #expect(MainWindowController.place("docs/spec.md", at: 9, in: "# A\n\nabcdef\n") == "docs/spec.md:3:5")
         #expect(MainWindowController.place("a.md", at: 12, in: "# A\n\nabcdef\n") == "a.md:4:1")
     }

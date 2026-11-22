@@ -25,20 +25,4 @@ enum Writer: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The letter the writer badge shows: C for Claude Code, X for Codex, R for Cursor.
-    var initial: String {
-        switch self {
-        case .you: "Y"
-        case .claude: "C"
-        case .codex: "X"
-        case .cursor: "R"
-        case .copilot: "P"
-        case .gemini: "G"
-        case .git: "g"
-        case .unknown: "A"
-        case .otherMac: "M"
-        case .collaborator: "O"
-        case .demo: "D"
-        }
-    }
 }

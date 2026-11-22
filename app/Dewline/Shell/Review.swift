@@ -717,8 +717,8 @@ private final class HeadingRow: NSTableCellView {
 /// selected. A closed note's row has no decisions.
 final class ChangeRow: NSTableCellView {
     private let detail: NSTextField
-    private let keep: FlowButton
-    private let revert: FlowButton
+    private let keep: ChromeButton
+    private let revert: ChromeButton
     private let decides: Bool
     private var hovering = false {
         didSet { update() }
@@ -736,8 +736,8 @@ final class ChangeRow: NSTableCellView {
     /// `lines` 0 shows every line of `title`.
     init(_ title: NSAttributedString, detail text: String, lines: Int = 1, decide: ((Bool) -> Void)?) {
         detail = NSTextField(labelWithString: text)
-        keep = FlowButton("Keep", style: .plain) { decide?(true) }
-        revert = FlowButton("Revert", style: .plain) { decide?(false) }
+        keep = ChromeButton("Keep", style: .bordered) { decide?(true) }
+        revert = ChromeButton("Revert", style: .bordered) { decide?(false) }
         decides = decide != nil
         super.init(frame: .zero)
         let truncated = NSMutableAttributedString(attributedString: title)
@@ -753,6 +753,8 @@ final class ChangeRow: NSTableCellView {
         detail.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         detail.textColor = ThemeStore.shared.color(.ink2)
         detail.setContentHuggingPriority(.required, for: .horizontal)
+        keep.controlSize = .small
+        revert.controlSize = .small
         keep.toolTip = "Keep (\u{2318}\u{21A9}). Option-click: Keep All in Note (\u{21E7}\u{2318}\u{21A9})"
         revert.toolTip = "Revert (\u{2325}\u{2318}\u{232B}). Option-click: Revert All in Note (\u{2325}\u{21E7}\u{2318}\u{232B})"
         let row = NSStackView(views: [label, detail, revert, keep])

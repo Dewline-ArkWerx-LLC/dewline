@@ -109,7 +109,7 @@ final class WindowState {
 /// the extension in `ink2`. The selected tab is the brightest pill; a tab with unsaved edits shows a dot 3 pt into it,
 /// which turns into the close x under the pointer. Other tabs sit on the chrome, the name 16 pt in and 8 pt from the end, with a 1 px divider at
 /// 10%, hidden beside the selected or hovered tab. Tabs narrow to fit, down to 72 pt, a name too long for its tab losing
-/// its extension and then its middle; those past the strip's end go into a "+N" pop-up, in the writer's ink when one of
+/// the middle of its name and never its extension, so it runs to the tab's end; those past the strip's end go into a "+N" pop-up, in the writer's ink when one of
 /// them has changes waiting, and the selected tab always shows. Dragging a tab along the strip moves it, its neighbors
 /// sliding aside as it passes; dragging it out of the strip drags its file. Command-click shows the note's path. A tab
 /// whose note has changes waiting carries the sidebar's writer badge after its name, as its row in "+N" does. Tabs
@@ -216,17 +216,31 @@ final class TabStrip: NSView {
         return name
     }
 
-    /// The title, its extension and parent path in `ink2`; without the extension when asked.
-    private static func name(_ tab: MainWindowController, _ title: String, withExtension: Bool = true) -> NSAttributedString {
-        let file = tab.tabFileName as NSString
-        let ext = file.pathExtension.isEmpty ? 0 : file.pathExtension.utf16.count + 1
-        var title = title as NSString
-        if !withExtension { title = title.replacingCharacters(in: NSRange(location: file.length - ext, length: ext), with: "") as NSString }
+    /// `title` in `room`: whole when it fits, or with the middle of its first `stem` characters, the file name
+    /// before its extension, cut to "…", so the extension and any parent path after it always show.
+    static func fit(_ title: String, stem length: Int, in room: CGFloat) -> String {
+        func width(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: [.font: Chrome.label]).width) }
+        guard width(title) > room else { return title }
+        let stem = Array(title.prefix(length))
+        let rest = title.dropFirst(length)
+        func cut(_ kept: Int) -> String { String(stem.prefix((kept + 1) / 2)) + "\u{2026}" + String(stem.suffix(kept / 2)) + rest }
+        var (low, high) = (0, max(stem.count - 1, 0))
+        while low < high {
+            let kept = (low + high + 1) / 2
+            if width(cut(kept)) <= room { low = kept } else { high = kept - 1 }
+        }
+        return cut(low)
+    }
+
+    /// The title fitted to `room`, its extension and parent path in `ink2`.
+    private static func name(_ tab: MainWindowController, _ title: String, room: CGFloat = .greatestFiniteMagnitude) -> NSAttributedString {
+        let stem = (tab.tabFileName as NSString).deletingPathExtension.count
+        let text = fit(title, stem: stem, in: room)
         let line = NSMutableParagraphStyle()
-        line.lineBreakMode = .byTruncatingMiddle
-        let name = NSMutableAttributedString(
-            string: title as String, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
-        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: file.length - ext, length: name.length - file.length + ext))
+        line.lineBreakMode = .byClipping
+        let name = NSMutableAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink), .paragraphStyle: line])
+        let start = (String(text.prefix(text.count - (title.count - stem))) as NSString).length
+        name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: start, length: name.length - start))
         return name
     }
 
@@ -390,9 +404,7 @@ final class TabStrip: NSView {
             NSBezierPath(ovalIn: NSRect(x: box.midX - 3, y: box.midY - 3, width: 6, height: 6)).fill()
         }
         let room = frame.width - Self.leading - Self.end - Self.trailing(slot.tab)
-        var full = Self.name(slot.tab, slot.title)
-        if ceil(full.size().width) > room { full = Self.name(slot.tab, slot.title, withExtension: false) }
-        let name = NSMutableAttributedString(attributedString: full)
+        let name = NSMutableAttributedString(attributedString: Self.name(slot.tab, slot.title, room: room))
         if !selected, !hovering {
             name.addAttribute(.foregroundColor, value: Chrome.color(.ink2), range: NSRange(location: 0, length: name.length))
         }

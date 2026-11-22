@@ -90,7 +90,7 @@ final class MoveWindowController: NSWindowController, NSWindowDelegate {
         sentence.textColor = Chrome.color(.ink2)
         sentence.alignment = .center
         sentence.preferredMaxLayoutWidth = Self.size.width - 64
-        let later = ChromeButton("Not Now") { [weak self] in self?.window?.performClose(nil) }
+        let later = ChromeButton("Not Now", style: .bordered) { [weak self] in self?.window?.performClose(nil) }
         let move = ChromeButton("Move to Applications", style: .filled) { [weak self] in self?.move() }
         buttons.setViews([later, move], in: .trailing)
         buttons.spacing = 8

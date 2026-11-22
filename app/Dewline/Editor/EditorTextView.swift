@@ -7,7 +7,7 @@ final class EditorTextView: CaretTextView {
     let marks = ChangeMarks()
     /// Your edits' undo history, which landings move instead of clearing.
     lazy var history = UndoHistory(undoManager: styler.undoManager)
-    private let blockFragments = BlockFragments()
+    private let fragments = Fragments()
     private var composing = false
     private var toggleWaits = false
     private var held: (anchor: Int, offset: CGFloat)?
@@ -96,7 +96,7 @@ final class EditorTextView: CaretTextView {
         storage.addTextLayoutManager(layout)
         content = storage
         super.init(frame: .zero, textContainer: container)
-        textLayoutManager?.delegate = blockFragments
+        textLayoutManager?.delegate = fragments
         styler.textView = self
         styler.blocks.textView = self
         styler.highlights.textView = self
@@ -294,7 +294,7 @@ final class EditorTextView: CaretTextView {
     }
 
     /// Draws the fold disclosures, code wells, callouts, each quote's rule at the column's left edge (a callout's well
-    /// stands alone), list bullets, and inline math.
+    /// stands alone), and inline math.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         drawDisclosures(in: rect)
@@ -316,7 +316,6 @@ final class EditorTextView: CaretTextView {
             let bottom = line(at: max(NSMaxRange(range) - 1, range.location))
             NSRect(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0), y: top.minY, width: 2, height: bottom.maxY - top.minY).fill()
         }
-        drawBullets(in: visible, line: line(at:))
         drawInlineMath(in: visible, line: line(at:))
     }
 
@@ -343,25 +342,6 @@ final class EditorTextView: CaretTextView {
                 )
                 NSBezierPath(roundedRect: chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), xRadius: radius, yRadius: radius).fill()
                 return true
-            }
-        }
-    }
-
-    /// Draws a dot over each hidden `-`, `*` or `+` item marker in `visible`.
-    private func drawBullets(in visible: NSRange, line: (Int) -> NSRect) {
-        let storage = textStorage!
-        for block in styler.map.blocks(in: visible) {
-            for item in block.spans where item.kind == .item {
-                let at = block.range.location + item.range.location
-                guard NSLocationInRange(at, visible), MarkdownStyler.isBullet(at: at, in: storage.mutableString),
-                    storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor == NSColor.clear,
-                    let font = storage.attribute(.font, at: at, effectiveRange: nil) as? NSFont, font.pointSize > 1,
-                    let baseline = baseline(at: at)
-                else { continue }
-                let dot = NSAttributedString(string: "\u{2022}", attributes: [.font: font, .foregroundColor: ThemeStore.shared.color(.ink2)])
-                let left = line(at).minX
-                let right = line(at + 1).minX
-                dot.draw(at: NSPoint(x: left + ((right - left - dot.size().width) / 2).rounded(), y: baseline - font.ascender))
             }
         }
     }
@@ -627,7 +607,7 @@ final class EditorTextView: CaretTextView {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 1
             fade.toValue = 0
-            fade.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.3
+            fade.duration = Motion.current == .off ? 0.15 : 0.3
             fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -1030,4 +1010,78 @@ extension NSTextContainer {
 extension NSAttributedString.Key {
     /// Marks a block quote's paragraph, which draws a rule at the column's left edge.
     static let dewlineQuote = NSAttributedString.Key("DewlineQuote")
+}
+
+/// The layout manager's delegate: `BlockFragments` lays out drawn blocks, a list item with a hidden bullet draws its
+/// dot with its own line, so the dot moves whenever the line does, and no line breaks between a hidden marker and the
+/// text it closes, such as a code span's closing backtick and the period after it.
+private final class Fragments: NSObject, NSTextLayoutManagerDelegate {
+    private let blocks = BlockFragments()
+
+    func textLayoutManager(
+        _ textLayoutManager: NSTextLayoutManager,
+        textLayoutFragmentFor location: any NSTextLocation,
+        in textElement: NSTextElement
+    ) -> NSTextLayoutFragment {
+        guard let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0,
+            paragraph.attributedString.attribute(.dewlineBlock, at: 0, effectiveRange: nil) == nil
+        else { return blocks.textLayoutManager(textLayoutManager, textLayoutFragmentFor: location, in: textElement) }
+        guard let bullet = BulletFragment.bullet(in: paragraph.attributedString) else {
+            return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+        }
+        return BulletFragment(bullet: bullet, textElement: textElement)
+    }
+
+    func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, shouldBreakLineBefore location: any NSTextLocation, hyphenating: Bool) -> Bool {
+        guard let content = textLayoutManager.textContentManager as? NSTextContentStorage, let storage = content.textStorage else { return true }
+        let at = content.offset(from: content.documentRange.location, to: location)
+        guard at > 0, at < storage.length, (storage.attribute(.font, at: at, effectiveRange: nil) as? NSFont)?.pointSize ?? 1 < 1 else { return true }
+        return [0x20, 0x09, 0x0A, 0x0D, 0xA0].contains(storage.mutableString.character(at: at - 1))
+    }
+}
+
+/// A list item's paragraph whose `-`, `*` or `+` marker is hidden: a dot in `ink2` centered over the marker.
+private final class BulletFragment: NSTextLayoutFragment {
+    /// The marker's offset in the paragraph.
+    private let bullet: Int
+
+    init(bullet: Int, textElement: NSTextElement) {
+        self.bullet = bullet
+        super.init(textElement: textElement, range: textElement.elementRange)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("BulletFragment is built in code")
+    }
+
+    /// The hidden bullet in `paragraph`, past its indent and any quote markers, that keeps its room and is followed by
+    /// a space: the styler hides an item's marker that way and no other text.
+    static func bullet(in paragraph: NSAttributedString) -> Int? {
+        let text = paragraph.string as NSString
+        var at = 0
+        while at < text.length, [0x20, 0x09, 0x3E].contains(text.character(at: at)) { at += 1 }
+        guard at + 1 < text.length, [0x2D, 0x2A, 0x2B].contains(text.character(at: at)), [0x20, 0x09].contains(text.character(at: at + 1)),
+            paragraph.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor == NSColor.clear,
+            (paragraph.attribute(.font, at: at, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 > 1
+        else { return nil }
+        return at
+    }
+
+    override func draw(at point: CGPoint, in context: CGContext) {
+        super.draw(at: point, in: context)
+        guard let line = textLineFragments.first(where: { NSLocationInRange(bullet, $0.characterRange) }),
+            let font = line.attributedString.attribute(.font, at: bullet, effectiveRange: nil) as? NSFont
+        else { return }
+        let color = MainActor.assumeIsolated { ThemeStore.shared.color(.ink2) }
+        let dot = NSAttributedString(string: "\u{2022}", attributes: [.font: font, .foregroundColor: color])
+        let bounds = line.typographicBounds
+        let left = line.locationForCharacter(at: bullet).x
+        let right = line.locationForCharacter(at: bullet + 1).x
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        dot.draw(at: CGPoint(
+            x: point.x + bounds.minX + left + ((right - left - dot.size().width) / 2).rounded(),
+            y: point.y + bounds.minY + line.glyphOrigin.y - font.ascender))
+        NSGraphicsContext.restoreGraphicsState()
+    }
 }

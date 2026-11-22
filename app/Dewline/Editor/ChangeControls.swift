@@ -47,33 +47,46 @@ private final class ActionButton: NSButton {
 }
 
 /// Removed text, struck, at ink 58% with the strike in the writer's color. A short removal on one line reads inline
-/// at its deletion point, in a gap the styler opens there; a longer one hangs under its paragraph.
+/// at its deletion point, in a gap the styler opens there; a longer one, and the old text of a rewrite, hang under
+/// their paragraph.
 @MainActor
 final class Ghost: NSView, Hanging {
     private let string: NSAttributedString
     private let text: NSTextField?
-    /// The gap an inline ghost takes in its line, its text and a space; nil for a ghost that hangs.
+    /// The text as it reads, without a final line break.
+    let shown: String
+    /// The gap an inline ghost takes in its line: its text, and a space on a side where it would join a word; nil for
+    /// a ghost that hangs.
     let inlineWidth: CGFloat?
+    /// From the start of an inline ghost's gap to its text.
+    let lead: CGFloat
     /// From an inline ghost's top to its baseline.
     let ascent: CGFloat
 
-    /// A ghost no wider than `limit` reads inline.
-    init(_ removed: String, writer: MarkWriter, inlineUpTo limit: CGFloat) {
-        let shown = removed.hasSuffix("\n") ? String(removed.dropLast()) : removed
+    /// `parts` of the old text, struck where `struck`. One struck part on one line whose gap is no wider than `limit`
+    /// reads inline, spaced from a word `before` or `after` it.
+    init(_ parts: [(text: String, struck: Bool)], writer: MarkWriter, inlineUpTo limit: CGFloat, spaced: (before: Bool, after: Bool) = (false, false)) {
+        let shown = Self.shown(parts)
+        self.shown = shown
         let font = ThemeStore.shared.bodyFont
-        string = NSAttributedString(string: shown, attributes: [
-            .font: font,
-            .foregroundColor: ThemeStore.shared.color(.ink).withAlphaComponent(0.58),
-            .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-            .strikethroughColor: writer.color,
-        ])
+        let ink = ThemeStore.shared.color(.ink).withAlphaComponent(0.58)
+        let built = NSMutableAttributedString()
+        for part in parts {
+            built.append(NSAttributedString(string: part.text, attributes: part.struck
+                ? [.font: font, .foregroundColor: ink, .strikethroughStyle: NSUnderlineStyle.single.rawValue, .strikethroughColor: writer.color]
+                : [.font: font, .foregroundColor: ink]))
+        }
+        string = built.attributedSubstring(from: NSRange(location: 0, length: (shown as NSString).length))
         let width = ceil(string.size().width)
-        let inline = !shown.isEmpty && !shown.contains(where: \.isNewline) && width <= limit
-        inlineWidth = inline ? width + ceil(NSAttributedString(string: " ", attributes: [.font: font]).size().width) : nil
+        let space = ceil(NSAttributedString(string: " ", attributes: [.font: font]).size().width)
+        let gap = width + (spaced.before ? space : 0) + (spaced.after ? space : 0)
+        let inline = parts.count == 1 && !shown.isEmpty && !shown.contains(where: \.isNewline) && gap <= limit
+        inlineWidth = inline ? gap : nil
+        lead = spaced.before ? space : 0
         ascent = ceil(font.ascender)
         text = inline ? nil : NSTextField(wrappingLabelWithString: "")
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: ceil(font.ascender - font.descender)))
-        let label = "Removed by \(writer.name): \(shown)"
+        let label = parts.count == 1 ? "Removed by \(writer.name): \(shown)" : "Before \(writer.possessive) change: \(shown)"
         if let text {
             text.attributedStringValue = string
             text.isSelectable = false
@@ -88,6 +101,12 @@ final class Ghost: NSView, Hanging {
 
     required init?(coder: NSCoder) {
         fatalError("Ghost is built in code")
+    }
+
+    /// `parts` joined, without a final line break.
+    static func shown(_ parts: [(text: String, struck: Bool)]) -> String {
+        let joined = parts.map(\.text).joined()
+        return joined.hasSuffix("\n") ? String(joined.dropLast()) : joined
     }
 
     override var isFlipped: Bool { true }

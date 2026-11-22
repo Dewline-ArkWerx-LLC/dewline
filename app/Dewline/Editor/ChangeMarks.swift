@@ -175,18 +175,24 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         guard let textView else { return }
         let text = textView.textStorage!.mutableString
         let length = text.length
-        // Each hanger's anchor under its paragraph, and for removed text the character before the deletion point when
-        // that is on the same line: an inline ghost's gap opens after it.
-        var wanted: [UInt64: (hang: Int, inline: Int?)] = [:]
+        // Each hanger's anchor under its paragraph, its ghost's parts, and for removed text the character before the
+        // deletion point when that is on the same line: an inline ghost's gap opens after it.
+        var wanted: [UInt64: (hang: Int, inline: Int?, parts: [(text: String, struck: Bool)]?)] = [:]
+        let rewrites = rewrites(in: text)
+        for rewrite in rewrites { wanted[rewrite.key] = (rewrite.hang, nil, rewrite.parts) }
+        let rewritten = Set(rewrites.flatMap(\.members))
         // Removed blanks strike nothing visible, and a gap for them would move the line: a ticked box's space.
-        for (id, change) in changes where change.conflict || !change.removed.allSatisfy(\.isWhitespace) {
+        for (id, change) in changes where !rewritten.contains(id) && (change.conflict || !change.removed.allSatisfy(\.isWhitespace)) {
             let end = change.range.length > 0 ? NSMaxRange(change.range) - 1 : change.range.location - 1
             let at = change.range.location
             let inline = !change.conflict && at > 0 && at <= length && ![0x0A, 0x0D].contains(text.character(at: at - 1)) ? at - 1 : nil
-            wanted[id] = (min(max(end, 0), max(length - 1, 0)), inline)
+            wanted[id] = (min(max(end, 0), max(length - 1, 0)), inline, change.conflict ? nil : [(change.removed, true)])
         }
         var touched: [Int] = []
-        for (id, hanger) in hangers where wanted[id].map({ Self.isInline(hanger.view) && $0.inline == nil }) ?? true {
+        for (id, hanger) in hangers {
+            let ghost = hanger.view as? Ghost
+            if let want = wanted[id], !(Self.isInline(hanger.view) && want.inline == nil),
+                ghost?.shown == want.parts.map({ Ghost.shown($0) }) { continue }
             hanger.view.removeFromSuperview()
             hangers[id] = nil
             touched.append(hanger.anchor)
@@ -198,11 +204,13 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 continue
             }
             let change = changes[id]!
-            let view: NSView = change.conflict
-                ? ConflictCard(MarkWriter(change.origin), theirs: change.theirs) { [weak self] decision in
+            let view: NSView = if let parts = want.parts {
+                ghost(parts, for: change, inline: want.inline)
+            } else {
+                ConflictCard(MarkWriter(change.origin), theirs: change.theirs) { [weak self] decision in
                     self?.live?.decide(id, decision)
                 }
-                : Ghost(change.removed, writer: MarkWriter(change.origin), inlineUpTo: want.inline == nil ? 0 : columnWidth * 0.6)
+            }
             let anchor = Self.isInline(view) ? want.inline ?? want.hang : want.hang
             textView.addSubview(view)
             hangers[id] = (anchor, view)
@@ -211,6 +219,67 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         guard !touched.isEmpty else { return }
         measureHangers()
         reserve(touched)
+    }
+
+    /// A ghost of `change`'s removed `parts`: inline after the character at `inline` when its gap fits the rest of that
+    /// line, spaced from a word on either side, else hanging.
+    private func ghost(_ parts: [(text: String, struck: Bool)], for change: LiveFile.Change, inline: Int?) -> Ghost {
+        let writer = MarkWriter(change.origin)
+        guard let inline, let text = textView?.textStorage?.mutableString else { return Ghost(parts, writer: writer, inlineUpTo: 0) }
+        func word(_ character: unichar) -> Bool {
+            Unicode.Scalar(character).map { CharacterSet.alphanumerics.contains($0) } ?? false
+        }
+        let removed = change.removed as NSString
+        let at = change.range.location
+        let spaced = (
+            before: removed.length > 0 && word(text.character(at: inline)) && word(removed.character(at: 0)),
+            after: removed.length > 0 && at < text.length && word(removed.character(at: removed.length - 1)) && word(text.character(at: at))
+        )
+        return Ghost(parts, writer: writer, inlineUpTo: min(room(after: inline), columnWidth * 0.6), spaced: spaced)
+    }
+
+    /// The width left on the line after the character at `anchor`, less the text after it up to the next blank, which a
+    /// gap there carries along: a wider gap would push the word before it onto the next line.
+    private func room(after anchor: Int) -> CGFloat {
+        guard let textView, let segment = segments(NSRange(location: anchor, length: 1)).first else { return 0 }
+        let storage = textView.textStorage!
+        var end = anchor + 1
+        while end < storage.length, !Self.isBlank(storage.mutableString.character(at: end)) { end += 1 }
+        let carried = storage.attributedSubstring(from: NSRange(location: anchor + 1, length: end - anchor - 1)).size().width
+        let right = textView.textContainerOrigin.x + (textView.textContainer?.lineFragmentPadding ?? 0) + columnWidth
+        return right - segment.frame.maxX - carried
+    }
+
+    /// Changes that rewrite more than one line, or more than three runs in one paragraph, read as one, since gaps for
+    /// so many ghosts would move each other: their paragraphs' old text hangs under them, struck where it was removed,
+    /// under the first change's key.
+    private func rewrites(in text: NSString) -> [(key: UInt64, members: [UInt64], hang: Int, parts: [(text: String, struck: Bool)])] {
+        var regions: [(range: NSRange, members: [(id: UInt64, change: LiveFile.Change)])] = []
+        let shown = changes.filter { !$0.value.conflict && NSMaxRange($0.value.range) <= text.length }
+        for (id, change) in shown.sorted(by: { $0.value.range.location < $1.value.range.location }) {
+            let paragraphs = text.paragraphRange(for: change.range)
+            if let last = regions.last, paragraphs.location < NSMaxRange(last.range) {
+                regions[regions.count - 1].range = NSUnionRange(last.range, paragraphs)
+                regions[regions.count - 1].members.append((id, change))
+            } else {
+                regions.append((paragraphs, [(id, change)]))
+            }
+        }
+        return regions.compactMap { region in
+            let removing = region.members.filter { !$0.change.removed.allSatisfy(\.isWhitespace) }.count
+            let lines = region.members.contains { $0.change.removed.contains(where: \.isNewline) || text.substring(with: $0.change.range).contains(where: \.isNewline) }
+            guard removing > 1, lines || removing > 3 else { return nil }
+            var parts: [(text: String, struck: Bool)] = []
+            var at = region.range.location
+            for (_, change) in region.members {
+                if change.range.location > at { parts.append((text.substring(with: NSRange(location: at, length: change.range.location - at)), false)) }
+                if !change.removed.isEmpty { parts.append((change.removed, true)) }
+                at = max(at, NSMaxRange(change.range))
+            }
+            if NSMaxRange(region.range) > at { parts.append((text.substring(with: NSRange(location: at, length: NSMaxRange(region.range) - at)), false)) }
+            let hang = min(max(NSMaxRange(region.range) - 1, 0), max(text.length - 1, 0))
+            return (region.members[0].id, region.members.map(\.id), hang, parts)
+        }
     }
 
     /// Has the styler reserve space under the paragraphs holding `anchors` on the run loop's next pass, outside the
@@ -303,7 +372,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
                 let glyph = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: NSRange(location: hanger.anchor, length: 1)))
                 let kern = glyph.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat ?? 0
                 glyph.removeAttribute(.kern, range: NSRange(location: 0, length: 1))
-                ghost.frame.origin = NSPoint(x: gap.frame.minX + glyph.size().width + kern - width, y: gap.frame.minY + gap.baseline - ghost.ascent)
+                ghost.frame.origin = NSPoint(x: gap.frame.minX + glyph.size().width + kern - width + ghost.lead, y: gap.frame.minY + gap.baseline - ghost.ascent)
                 continue
             }
             guard let top = textBottom(at: hanger.anchor) else { continue }

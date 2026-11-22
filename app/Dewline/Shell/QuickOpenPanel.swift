@@ -58,6 +58,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private static let width: CGFloat = 600
     /// The input row, the rule under it and the list's padding above and below.
     private static let chromeHeight: CGFloat = 56 + 1 + 6 + 6
+    /// The prefixes' line under the list.
+    private static let footerHeight: CGFloat = 26
+    /// Room around the ground for its ambient shadow, 24 pt soft and 8 pt down.
+    private static let shadowRoom = NSEdgeInsets(top: 16, left: 24, bottom: 32, right: 24)
     /// Nine rows show; a longer list scrolls.
     private static let listMax: CGFloat = 9 * 32 + 8
     private static let prefixes: [(String, String)] = [
@@ -75,7 +79,9 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         "goToLine:", "showSettings:",
     ]
     private let field = NSTextField()
-    private let mark = DewMark()
+    private let magnifier = NSImageView()
+    /// The prefixes, under the list while nothing is typed.
+    private let footer = NSTextField(labelWithString: "")
     private let chip = ScopeChip()
     private let rule = PaletteRule()
     private let table = QuickOpenTable()
@@ -96,7 +102,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private weak var returnTo: NSWindow?
     private var folder: Folder?
     private weak var index: FolderIndex?
-    private var recents: [String: Date] = [:]
     /// The window's open tabs, then recent files, then pinned ones.
     private var boosted: [URL] = []
     private var files: [QuickOpenFile] = []
@@ -126,7 +131,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         isReleasedWhenClosed = false
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
         animationBehavior = .none
         acceptsMouseMovedEvents = true
         delegate = self
@@ -148,8 +153,9 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         field.cell?.isScrollable = true
         field.delegate = self
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        mark.isHidden = true
-        let input = NSStackView(views: [chip, field])
+        magnifier.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        magnifier.symbolConfiguration = .init(pointSize: 16, weight: .regular)
+        let input = NSStackView(views: [magnifier, chip, field])
         input.spacing = 12
         input.alignment = .centerY
         let column = NSTableColumn(identifier: .init("row"))
@@ -176,7 +182,8 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         scroll.automaticallyAdjustsContentInsets = false
         empty.font = Chrome.label
         empty.alignment = .center
-        for view in [input, rule, scroll, empty] as [NSView] {
+        footer.isHidden = true
+        for view in [input, rule, scroll, empty, footer] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -197,8 +204,39 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             empty.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
             empty.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            footer.centerYAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 6 + Self.footerHeight / 2),
         ])
-        return root
+        return Self.framed(root)
+    }
+
+    /// The panel's ground on a shade that casts its shadows, with room around it for them.
+    private static func framed(_ ground: NSView) -> NSView {
+        let frame = NSView()
+        let shade = PanelShade()
+        let room = Self.shadowRoom
+        for view in [shade, ground] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            frame.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.topAnchor.constraint(equalTo: frame.topAnchor, constant: room.top),
+                view.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -room.bottom),
+                view.leadingAnchor.constraint(equalTo: frame.leadingAnchor, constant: room.left),
+                view.trailingAnchor.constraint(equalTo: frame.trailingAnchor, constant: -room.right),
+            ])
+        }
+        return frame
+    }
+
+    /// "@ heading   : line   # all headings   > command": each prefix in mono `ink2`, its word in `ink3`.
+    private static var footerText: NSAttributedString {
+        let text = NSMutableAttributedString()
+        for (index, (key, word)) in [("@", "heading"), (":", "line"), ("#", "all headings"), (">", "command")].enumerated() {
+            if index > 0 { text.append(NSAttributedString(string: "   ", attributes: [.font: Chrome.small])) }
+            text.append(NSAttributedString(string: key, attributes: [.font: Chrome.mono(12), .foregroundColor: Chrome.color(.ink2)]))
+            text.append(NSAttributedString(string: " " + word, attributes: [.font: Chrome.small, .foregroundColor: Chrome.color(.ink3)]))
+        }
+        return text
     }
 
 
@@ -232,7 +270,6 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         index = controller?.index
         let isFile = { (url: URL) in FolderEntry(url: url, isFolder: false).opens && FileManager.default.fileExists(atPath: url.path) }
         let visits = Library.recents.filter { isFile($0.url) }
-        recents = Dictionary(visits.map { ($0.url.path, $0.date) }) { first, _ in first }
         let tabs = (controller?.tabs?.tabs ?? []).compactMap { ($0.document as? NSDocument)?.fileURL }.filter(isFile)
         boosted = tabs + visits.map(\.url) + Library.pins.filter(isFile)
         tabCount = tabs.count
@@ -285,9 +322,10 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     /// The theme's colors on the panel's own views; rows take them as they draw.
     private func recolor() {
         let theme = ThemeStore.shared
-        for view in [background.edge, rule, chip, mark] as [NSView] {
+        for view in [background.edge, rule, chip] as [NSView] {
             view.needsDisplay = true
         }
+        magnifier.contentTintColor = theme.color(.ink3)
         field.textColor = theme.color(.ink)
         empty.textColor = theme.color(.ink3)
         if let editor = field.currentEditor() as? NSTextView {
@@ -375,6 +413,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private func refresh() {
         search?.cancel()
         search = nil
+        footer.isHidden = true
         let query = query
         if let choices {
             chrome(choices.title, chip: choices.title, placeholder: "Type to filter")
@@ -413,6 +452,8 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         case .files(let text):
             chrome("Quick Open", placeholder: Self.findPlaceholder)
             if text.allSatisfy(\.isWhitespace) {
+                footer.attributedStringValue = Self.footerText
+                footer.isHidden = false
                 show(restingFileRows())
             } else {
                 run { panel in
@@ -433,7 +474,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
         }
     }
 
-    /// Names the panel for VoiceOver and shows the chip for a scope or a setting's values, else the mark.
+    /// Names the panel for VoiceOver and shows the chip for a scope or a setting's values.
     private func chrome(_ name: String, chip word: String? = nil, placeholder text: String) {
         title = name
         field.setAccessibilityLabel(name)
@@ -597,15 +638,16 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
     private func place() {
         let list = rows.isEmpty ? 40 : min(rows.map(\.height).reduce(0, +), Self.listMax)
         listHeight?.constant = list
-        let height = Self.chromeHeight + list
+        let room = Self.shadowRoom
+        let height = Self.chromeHeight + list + (footer.isHidden ? 0 : Self.footerHeight) + room.top + room.bottom
         let screen = target?.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let anchor = target?.frame ?? visible
-        var frame = NSRect(x: anchor.midX - Self.width / 2, y: anchor.maxY - anchor.height * 0.22 - height, width: Self.width, height: height)
+        let width = Self.width + room.left + room.right
+        var frame = NSRect(x: anchor.midX - width / 2, y: anchor.maxY - anchor.height * 0.22 - height + room.top, width: width, height: height)
         frame.origin.x = min(max(frame.minX, visible.minX + 8), visible.maxX - frame.width - 8)
         frame.origin.y = max(frame.minY, visible.minY + 8)
         setFrame(frame, display: isVisible)
-        invalidateShadow()
     }
 
     /// Hides at once and hands the keyboard back to the window; a value being previewed goes back first.
@@ -884,8 +926,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             let folderPath = text.nameStart > 0 ? path.substring(to: text.nameStart - 1) : folder.map { FileManager.default.displayName(atPath: $0.url.path) } ?? ""
             let writer = touched[result.file.url.path]?.writer
             let place = result.file.boost.map { $0 < tabCount ? "open" : $0 >= tabCount + recentCount ? "pinned" : "" } ?? ""
-            let opened = line == nil && writer == nil ? recents[result.file.url.path].map { "opened \(relativeTime($0))" } : nil
-            let detail = line.map { "line \($0)" } ?? writer.map { "\($0.name) changes waiting" } ?? opened ?? place
+            let detail = line.map { "line \($0)" } ?? writer.map { "\($0.name) changes waiting" } ?? place
             let positions = result.positions.compactMap { $0 >= text.nameStart ? $0 - text.nameStart : nil }
             let isCode = FolderEntry(url: result.file.url, isFolder: false).isCode
             content.lead = writer.map { .dot($0.color) } ?? .symbol(isCode ? "chevron.left.forwardslash.chevron.right" : "doc.text")
@@ -893,7 +934,7 @@ final class QuickOpenPanel: NSPanel, NSWindowDelegate, NSTextFieldDelegate, NSTa
             content.title = [.init(name, positions: positions, style: style, dimUnmatched: !positions.isEmpty)]
             let folderName = (folderPath as NSString).lastPathComponent
             content.subtitle = folderName
-            content.trailing = opened == nil ? .text(detail) : .aside(detail)
+            content.trailing = .text(detail)
             content.hints = [("↩", "open"), ("⌘↩", "new tab")]
             content.spoken = spoken([name, folderPath, detail])
         case .command(let hit):
@@ -1010,8 +1051,6 @@ private final class PaletteCell: NSView, ChromeSelectable {
     enum Trailing {
         case empty
         case text(String)
-        /// Text in `ink3`, such as when a file was opened.
-        case aside(String)
         case keys([String])
     }
 
@@ -1075,9 +1114,8 @@ private final class PaletteCell: NSView, ChromeSelectable {
         switch content.trailing {
         case .empty:
             break
-        case .text(let text) where !text.isEmpty && !hinting, .aside(let text) where !text.isEmpty && !hinting:
-            let ink: Token = if case .aside = content.trailing { .ink3 } else { .ink2 }
-            let string = NSAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(ink)])
+        case .text(let text) where !text.isEmpty && !hinting:
+            let string = NSAttributedString(string: text, attributes: [.font: Chrome.label, .foregroundColor: Chrome.color(.ink2)])
             let size = string.size()
             string.draw(at: NSPoint(x: right - size.width, y: titleY - size.height / 2))
             right -= ceil(size.width) + 12
@@ -1231,7 +1269,7 @@ private final class PaletteRowView: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {}
 
     override func drawSelection(in dirtyRect: NSRect) {
-        Chrome.wash.setFill()
+        Chrome.color(.accent).resolved(for: effectiveAppearance).withAlphaComponent(effectiveAppearance.isHighContrast ? 0.32 : 0.22).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
     }
 
@@ -1363,6 +1401,36 @@ private final class PanelBackground: NSVisualEffectView {
         image.resizingMode = .stretch
         return image
     }()
+}
+
+/// Under the ground, the panel's shadows: an ambient one, black at 25%, 24 pt soft and 8 pt down, and a contact one at
+/// the edge, black at 18%, 2 pt soft and 1 pt down.
+private final class PanelShade: NSView {
+    private let contact = CALayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.addSublayer(contact)
+        for (shadow, opacity, radius, drop) in [(layer, Float(0.25), CGFloat(24), CGFloat(8)), (contact, 0.18, 2, 1)] {
+            shadow?.shadowColor = NSColor.black.cgColor
+            shadow?.shadowOpacity = opacity
+            shadow?.shadowRadius = radius
+            shadow?.shadowOffset = CGSize(width: 0, height: -drop)
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("PanelShade is built in code")
+    }
+
+    override func layout() {
+        super.layout()
+        let path = CGPath(roundedRect: bounds, cornerWidth: 14, cornerHeight: 14, transform: nil)
+        layer?.shadowPath = path
+        contact.frame = bounds
+        contact.shadowPath = path
+    }
 }
 
 /// The background's edge and dark highlight, under the panel's content.

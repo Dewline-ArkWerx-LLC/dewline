@@ -137,7 +137,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate {
             for view in fading { view.isHidden = false }
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.15
+            context.duration = Motion.current == .off ? 0 : 0.15
             for view in fading { view.animator().alphaValue = out ? 0 : 1 }
             strip.animator().othersAlpha = out ? 0 : 1
         } completionHandler: { [weak self] in
@@ -334,12 +334,7 @@ final class ActivityButton: NSButton {
             title.append(NSAttributedString(string: git + (counts.isEmpty ? " " : "   "), attributes: [.font: font, .foregroundColor: Chrome.color(.ink2)]))
         }
         for (writer, _) in counts {
-            let color = writer.color
-            let dot = NSImage(size: NSSize(width: 7, height: 7), flipped: false) { rect in
-                color.setFill()
-                NSBezierPath(ovalIn: rect).fill()
-                return true
-            }
+            let dot = dot(writer.color)
             title.append(attachment(dot, size: dot.size))
             title.append(NSAttributedString(string: " "))
         }
@@ -354,6 +349,15 @@ final class ActivityButton: NSButton {
         return title
     }
 
+    /// A 7 pt dot in a writer's ink.
+    private static func dot(_ color: NSColor) -> NSImage {
+        NSImage(size: NSSize(width: 7, height: 7), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            return true
+        }
+    }
+
     private static func attachment(_ image: NSImage, size: NSSize) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.image = image
@@ -361,22 +365,27 @@ final class ActivityButton: NSButton {
         return NSAttributedString(attachment: attachment)
     }
 
-    /// Each writer, under its name, with the notes it changed, newest first, by their paths in the folder; choosing one
-    /// opens it at its first change.
+    /// Each writer, under a header with its ink, name and count, "● Claude Code · 3", with the notes it changed, newest
+    /// first, by their paths in the folder; choosing one opens it at its first change.
     @objc private func showMenu(_ sender: Any?) {
+        let menu = waitingMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
+    }
+
+    func waitingMenu() -> NSMenu {
         let menu = NSMenu()
         let folder = (owner?.windowController as? MainWindowController)?.folder
         let (open, closed) = Review.waiting(in: owner)
-        var notes: [(writer: MarkWriter, url: URL, detail: String, time: Date)] = []
+        var notes: [(writer: MarkWriter, url: URL, count: Int, detail: String, time: Date)] = []
         for live in open {
             let time = (try? live.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             for (writer, count) in Self.tally(live.changes.values.filter(\.marked).map(\.origin)) {
-                notes.append((writer, live.url, "\(count) \(count == 1 ? "change" : "changes")", time))
+                notes.append((writer, live.url, count, "\(count) \(count == 1 ? "change" : "changes")", time))
             }
         }
         for note in closed {
             guard let (writer, _) = Self.tally([note.origin]).first else { continue }
-            notes.append((writer, note.url, "\(note.count) \(note.count == 1 ? "change" : "changes") while closed", note.time))
+            notes.append((writer, note.url, note.count, "\(note.count) \(note.count == 1 ? "change" : "changes") while closed", note.time))
         }
         notes.sort { $0.time > $1.time }
         var writers: [String] = []
@@ -384,8 +393,11 @@ final class ActivityButton: NSButton {
             writers.append(note.writer.name)
         }
         for name in writers {
-            menu.addItem(.sectionHeader(title: name))
-            for note in notes where note.writer.name == name {
+            let mine = notes.filter { $0.writer.name == name }
+            let header = NSMenuItem.sectionHeader(title: "\(name) \u{00B7} \(mine.reduce(0) { $0 + $1.count })")
+            header.image = mine.first.map { Self.dot($0.writer.color) }
+            menu.addItem(header)
+            for note in mine {
                 menu.addItem(Self.note(note.url, folder?.relativePath(of: note.url) ?? note.url.lastPathComponent, note.detail))
             }
         }
@@ -396,7 +408,7 @@ final class ActivityButton: NSButton {
             item.target = self
         }
         menu.addItem(withTitle: "Review All Changes", action: #selector(ShellActions.toggleChanges(_:)), keyEquivalent: "R")
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
+        return menu
     }
 
     /// What agents load for the window's note's folder.

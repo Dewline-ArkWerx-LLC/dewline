@@ -81,4 +81,57 @@ struct LaneBTests {
         note.textView.scroll(.zero)
         #expect(note.rail.labels.items.isEmpty)
     }
+
+    @Test func gitsChangesAddNoBadgeAndEachBadgeSaysWhatWaits() {
+        var counts: [WaitingCount] = []
+        counts.add(MarkWriter(.git(action: nil)), 2)
+        #expect(counts.isEmpty, "the row's git letter shows git's changes, so the badges sum to the toolbar's count")
+        counts.add(MarkWriter(.agent(.claude, session: "s")), 1)
+        let badge = WaitingBadge()
+        badge.show(counts)
+        #expect(badge.toolTip == "1 change by Claude Code, not reviewed")
+        #expect(badge.isAccessibilityElement() && badge.accessibilityLabel() == badge.toolTip)
+        #expect(GitFileState.new(staged: false).letter == "New")
+    }
+
+    @Test func theReviewMenuHeadsEachWriterWithItsInkNameAndCount() async throws {
+        let note = try Note(Self.plan)
+        defer { note.close() }
+        try await note.write(Self.plan.replacingOccurrences(of: "Line 1 of", with: "Line one of").replacingOccurrences(of: "60 s", with: "90 s"))
+        let count = note.live.changes.values.count(where: \.marked)
+        #expect(count > 0)
+        let activity = ActivityButton()
+        activity.owner = note.textView.window
+        let header = try #require(activity.waitingMenu().items.first)
+        #expect(header.isSectionHeader && header.title == "Another app \u{00B7} \(count)" && header.image != nil)
+    }
+
+    /// Find in Files in a window that is never shown, on a folder that is a new repository.
+    @Test func findInFilesFileRowsCarryGitsLetter() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "dewline-laneb-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let git = Process()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["init", "-q", root.path]
+        git.environment = ["HOME": root.path, "GIT_CONFIG_NOSYSTEM": "1"]
+        try git.run()
+        git.waitUntilExit()
+        let url = root.appending(path: "a.md")
+        try Data("# Plan\n".utf8).write(to: url)
+        let folder = Folder(root)
+        let index = FolderIndex.of(folder)
+        await waitForMain { index.git.state(of: url) != nil }
+        let window = try #require(MainWindowController(folder: folder).window)
+        NSApp.sendAction(#selector(MainWindowController.findInFiles(_:)), to: window.windowController, from: nil)
+        let editor = try #require(window.firstResponder as? NSTextView)
+        editor.insertText("plan", replacementRange: editor.selectedRange())
+        func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
+        let results = try #require(all(window.contentView!).compactMap { $0 as? NSOutlineView }.first { !$0.isHiddenOrHasHiddenAncestor })
+        await waitForMain { results.numberOfRows >= 2 }
+        let row = try #require(results.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        #expect(row.accessibilityLabel() == "a.md, 1 match, new")
+        #expect(all(row).contains { ($0 as? NSTextField)?.stringValue == "New" })
+        window.close()
+    }
 }

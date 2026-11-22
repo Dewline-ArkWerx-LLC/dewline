@@ -684,17 +684,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// waiting in notes changed while closed.
     @objc private func changesChanged() {
         guard filled else { return }
-        var waiting: [String: [WaitingCount]] = [:]
-        let (open, closed) = Review.waiting(in: view.window)
-        for note in closed {
-            waiting[note.url.standardizedFileURL.path, default: []].add(MarkWriter(note.origin), note.count)
-        }
-        for live in open {
-            for change in live.changes.values where change.marked {
-                waiting[live.url.standardizedFileURL.path, default: []].add(MarkWriter(change.origin), 1)
-            }
-        }
-        waitingChanges = waiting
+        waitingChanges = [WaitingCount].waiting(in: view.window)
         refreshRows()
     }
 

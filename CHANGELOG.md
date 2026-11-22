@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- The first-run demo says the stamp reads CLAUDE CODE, as it does, and Settings > Appearance says inline code is 0.9 of the text while code blocks match the x-height.
+
 ## 0.7.0 (22 Nov 2026)
 
 Review keys follow one rule, agent changes are marked with the writer's color instead of a letter, and marks stay on their words while you type above them.

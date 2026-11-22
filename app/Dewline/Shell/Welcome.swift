@@ -13,7 +13,7 @@ enum Welcome {
     static let replacement = "edits a file,"
     static let anchor = "Revert puts the old text back.\n"
     static let inserted = "\nThis paragraph arrived the way an agent\u{2019}s edit does: written to the file while the note was open. "
-        + "With hooks set up, the stamp reads CLAUDE, CODEX or CURSOR.\n"
+        + "With hooks set up, the stamp reads CLAUDE CODE, CODEX or CURSOR.\n"
 
     /// Whether this launch runs the guide: never once it has started, and not on a launch that opens a file, which
     /// opens that file alone and leaves the guide for the next plain launch.

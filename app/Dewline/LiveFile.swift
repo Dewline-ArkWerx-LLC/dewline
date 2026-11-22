@@ -584,7 +584,9 @@ final class LiveFile {
         changes = changes.mapValues { change in
             var change = change
             if range.location <= NSMaxRange(change.range), oldEnd >= change.range.location { change.refused = false }
-            let start = min(moved(change.range.location), change.range.location)
+            // An edit that covers a change's start, or types at it, joins the change; one before it moves it whole.
+            let covers = range.location <= change.range.location && (change.range.location < oldEnd || range.location == change.range.location)
+            let start = covers ? range.location : moved(change.range.location)
             change.range = NSRange(location: start, length: moved(NSMaxRange(change.range)) - start)
             return change
         }

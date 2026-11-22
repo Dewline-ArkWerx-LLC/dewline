@@ -4,6 +4,7 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- Typing above a marked change keeps its marks on their words; a short note opened while its window is behind draws all its text; a Mermaid chain with a labeled link (`a -->|x| b --> c`) draws every edge.
 - Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
 - A note opens with the caret at its start (past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
 - Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.

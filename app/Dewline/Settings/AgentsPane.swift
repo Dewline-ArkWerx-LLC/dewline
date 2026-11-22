@@ -160,7 +160,7 @@ struct AgentsPane: View {
 
     var body: some View {
         SettingsForm {
-            Section {
+            Section("Command-line tool") {
                 LabeledContent {
                     if hooks.onPath == nil, taken == nil {
                         Button("Add") {
@@ -170,8 +170,8 @@ struct AgentsPane: View {
                         .fixedSize()
                     }
                 } label: {
-                    Text("Command-line tool")
-                    Text("Run \(Text("dewline").monospaced()) from a terminal. \(CommandLink.line(onPath: hooks.onPath, taken: taken))")
+                    Text("dewline").monospaced()
+                    Text("Opens notes from a terminal. \(CommandLink.line(onPath: hooks.onPath, taken: taken))")
                 }
             }
             Section {
@@ -198,7 +198,7 @@ struct AgentsPane: View {
                     Text("With its hooks, each agent\u{2019}s change carries its name. Without them, its edits still show, labeled Another app.")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Set Up All Hooks\u{2026}") { HookSetup.install(from: NSApp.keyWindow) { _ in Task { await refresh() } } }
+                    Button("Set Up Agent Hooks\u{2026}") { HookSetup.install(from: NSApp.keyWindow) { _ in Task { await refresh() } } }
                         .fixedSize()
                         .help(hooks.version ?? "")
                 }
@@ -234,7 +234,9 @@ struct AgentsPane: View {
     }
 
     /// The agent's name, what its hooks give, its settings file and when they last named an edit, then its state with a
-    /// symbol, Show in Finder when it has a settings file, and Set Up or Remove, which ends every row at the trailing edge.
+    /// symbol in a column of its own, Show in Finder when it has a settings file, and Set Up or Remove, which ends every
+    /// row at the trailing edge. Show in Finder keeps its room when absent and both last buttons are one width, so the
+    /// states line up.
     private func row(_ agent: HookStatus.Agent) -> some View {
         let (text, symbol, color): (String, String, Color) =
             switch (agent.installed, agent.needsTrust) {
@@ -250,18 +252,21 @@ struct AgentsPane: View {
                     Image(systemName: symbol).foregroundStyle(color)
                 }
                 .help(agent.needsTrust ? "In Codex, run /hooks and trust Dewline\u{2019}s hook." : "")
-                if let file = agent.file, FileManager.default.fileExists(atPath: file) {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) }
-                        .fixedSize()
-                }
+                .frame(width: 170, alignment: .leading)
+                let file = agent.file.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
+                Button("Show in Finder") { if let file { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: file)]) } }
+                    .fixedSize()
+                    .opacity(file == nil ? 0 : 1)
+                    .disabled(file == nil)
+                    .accessibilityHidden(file == nil)
                 if agent.installed {
                     Button(role: .destructive) { HookSetup.remove(agent.name) { _ in Task { await refresh() } } } label: {
-                        Text("Remove").frame(minWidth: 56)
+                        Text("Remove").frame(width: 60)
                     }
                     .help("Takes Dewline\u{2019}s hooks out of \(agent.title)\u{2019}s settings, keeping a backup beside the file.")
                 } else {
                     Button { HookSetup.install(from: NSApp.keyWindow, agent: agent.name) { _ in Task { await refresh() } } } label: {
-                        Text("Set Up\u{2026}").frame(minWidth: 56)
+                        Text("Set Up\u{2026}").frame(width: 60)
                     }
                 }
             }

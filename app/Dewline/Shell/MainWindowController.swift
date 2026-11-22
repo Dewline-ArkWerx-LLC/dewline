@@ -181,85 +181,106 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// The empty page's Set Up Agent Hooks… button, or "Agent hooks are on.", once `dewline doctor` answers.
     private let hookButton = NSButton(title: "Set Up Agent Hooks\u{2026}", target: nil, action: #selector(setUpAgentHooks(_:)))
     private let hookNote = NSTextField(labelWithString: "Agent hooks are on.")
-    /// Under Copy a Test Prompt: how its edit shows, with hooks or without.
+    /// Under Copy a Test Prompt: where to paste it and how its edit shows, with hooks or without.
     private var hookHint: NSTextField?
 
-    /// The page of a folder with no note open: what an agent's edit does, then what waits for review in the folder and
-    /// what git has uncommitted, each file opening on Return or a click, or with nothing listed, how to pick or make a
-    /// note; then Open CLAUDE.md (or README.md), the default, beside Set Up Agent Hooks… while no agent has them, and
-    /// Copy a Test Prompt with the prompt printed under it.
+    /// The page of a folder with no note open, on the text column's leading edge: the folder's name in the heading face,
+    /// what an agent's edit does, then what waits for review in the folder and what git has uncommitted, each file
+    /// opening on Return or a click, or with nothing listed, how to pick or make a note; then the test prompt in a code
+    /// chip over Copy a Test Prompt, the default, beside Set Up Agent Hooks… while no agent has them, and Open CLAUDE.md
+    /// (or README.md) as a link.
     private func emptyPage(in folder: URL) -> NSView {
         func label(_ text: String, _ ink: Token) -> NSTextField {
             let label = NSTextField(wrappingLabelWithString: text)
             label.font = Chrome.label
             label.textColor = Chrome.color(ink)
-            label.alignment = .center
-            label.preferredMaxLayoutWidth = 360
+            label.preferredMaxLayoutWidth = 420
             return label
         }
-        let title = label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path))", .ink)
-        title.font = .systemFont(ofSize: 18, weight: .semibold)
+        let title = label("Dewline is watching \(FileManager.default.displayName(atPath: folder.path))", .heading)
+        title.font = ThemeStore.shared.heading(3).font
         let prose = [
             label("Ask an agent to edit a note here; the change shows marked, ready to keep or revert.", .ink2),
             label("Pick a note in the sidebar, or press \u{2318}N\u{00A0}for\u{00A0}a\u{00A0}new\u{00A0}one.", .ink2),
         ]
         let waiting = WaitingNotes(in: folder, git: index?.git) { [weak self] url in self?.openAtFirstChange(url) }
         waiting.changed = { empty in prose[1].isHidden = !empty }
-        let stack = NSStackView(views: [title, prose[0], waiting, prose[1]])
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 6
-        stack.setCustomSpacing(12, after: title)
-        stack.setCustomSpacing(12, after: prose[0])
-        let buttons = NSStackView()
-        buttons.distribution = .fillEqually
-        buttons.spacing = 12
-        if let suggested = ["CLAUDE.md", "README.md"].map({ folder.appending(path: $0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
-            let open = NSButton(title: "Open \(suggested.lastPathComponent)", target: self, action: #selector(openSuggested(_:)))
-            open.bezelStyle = .push
-            open.identifier = NSUserInterfaceItemIdentifier(suggested.path)
-            open.keyEquivalent = "\r"
-            buttons.addArrangedSubview(open)
-        }
+        let prompt = NSTextField(labelWithString: Self.testPrompt)
+        prompt.font = Chrome.mono(Chrome.small.pointSize)
+        prompt.textColor = Chrome.color(.ink)
+        prompt.isSelectable = true
+        prompt.lineBreakMode = .byTruncatingTail
+        prompt.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        prompt.translatesAutoresizingMaskIntoConstraints = false
+        let chip = PaperView()
+        chip.fill = .codeBackground
+        chip.wantsLayer = true
+        chip.layer?.cornerRadius = 4
+        chip.addSubview(prompt)
+        NSLayoutConstraint.activate([
+            prompt.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 8),
+            prompt.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -8),
+            prompt.topAnchor.constraint(equalTo: chip.topAnchor, constant: 4),
+            prompt.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -4),
+        ])
+        let copy = ChromeButton("Copy a Test Prompt", style: .filled) { [weak self] in self?.copyTestPrompt(nil) }
+        copy.keyEquivalent = "\r"
         hookButton.target = self
         hookButton.bezelStyle = .push
         hookButton.isHidden = true
-        buttons.addArrangedSubview(hookButton)
         hookNote.font = Chrome.label
         hookNote.textColor = Chrome.color(.ink2)
         hookNote.isHidden = true
-        let tryIt = label(Self.hookHint(on: false), .ink2)
+        let buttons = NSStackView(views: [copy, hookButton, hookNote])
+        buttons.spacing = 12
+        let tryIt = label(Self.hookHint(on: false, in: folder), .ink2)
         hookHint = tryIt
-        let copy = NSButton(title: "Copy a Test Prompt", target: self, action: #selector(copyTestPrompt(_:)))
-        copy.bezelStyle = .push
-        let prompt = NSTextField(wrappingLabelWithString: Self.testPrompt)
-        prompt.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        prompt.textColor = Chrome.color(.ink)
-        prompt.alignment = .center
-        prompt.isSelectable = true
-        prompt.preferredMaxLayoutWidth = 360
-        let test = NSStackView(views: [hookNote, copy, prompt, tryIt])
-        test.orientation = .vertical
-        test.spacing = 6
-        for view in [buttons, test] {
-            stack.addView(view, in: .center)
-            stack.setCustomSpacing(14, after: stack.views[stack.views.count - 2])
+        var views: [NSView] = [title, prose[0], waiting, prose[1], chip, buttons, tryIt]
+        if let suggested = ["CLAUDE.md", "README.md"].map({ folder.appending(path: $0) }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+            let open = NSButton(title: "Open \(suggested.lastPathComponent)", target: self, action: #selector(openSuggested(_:)))
+            open.isBordered = false
+            open.contentTintColor = Chrome.color(.link)
+            open.identifier = NSUserInterfaceItemIdentifier(suggested.path)
+            views.append(open)
         }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.setCustomSpacing(12, after: title)
+        stack.setCustomSpacing(12, after: prose[0])
+        stack.setCustomSpacing(14, after: waiting)
+        stack.setCustomSpacing(14, after: prose[1])
+        stack.setCustomSpacing(8, after: chip)
+        stack.setCustomSpacing(12, after: tryIt)
         waiting.reload()
         updateHookLine(in: folder)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let empty = PaperView()
         empty.addSubview(stack)
+        // The editor's text column: the measure, centered, or the page less its 32 pt margins.
+        let column = NSLayoutGuide()
+        empty.addLayoutGuide(column)
+        let measure = column.widthAnchor.constraint(equalToConstant: ThemeStore.shared.measure)
+        measure.priority = .defaultHigh
+        let width = stack.widthAnchor.constraint(equalToConstant: 420)
+        width.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
+            column.topAnchor.constraint(equalTo: empty.topAnchor),
+            column.bottomAnchor.constraint(equalTo: empty.bottomAnchor),
+            column.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
+            column.widthAnchor.constraint(lessThanOrEqualTo: empty.widthAnchor, constant: -64),
+            measure,
+            stack.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
+            width,
             stack.centerYAnchor.constraint(equalTo: empty.centerYAnchor),
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
-            waiting.widthAnchor.constraint(equalToConstant: 420),
+            waiting.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         return empty
     }
 
-    /// Set Up Agent Hooks… while no agent has them, else "Agent hooks are on." over Copy a Test Prompt. The test host
+    /// Set Up Agent Hooks… while no agent has them, else "Agent hooks are on." beside Copy a Test Prompt. The test host
     /// runs no doctor.
     private func updateHookLine(in folder: URL) {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
@@ -268,13 +289,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             guard let self else { return }
             hookButton.isHidden = on
             hookNote.isHidden = !on
-            hookHint?.stringValue = Self.hookHint(on: on)
+            hookHint?.stringValue = Self.hookHint(on: on, in: folder)
         }
     }
 
-    /// How the test prompt's edit shows: named with hooks, as Another app without.
-    static func hookHint(on: Bool) -> String {
-        on ? "Run it in Claude Code here; the edit shows up marked." : "Run it in Claude Code here; without hooks, the edit lands marked as Another app."
+    /// Where to paste the test prompt, and how its edit shows: named with hooks, as Another app without.
+    static func hookHint(on: Bool, in folder: URL) -> String {
+        let paste = "Paste it into Claude Code running in \((folder.path as NSString).abbreviatingWithTildeInPath)."
+        return on ? paste : paste + " Without hooks, the edit lands marked as Another app."
     }
 
     /// A prompt that makes an agent edit a note of its own, never one of the folder's, for the first marked change.
@@ -1382,8 +1404,12 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         writer.setContentCompressionResistancePriority(.required, for: .horizontal)
         let line = NSStackView(views: (row.writer == nil ? [] : [writer]) + [name])
         line.spacing = 12
+        // A file's row ends on a chevron: it opens.
+        let chevron = NSImageView(image: row.url == nil ? NSImage() : Chrome.symbol("chevron.right", Chrome.color(.ink3)) ?? NSImage())
+        chevron.setAccessibilityElement(false)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
         let cell = NSTableCellView()
-        for view in [line, note] {
+        for view in [line, note, chevron] {
             view.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(view)
         }
@@ -1392,8 +1418,10 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             line.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
             line.trailingAnchor.constraint(lessThanOrEqualTo: note.leadingAnchor, constant: -12),
             line.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            note.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -14),
+            note.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: row.url == nil ? 0 : -6),
             note.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
+            chevron.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -14),
+            chevron.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         cell.setAccessibilityLabel([row.writer?.name, row.text, row.detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
         return cell
@@ -1401,16 +1429,47 @@ final class WaitingNotes: NSScrollView, NSTableViewDataSource, NSTableViewDelega
 }
 
 /// A waiting file's row: its selection is the wash, never the solid accent, so the writer's ink and the text keep their
-/// colors.
+/// colors; under the pointer it takes the hover fill.
 private final class WaitingRowView: StationRowView {
+    private var hovered = false {
+        didSet { if hovered != oldValue { needsDisplay = true } }
+    }
+    private var area: NSTrackingArea?
+
     override var isEmphasized: Bool {
         get { false }
         set {}
     }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard area == nil else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        self.area = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovered = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = false
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        guard hovered, !isSelected else { return }
+        Chrome.hover.setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
+    }
 }
 
-/// A view filled with the theme's paper, following the theme and the appearance.
+/// A view filled with the theme's paper, or another of its colors, following the theme and the appearance.
 final class PaperView: NSView {
+    var fill = Token.paper {
+        didSet { needsDisplay = true }
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange(_:)), name: ThemeStore.didChange, object: nil)
@@ -1423,7 +1482,7 @@ final class PaperView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = ThemeStore.shared.color(.paper).cgColor
+        layer?.backgroundColor = ThemeStore.shared.color(fill).cgColor
     }
 
     @objc private func themeDidChange(_ notification: Notification) {

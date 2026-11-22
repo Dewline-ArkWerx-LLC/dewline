@@ -69,12 +69,20 @@ jobs:
         with:
           toolchain: 1.99.1
           components: rustfmt, clippy
+      # v1: the v0 entries hold no build for the doctests, whose dependencies resolve without dewline-ffi's features,
+      # and an exact hit is never saved again.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: core -> target
+          prefix-key: v1-rust
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-nextest@0.9.151
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - run: cargo nextest run --workspace --locked
+      # nextest runs no doctests.
+      - run: cargo test --doc --workspace --locked
 
   deny:
     runs-on: ubuntu-latest

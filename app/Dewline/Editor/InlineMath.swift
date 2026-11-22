@@ -64,7 +64,7 @@ final class InlineMath {
                 let font = styled.attribute(.font, at: local.content.location, effectiveRange: nil) as? NSFont ?? MarkdownStyler.bodyFont
                 let color = styled.attribute(.foregroundColor, at: local.content.location, effectiveRange: nil) as? NSColor
                 let request = Request(
-                    tex: styled.mutableString.substring(with: local.content), size: (font.xHeight / Self.xHeight * 2).rounded() / 2,
+                    tex: styled.mutableString.substring(with: local.content), size: Self.size(matching: font),
                     color: Self.rgba(color ?? ThemeStore.shared.color(.ink), in: textView)
                 )
                 switch formulas[request] {
@@ -103,6 +103,11 @@ final class InlineMath {
                 }
             }
         }
+    }
+
+    /// The formula size whose x-height is `font`'s, to the half point.
+    static func size(matching font: NSFont) -> CGFloat {
+        (font.xHeight / xHeight * 2).rounded() / 2
     }
 
     /// A block's inline math, in the document; a table's cells keep their source.

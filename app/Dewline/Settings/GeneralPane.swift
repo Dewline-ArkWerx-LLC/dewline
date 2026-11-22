@@ -18,9 +18,11 @@ struct GeneralPane: View {
                     Text("Default Markdown app")
                     Text(isDefaultApp ? "Finder opens Markdown files in Dewline." : "Finder opens Markdown files in another app.")
                 }
+            } header: {
+                Text("Markdown Files")
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in isDefaultApp = DefaultApp.isDewline }
-            Section("Files") {
+            Section {
                 if let folder = preferences.notesFolder {
                     LabeledContent {
                         FolderField(url: folder) { preferences.notesFolder = $0 }
@@ -33,7 +35,7 @@ struct GeneralPane: View {
                     Text("Show files .gitignore hides")
                     Text("Dimmed in the sidebar, and found by Quick Open and Find in Files.")
                 }
-                Picker("Pasted images go", selection: $preferences.attachments) {
+                Picker("Save pasted images", selection: $preferences.attachments) {
                     Text("Beside the note").tag(Preferences.Attachments.beside)
                     Text("In an \u{201C}attachments\u{201D} folder beside it").tag(Preferences.Attachments.subfolder)
                 }
@@ -50,11 +52,17 @@ struct GeneralPane: View {
                     Text("Inbox")
                     Text("File > Capture\u{2026}, the Services menu, Shortcuts, dewline capture and MCP add to the end of this note.")
                 }
-            }
-            Section {
+            } header: {
+                Text("Files")
+            } footer: {
                 if updates.updater == nil {
                     Text("This build does not update itself.")
-                } else {
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if updates.updater != nil {
+                Section {
                     Toggle("Check automatically", isOn: Binding { updates.automaticChecks } set: { updates.setAutomaticChecks($0) })
                     Toggle(isOn: Binding { updates.beta } set: { updates.setBeta($0) }) {
                         Text("Beta builds")
@@ -68,23 +76,21 @@ struct GeneralPane: View {
                                 .disabled(updates.staged != nil)
                         }
                     }
-                }
-                if let text = updates.stagedText {
-                    Text(text)
-                }
-            } header: {
-                Text("Updates")
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    if updates.updater != nil {
+                    if let text = updates.stagedText {
+                        Text(text)
+                    }
+                } header: {
+                    Text("Updates")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text(Updates.lineText)
+                        if let error = updates.lastError {
+                            Text(error)
+                        }
                     }
-                    if let error = updates.lastError {
-                        Text(error)
-                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

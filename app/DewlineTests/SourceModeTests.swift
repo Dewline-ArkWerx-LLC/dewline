@@ -240,6 +240,25 @@ struct SourceModeTests {
         editor.expectTextKitUnchanged()
     }
 
+    @Test func atProsePitchANoteTooShortToScrollKeepsItsBaselines() throws {
+        let row = "Plain words here.\n"
+        let editor = Editor(String(repeating: row, count: 4), caret: 0)
+        let view = editor.view
+        view.styler.sourceLineHeight = ThemeStore.shared.bodyLineHeight
+        editor.display()
+        let starts = (0..<4).map { $0 * row.utf16.count }
+        let baselines = { try starts.map { try #require(view.baseline(at: $0)) - view.visibleRect.minY } }
+        let live = try baselines()
+        for toggle in 1...2 {
+            view.toggleSource(nil)
+            editor.display()
+            for (index, (prose, now)) in zip(starts, zip(live, try baselines())) {
+                #expect(abs(prose - now) <= editor.pixel, "toggle \(toggle), line at \(index): baseline \(prose) pt below the top in Live, \(now) pt after")
+            }
+        }
+        editor.expectTextKitUnchanged()
+    }
+
     @Test func aKeystrokeRightAfterAToggleLandsAndTheLineHolds() throws {
         let heading = (Self.long as NSString).range(of: "## Part 60\n")
         var caret = NSMaxRange(heading) - 1

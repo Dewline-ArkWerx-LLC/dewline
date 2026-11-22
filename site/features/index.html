@@ -66,6 +66,13 @@
         <a class="btn" href="/download">Download for Mac</a>
       </div>
       <p class="meta">macOS 26 or later. Free to start, with no account and no telemetry.</p>
+      <figure class="shot fh-shot">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/codex-title-case-dark.webp">
+            <img src="/img/codex-title-case-light.webp" width="1100" height="967" alt="style-guide.md in Dewline under the rule Sentence case for every heading. Codex has moved the headings to Title Case: Voice and Tone, Headings and Titles, Code Samples over the struck Code samples. The stamp reads CODEX, 1 of 9, with Revert and Keep." fetchpriority="high">
+          </picture>
+        <figcaption>Sentence case for every heading. Codex set nine in Title Case.</figcaption>
+      </figure>
     </div>
   </section>
 
@@ -78,8 +85,11 @@
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
-        <figure class="fwin">
-          <img src="/img/shorter-intro-light.webp" width="1400" height="485" alt="retry-queue.md in Dewline. The two-sentence intro is struck through whole, with Retries move to Postgres written above it in the agent’s ink, and the Updated date changed from 18 to 20 Nov. The stamp reads CLAUDE 20:02, saved, 1 of 2, with Revert and Keep." loading="lazy" decoding="async">
+        <figure class="fwin mid">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/changes-list-dark.webp">
+            <img src="/img/changes-list-light.webp" width="761" height="1080" alt="The Changes pane, grouped by writer session: Cursor, Another app, Codex, Claude Code and Uncommitted, each with Revert Session and Keep Session, and each change in its row with the text around it." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -89,14 +99,16 @@
     <div class="wrap frow-in">
       <div class="ftext">
         <h2 id="agents-h" class="rv">Agents sign their edits.</h2>
-        <p class="rv">Hooks for Claude Code, Codex and Cursor tell Dewline which writes were theirs, checked by hash, so the change carries the agent’s name. Shell commands, Cursor Tab and some Cursor edits stay unnamed. Autosave waits while an agent writes. Agents can read what you kept and reverted with <code>dewline changes</code>.</p>
+        <p class="rv">Hooks for Claude Code, Codex and Cursor tell Dewline which writes were theirs, checked by hash, so the change carries the agent’s name. Shell commands, Cursor Tab and some Cursor edits stay unnamed. Settings&nbsp;&gt; Agents shows which hooks are on. Autosave waits while an agent writes. Agents can read what you kept and reverted with <code>dewline changes</code>.</p>
         <a class="fmore rv" href="/docs/agents/">Set up agent hooks<svg class="arr" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/></svg></a>
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin">
-          <img src="/img/codex-title-case-light.webp" width="1245" height="669" alt="style-guide.md in Dewline under the rule Sentence case for every heading. Codex has moved the headings to Title Case: Voice and Tone, Headings and Titles, Code Samples over the struck Code samples. The stamp reads CODEX 20:03, saved, 1 of 9, with Revert and Keep." loading="lazy" decoding="async">
-          <figcaption>Sentence case for every heading. Codex set nine in Title Case.</figcaption>
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/settings-agents-dark.webp">
+            <img src="/img/settings-agents-light.webp" width="1100" height="940" alt="Settings, Agents. The dewline command is installed at ~/.local/bin/dewline. Under Hooks, Claude Code is Active, Codex and Cursor are Not set up, and each row says which edits it names. Copy a Test Prompt and Set Up All Hooks sit below." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -112,7 +124,10 @@
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
         <figure class="fwin tall">
-          <img src="/img/sidebar-light.webp" width="484" height="920" alt="Dewline’s sidebar on a notes folder. The header reads notes, main, up 2, 16 changed. Three deleted drafts and five deleted notes show as struck-through rows marked D, and the five notes moved into notes/Archive show marked A." loading="lazy" decoding="async">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/sidebar-dark.webp">
+            <img src="/img/sidebar-light.webp" width="530" height="920" alt="Dewline’s sidebar on a notes folder. The header reads notes, main, up 2, 16 uncommitted. Three deleted drafts and five deleted notes show as struck-through rows marked D, and the five notes moved into notes/Archive show as untracked." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -127,35 +142,11 @@
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
-        <figure class="fwin" role="img" aria-label="A rendered note called Release flow: a Mermaid flowchart from Draft to Review to Publish, with a loop back to Draft, a typeset integral equal to the square root of pi over 2, and a Swift code block with syntax colors, a language label and a Copy button.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Release flow<small>docs</small></span></div>
-            <div class="mk-body mk-solo">
-              <div class="mk-doc mk-md">
-                <h3>Release flow</h3>
-                <svg class="mk-mm" viewBox="0 0 420 112" role="presentation">
-                  <defs><marker id="mm-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker></defs>
-                  <path class="e" d="M98 40H150" marker-end="url(#mm-a)"/>
-                  <path class="e" d="M262 40H314" marker-end="url(#mm-a)"/>
-                  <path class="e back" d="M206 62V88H58V62" marker-end="url(#mm-a)"/>
-                  <rect class="n" x="10" y="20" width="88" height="40" rx="8"/><text x="54" y="45">Draft</text>
-                  <rect class="n" x="152" y="20" width="110" height="40" rx="8"/><text x="207" y="45">Review</text>
-                  <rect class="n on" x="316" y="20" width="94" height="40" rx="20"/><text x="363" y="45">Publish</text>
-                  <text class="l" x="132" y="104">changes asked</text>
-                </svg>
-                <p class="mk-math"><span class="mk-int"><span class="mk-sym">∫</span><span class="mk-lim"><sup>∞</sup><sub>0</sub></span></span><i>e</i><sup>−<i>x</i>²</sup><i class="mk-dx">dx</i> = <span class="mk-frac"><span>√<span class="mk-ol">π</span></span><span>2</span></span></p>
-                <div class="mk-code">
-                  <div class="mk-code-h"><span>swift</span><span class="mk-copy">Copy</span></div>
-<pre><code><span class="c">// Dew forms when air cools to its dew point.</span>
-<span class="k">func</span> <span class="f">dewPoint</span>(t: <span class="t">Double</span>, rh: <span class="t">Double</span>) -&gt; <span class="t">Double</span> {
-    <span class="k">let</span> a = <span class="n">17.62</span>, b = <span class="n">243.12</span>
-    <span class="k">let</span> g = <span class="f">log</span>(rh / <span class="n">100</span>) + a * t / (b + t)
-    <span class="k">return</span> b * g / (a - g)
-}</code></pre>
-                </div>
-              </div>
-            </div>
-          </div>
+        <figure class="fwin">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/markdown-dark.webp">
+            <img src="/img/markdown-light.webp" width="1400" height="1172" alt="docs/overview.md rendered: a Mermaid flowchart from deliveries to Worker to delivered, a display formula summing min(3600, 2 to the n plus 1) to 7694 s, a table of attempts, waits and states, and a Rust code block." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -170,34 +161,11 @@
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
-        <figure class="fwin" role="img" aria-label="Find in Files in the sidebar, searching path:notes dew (point|rail) as a regular expression, with 9 matches in 3 notes and a Replace All button. Beside it, a note where typing [[Sta lists Station log and two other notes, and a Backlinks list with 2 notes.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Morning round<small>field-notes</small></span></div>
-            <div class="mk-body stack">
-              <div class="mk-side mk-find">
-                <div class="mk-field"><span>path:notes dew (point|rail)</span><span class="mk-tg">Aa</span><span class="mk-tg on">.*</span></div>
-                <div class="mk-field"><span>Dew $1</span><span class="mk-btn">Replace All</span></div>
-                <p class="mk-hits">9 matches in 3 notes</p>
-                <p class="mk-hf">Station log.md<span>4</span></p>
-                <p class="mk-hl">Wipe the <b>dew rail</b> by 05:40.</p>
-                <p class="mk-hl">Grass below the <b>dew point</b> at 04:00.</p>
-                <p class="mk-hf">Dew point.md<span>3</span></p>
-                <p class="mk-hl">Air at its <b>dew point</b> holds no more water.</p>
-                <p class="mk-hf">Morning round.md<span>2</span></p>
-                <p class="mk-hl">Check the <b>dew rail</b> first.</p>
-              </div>
-              <div class="mk-doc">
-                <h3>Morning round</h3>
-                <p>Check the dew rail first, then the grass sensor. Log both in [[Sta<span class="mk-caret"></span></p>
-                <div class="mk-pop">
-                  <p class="on">Station log<span>notes</span></p>
-                  <p>Station log 2025<span>archive</span></p>
-                  <p>Stations<span>notes</span></p>
-                </div>
-                <div class="mk-back"><p class="mk-back-h">Backlinks · 2</p><p><b>journal/2026-11-17</b> walked the [[Morning round]] at six</p><p><b>todo</b> - [ ] Time the [[Morning round]]</p></div>
-              </div>
-            </div>
-          </div>
+        <figure class="fwin tall">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/find-in-files-dark.webp">
+            <img src="/img/find-in-files-light.webp" width="600" height="780" alt="Find in Files in the sidebar searching next_attempt: 5 matches in 4 files, retry-queue.md, overview.md, retry.rs and runbook.md, each line shown with the match marked." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -212,25 +180,11 @@
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
-        <figure class="fwin" role="img" aria-label="The export panel over a note: the name Launch plan.pdf and an open Format menu listing HTML, PDF, Word, Rich Text, OpenDocument, EPUB, LaTeX, Markdown (portable), Plain Text and PNG Image. The status bar says Exported Launch plan.pdf, Show in Finder.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">Launch plan<small>projects</small></span></div>
-            <div class="mk-body mk-solo mk-under">
-              <div class="mk-doc">
-                <h3>Launch plan</h3>
-                <p>Cut the release branch on Thursday and send the build to the notary.</p>
-                <p>Ship on Friday, once notarization passes.</p>
-              </div>
-              <div class="mk-sheet">
-                <div class="mk-sr"><span>Save As:</span><span class="mk-in">Launch plan.pdf</span></div>
-                <div class="mk-sr"><span>Format:</span><span class="mk-menu">
-                  <span class="mk-mi">HTML</span><span class="mk-mi on">PDF</span><span class="mk-mi">Word</span><span class="mk-mi">Rich Text</span><span class="mk-mi">OpenDocument</span><span class="mk-mi">EPUB</span><span class="mk-mi">LaTeX</span><span class="mk-mi">Markdown (portable)</span><span class="mk-mi">Plain Text</span><span class="mk-mi">PNG Image</span>
-                </span></div>
-                <div class="mk-sb"><span class="mk-act">Cancel</span><span class="mk-act go">Export</span></div>
-              </div>
-            </div>
-            <div class="mk-status"><span>Exported “Launch plan.pdf” · <u>Show in Finder</u></span><span>⇧⌘E</span></div>
-          </div>
+        <figure class="fwin mid">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="/img/export-dark.webp">
+            <img src="/img/export-light.webp" width="740" height="484" alt="The Export sheet: Save As overview.pdf, Where docs, Format PDF, with Cancel and Save." loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </div>
@@ -245,18 +199,12 @@
       </div>
       <div class="fscene">
         <div class="fpanel" aria-hidden="true"></div>
-        <figure class="fwin" role="img" aria-label="A terminal running dewline commands: setting EDITOR to dewline open --wait, opening a note at line 12, exporting to EPUB, opening a dewline://open link, starting dewline mcp on a notes folder, and capturing a line to the inbox.">
-          <div class="mk" aria-hidden="true">
-            <div class="mk-bar"><span class="mk-dots"><i></i><i></i><i></i></span><span class="mk-title">~/Notes<small>zsh</small></span></div>
-            <pre class="mk-term"><code><span class="tl"><span class="p">$ </span>export EDITOR="dewline open --wait"</span>
+        <pre class="term" tabindex="0"><code><span class="tl"><span class="p">$ </span>export EDITOR="dewline open --wait"</span>
 <span class="tl"><span class="p">$ </span>dewline open projects/launch-plan.md:12</span>
 <span class="tl"><span class="p">$ </span>dewline export launch-plan.md --to epub</span>
 <span class="tl"><span class="p">$ </span>open "dewline://open?path=~/Notes/plan.md&amp;line=12"</span>
 <span class="tl"><span class="p">$ </span>dewline mcp ~/Notes</span>
-<span class="tl"><span class="p">$ </span>dewline capture Call the notary about the DMG</span>
-<span class="tl"><span class="p">$ </span><span class="cur"></span></span></code></pre>
-          </div>
-        </figure>
+<span class="tl"><span class="p">$ </span>dewline capture Call the notary about the DMG</span></code></pre>
       </div>
     </div>
   </section>

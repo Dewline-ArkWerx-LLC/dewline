@@ -2,6 +2,10 @@
 
 What changed in each Dewline release, newest first.
 
+## Unreleased
+
+- List bullets move with their lines, a period after inline code stays on the code's line, struck text sits flush or hangs when it would push its line, and a rewrite across lines hangs its old text as one block.
+
 ## 0.7.0 (22 Nov 2026)
 
 Review keys follow one rule, agent changes are marked with the writer's color instead of a letter, and marks stay on their words while you type above them.

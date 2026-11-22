@@ -1,9 +1,9 @@
 import AppKit
 
-/// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: one message at a
-/// time with its buttons, a problem's after a red octagon. With no message it is hidden and takes no height unless
-/// `reserved`, so a message never moves the editor. With none, it shows `idle`, which a click copies. Results and
-/// problems are read out to VoiceOver. Nothing in it blinks.
+/// The 24 pt line under the editor column, on the chrome with a hairline above it, in SF 11 `ink2`: `idle`, which a
+/// click copies, then one message at a time with its buttons, a problem's after a red octagon. With neither it is
+/// hidden and takes no height unless `reserved`, so a message never moves the editor. Results and problems are read
+/// out to VoiceOver. Nothing in it blinks.
 final class StatusBar: NSView {
     static let height: CGFloat = 24
 
@@ -28,7 +28,8 @@ final class StatusBar: NSView {
         let kind: Kind
         let text: String
         var actions: [Action] = []
-        /// Gone at the next keystroke in the note, as an export's result is.
+        /// Gone at the next keystroke or caret move in the note, when its window goes behind another, or when a change
+        /// lands, as an export's result is.
         var untilTyping = false
     }
 
@@ -50,7 +51,7 @@ final class StatusBar: NSView {
     var reserved = false {
         didSet { if reserved != oldValue { rebuild() } }
     }
-    /// Where the caret is in the note, "docs/spec.md:12:4", shown while no message is.
+    /// Where the caret is in the note, "docs/spec.md:12:4", shown before any message.
     var idle: String? {
         didSet { if idle != oldValue { rebuild() } }
     }
@@ -81,10 +82,18 @@ final class StatusBar: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel("Status")
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeStore.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(moved), name: NSTextView.didChangeSelectionNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(moved), name: NSWindow.didResignMainNotification, object: nil)
     }
 
     required init?(coder: NSCoder) {
         fatalError("StatusBar is built in code")
+    }
+
+    /// The caret moved in this window's note, or the window went behind another.
+    @objc private func moved(_ notification: Notification) {
+        let window = (notification.object as? NSView)?.window ?? notification.object as? NSWindow
+        if window != nil, window === self.window { typed() }
     }
 
     override var wantsUpdateLayer: Bool { true }
@@ -115,7 +124,7 @@ final class StatusBar: NSView {
         rebuild()
     }
 
-    /// The note took a keystroke: messages that last until then go.
+    /// The note took a keystroke, or something else moved on: messages that last until then go.
     func typed() {
         guard messages.contains(where: \.untilTyping) else { return }
         messages.removeAll(where: \.untilTyping)
@@ -131,18 +140,19 @@ final class StatusBar: NSView {
         for view in line.arrangedSubviews { view.removeFromSuperview() }
         isHidden = shown == nil && idle == nil && !reserved
         heightConstraint.constant = isHidden ? 0 : Self.height
-        guard let message = shown else {
-            if let idle {
-                let place = NSButton(title: idle, target: self, action: #selector(copyIdle))
-                place.isBordered = false
-                place.attributedTitle = NSAttributedString(string: idle, attributes: [.font: Chrome.status, .foregroundColor: Chrome.color(.ink2)])
-                place.lineBreakMode = .byTruncatingHead
-                place.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-                place.toolTip = "Click to copy"
-                line.addArrangedSubview(place)
-            }
-            return
+        if let idle {
+            let place = NSTextField(labelWithString: idle)
+            place.font = Chrome.status
+            place.textColor = Chrome.color(.ink2)
+            place.lineBreakMode = .byTruncatingHead
+            place.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            place.toolTip = "Click to copy"
+            place.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(copyIdle)))
+            place.setAccessibilityRole(.button)
+            line.addArrangedSubview(place)
+            line.setCustomSpacing(16, after: place)
         }
+        guard let message = shown else { return }
         if message.kind == .problem, let symbol = NSImage(systemSymbolName: "exclamationmark.octagon.fill", accessibilityDescription: "Problem") {
             let icon = NSImageView(image: symbol.withSymbolConfiguration(.init(pointSize: 11, weight: .regular)) ?? symbol)
             icon.contentTintColor = .systemRed
@@ -163,7 +173,7 @@ final class StatusBar: NSView {
         guard let idle else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(idle, forType: .string)
-        post(.init(id: "place", kind: .result, text: "Copied \(idle)", untilTyping: true))
+        post(.init(id: "place", kind: .result, text: "Copied", untilTyping: true))
     }
 }
 

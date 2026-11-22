@@ -172,5 +172,15 @@ struct ShellTests {
         #expect(lives[0].changes[id] == nil)
         #expect(main.statusBar.shown?.text == "Next: spec.md \u{2303}\u{2318}\u{2193}")
         #expect(main.tabs.selected === main)
+        await waitForMain()
+        #expect(main.statusBar.shown?.id == "step", "the hint outlasts the decision")
+
+        // The hint goes once the caret moves, or once a change lands.
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        #expect(main.statusBar.shown == nil)
+        main.statusBar.post(.init(id: "step", kind: .result, text: "Next: spec.md", untilTyping: true))
+        try Data("# Notes\n\nOne line, revised twice.\n".utf8).write(to: notes.appending(path: "plan.md"))
+        await waitForMain { lives[0].changes.values.contains(where: \.marked) }
+        #expect(main.statusBar.shown == nil)
     }
 }

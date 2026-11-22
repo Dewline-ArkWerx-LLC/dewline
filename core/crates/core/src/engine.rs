@@ -348,6 +348,9 @@ struct Doc {
     base: Arc<[u8]>,
     base_hash: Hash,
     base_origin: Origin,
+    /// When the base was written: the file's modification time as opened,
+    /// else when it was saved or landed. A base kept late keeps this time.
+    base_time: SystemTime,
     /// The base is in the store.
     base_kept: bool,
     disk: Disk,
@@ -444,6 +447,9 @@ impl Engine {
         let real = fs::canonicalize(path)?;
         let bytes = read(&real)?;
         let (now, wall) = (self.clock)();
+        let written = fs::metadata(&real)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(wall);
         let disk_hash = blake3::hash(&bytes);
         let disk: Arc<[u8]> = bytes.as_slice().into();
         let private = private(path) || private(&real);
@@ -488,6 +494,7 @@ impl Engine {
             base,
             base_hash,
             base_origin: Origin::External,
+            base_time: written,
             base_kept,
             disk: Disk::Seen {
                 hash: disk_hash,
@@ -541,8 +548,8 @@ impl Engine {
         let (path, private, base_hash, last, kept) = {
             let state = self.state();
             let d = state.docs.get(&doc).ok_or(EngineError::Closed)?;
-            let kept =
-                (!d.base_kept && !d.private).then(|| (d.base.clone(), d.base_origin.label()));
+            let kept = (!d.base_kept && !d.private)
+                .then(|| (d.base.clone(), d.base_origin.label(), d.base_time));
             (d.path.clone(), d.private, d.base_hash, d.disk.hash(), kept)
         };
         let read = read(&path);
@@ -550,8 +557,8 @@ impl Engine {
         let bytes = match read {
             Ok(bytes) => bytes,
             Err(error) => {
-                if let Some((base, origin)) = &kept {
-                    self.store.put(&path, base, origin, wall)?;
+                if let Some((base, origin, time)) = &kept {
+                    self.store.put(&path, base, origin, *time)?;
                 }
                 let mut state = self.state();
                 let d = state.docs.get_mut(&doc).ok_or(EngineError::Closed)?;
@@ -572,8 +579,8 @@ impl Engine {
             return Ok(hash != base_hash);
         }
         if hash != base_hash && !private {
-            if let Some((base, origin)) = &kept {
-                self.store.put(&path, base, origin, wall)?;
+            if let Some((base, origin, time)) = &kept {
+                self.store.put(&path, base, origin, *time)?;
             }
             self.store.put(&path, &bytes, UNKNOWN, wall)?;
         }
@@ -867,7 +874,7 @@ impl Engine {
     /// Call it on the main thread with the buffer still at the landing's
     /// version, and apply the landing in the same step only if it succeeds.
     pub fn commit(&self, doc: DocId, landing: LandingId) -> Result<(), Stale> {
-        let (now, _) = (self.clock)();
+        let (now, wall) = (self.clock)();
         let mut state = self.state();
         let State { docs, claims, .. } = &mut *state;
         let d = docs.get_mut(&doc).ok_or(Stale)?;
@@ -887,6 +894,7 @@ impl Engine {
         d.landed = matches!(pending.origin, Origin::External | Origin::Git { .. })
             .then_some((pending.from, pending.seen));
         d.base_origin = pending.origin;
+        d.base_time = wall;
         d.base_kept = true;
         if pending.edits {
             d.floor = Some(pending.version);
@@ -952,7 +960,7 @@ impl Engine {
             };
             // The document's own saves are history its undo holds.
             let kept = (!d.base_kept && !d.private && d.base_origin != Origin::User)
-                .then(|| (d.base.clone(), d.base_origin.label()));
+                .then(|| (d.base.clone(), d.base_origin.label(), d.base_time));
             (
                 d.path.clone(),
                 d.private,
@@ -969,9 +977,9 @@ impl Engine {
         if let Some(refused) = refused {
             return Err(self.put_draft(doc, &path, private, &bytes, wall, refused));
         }
-        if let Some((base, origin)) = &kept {
+        if let Some((base, origin, time)) = &kept {
             self.store
-                .put(&path, base, origin, wall)
+                .put(&path, base, origin, *time)
                 .map_err(SaveRefused::Io)?;
         }
         let written = if gone {
@@ -1005,6 +1013,7 @@ impl Engine {
             d.base = bytes.clone();
             d.base_hash = hash;
             d.base_origin = Origin::User;
+            d.base_time = wall;
             d.base_kept = reverted;
             d.landed = None;
             d.reverted = false;
@@ -1118,7 +1127,8 @@ impl Engine {
     }
 
     /// The text of `snapshot`, to replace the buffer as one undoable edit.
-    /// The buffer it replaces is snapshotted first.
+    /// The buffer it replaces is snapshotted first, unless the newest
+    /// snapshot already holds it.
     pub fn restore(&self, doc: DocId, snapshot: &Snapshot, buffer: &str) -> io::Result<String> {
         let serial = self.serial(doc).ok_or_else(closed)?;
         let _serial = lock(&serial);
@@ -1135,8 +1145,11 @@ impl Engine {
             ));
         };
         if !private {
-            self.store
-                .put(&path, &text::encode(buffer, bom), YOU, (self.clock)().1)?;
+            let bytes = text::encode(buffer, bom);
+            let newest = self.store.list(&path)?.into_iter().next();
+            if newest.is_none_or(|newest| newest.hash != blake3::hash(&bytes)) {
+                self.store.put(&path, &bytes, YOU, (self.clock)().1)?;
+            }
         }
         Ok(text)
     }
@@ -2084,6 +2097,42 @@ mod tests {
         let newest = fx.engine.snapshots(doc).unwrap().remove(0);
         fx.engine.pin(doc, &newest, true).unwrap();
         assert!(fx.engine.snapshots(doc).unwrap()[0].pinned);
+    }
+
+    /// A hooked write to an open note: the version it replaced keeps the
+    /// time it was written, and browsing that version adds no twin of the
+    /// write.
+    #[test]
+    fn one_hooked_write_is_one_snapshot_at_its_own_time() {
+        let fx = fixture();
+        let path = fx.file("notes.md", "a\n");
+        let written = UNIX_EPOCH + Duration::from_secs(1_789_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+        let (doc, text) = opened(&fx.engine, &path);
+        fx.tick(60_000);
+        let pre = claim("PreToolUse", "s1", "t1", &path, "a\n", Some("b\n"));
+        fx.engine.claim(pre).unwrap();
+        fx.replace(&path, "b\n");
+        let post = claim("PostToolUse", "s1", "t1", &path, "b\n", None);
+        fx.engine.claim(post).unwrap();
+        let (_, buffer) = fx.land(doc, &text, 1);
+        let now = fx.time.lock().unwrap().1;
+        let rows = |snapshots: Vec<Snapshot>| -> Vec<(String, SystemTime)> {
+            snapshots.into_iter().map(|s| (s.origin, s.time)).collect()
+        };
+        let history = fx.engine.snapshots(doc).unwrap();
+        assert_eq!(
+            rows(history.clone()),
+            [("claude:s1".to_owned(), now), (UNKNOWN.to_owned(), written)]
+        );
+        fx.tick(6_000);
+        assert_eq!(fx.engine.restore(doc, &history[1], &buffer).unwrap(), "a\n");
+        assert_eq!(fx.engine.snapshots(doc).unwrap(), history);
     }
 
     #[test]

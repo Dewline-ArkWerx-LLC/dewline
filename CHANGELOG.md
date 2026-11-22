@@ -4,6 +4,8 @@ What changed in each Dewline release, newest first.
 
 ## Unreleased
 
+- A stamp's count matches the toolbar's "N to review": git's uncommitted changes no longer add to it. ⇧⌘R puts the keyboard in the Changes list on its first change, so J and K no longer type into the note.
+- Earlier Versions lists one write as one row: the version it replaced keeps the time it was written, and browsing adds no copy of the current text.
 - Keep and Revert on a change's stamp show their names alone; their keys are in the tooltip and VoiceOver's help.
 - A note opens with the caret at its start (past any front matter), not at its end; a restored tab and Back and Forward still return to where you were.
 - Tables and code blocks wider than the line width run on to 32 points from the window's right edge instead of wrapping early; prose stays at the line width.

@@ -79,12 +79,17 @@ enum Review {
     }
 
     /// Change `id` in `live` is `index` of the `total` marked changes in `window`'s tabs, counted in Next Change's order
-    /// from the first tab: 3 of 4.
+    /// from the first tab: 3 of 4. Git's uncommitted changes count only among themselves, as the toolbar leaves them out
+    /// of what waits for Keep or Revert.
     static func place(of id: UInt64, in live: LiveFile, window: NSWindow?) -> (index: Int, total: Int) {
+        func git(_ origin: ChangeEngine.Origin?) -> Bool {
+            if case .git = origin { true } else { false }
+        }
+        let stamped = git(live.changes[id]?.origin)
         let tabs = files(in: window)
         var (index, total) = (0, 0)
         for file in tabs.contains(where: { $0 === live }) ? tabs : [live] {
-            let ids = marked(file)
+            let ids = marked(file).filter { git(file.changes[$0]?.origin) == stamped }
             if file === live, let at = ids.firstIndex(of: id) { index = total + at + 1 }
             total += ids.count
         }

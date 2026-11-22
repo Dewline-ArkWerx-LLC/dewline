@@ -512,6 +512,64 @@ struct JourneyTests {
         #expect(tab.window.isVisible == false)
     }
 
+    /// The stamp counts what the toolbar counts: three Claude changes and one from git read "1 of 3", since git's
+    /// uncommitted changes are not waiting for Keep or Revert.
+    @Test func theStampCountsTheChangesWaitingAndNotGits() async throws {
+        let vault = try Vault(["plan.md": Self.plan], git: true)
+        defer { vault.remove() }
+        try vault.git("add", "plan.md")
+        try vault.git("commit", "-q", "-m", "Plan")
+        try vault.git("checkout", "-q", "-b", "rewrite")
+        let rewritten = Self.plan.replacingOccurrences(of: "Delta line.", with: "Delta line, from git.")
+        try vault.write("plan.md", rewritten)
+        try vault.git("commit", "-q", "-am", "Delta")
+        try vault.git("checkout", "-q", "-")
+        let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
+        defer { tab.close() }
+        try vault.git("checkout", "-q", "rewrite")
+        await waitForMain { tab.marked.count == 1 }
+        guard case .git = tab.marked[0].change.origin else { Issue.record("The change's writer is \(tab.marked[0].change.origin), not git"); return }
+
+        let agent = rewritten
+            .replacingOccurrences(of: "Alpha line.", with: "Alpha line, revised.")
+            .replacingOccurrences(of: "Bravo line.", with: "Bravo line, revised.")
+            .replacingOccurrences(of: "Charlie line.", with: "Charlie line, revised.")
+        try await Self.agentWrite(agent, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
+        let claude = ChangeEngine.Origin.agent(.claude, session: "s1")
+        await waitForMain { tab.marked.count { $0.change.origin == claude } == 3 }
+        let places = tab.marked.filter { $0.change.origin == claude }.map { Review.place(of: $0.id, in: tab.live, window: tab.window) }
+        #expect(places.map(\.index) == [1, 2, 3] && places.allSatisfy { $0.total == 3 })
+        #expect(Review.count(claude, in: Review.files(in: tab.window)).places == 3)
+    }
+
+    /// B3: Shift-Cmd-R opens Changes with the keyboard in the list, so J selects the next change and types nothing.
+    @Test func theChangesShortcutPutsTheKeyboardInTheList() async throws {
+        let vault = try Vault(["plan.md": Self.plan])
+        defer { vault.remove() }
+        let tab = try Tab(vault.url("plan.md"), engine: vault.engine)
+        defer { tab.close() }
+        try await Self.agentWrite(Self.agentPlan, to: vault.url("plan.md"), id: "toolu_1", engine: vault.engine)
+        await waitForMain { tab.marked.count == 4 }
+        tab.window.makeFirstResponder(tab.textView)
+
+        let changes = tab.marked
+        tab.controller.toggleChanges(nil)
+        await waitForMain()
+        let review = try #require(tab.controller.pane.changes as? ReviewViewController)
+        #expect(review.hasFocus)
+        func press(_ key: String, _ code: UInt16) throws {
+            let event = try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: tab.window.windowNumber, context: nil,
+                characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code))
+            tab.window.firstResponder?.keyDown(with: event)
+        }
+        try press("j", 38)
+        #expect(tab.textView.string == Self.agentPlan)
+        // Y keeps the change J selected, the second.
+        try press("y", 16)
+        #expect(tab.marked.map(\.id) == [changes[0].id, changes[2].id, changes[3].id])
+    }
+
     // MARK: J4 Save, close, open again
 
     /// A saved file closes and opens again with its caret and scroll where they were, through the session as launch

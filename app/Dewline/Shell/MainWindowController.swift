@@ -828,12 +828,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             sidebarItem.isCollapsed = true
             paneHidSidebar = true
         }
-        pane.select(tab)
         if paneItem.isCollapsed {
             paneItem.isCollapsed = false
             let room = split.splitView.bounds.width - (sidebarItem.isCollapsed ? 0 : sidebar.view.frame.width) - 480
             split.splitView.setPosition(split.splitView.bounds.width - min(RightPane.width, max(room, least)), ofDividerAt: 1)
         }
+        // After the pane is in the window, which the Changes list needs to build and take the keyboard.
+        pane.select(tab)
     }
 
     /// The least content width: the page's 420, and the sidebar's and the pane's least widths while they show.

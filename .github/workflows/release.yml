@@ -644,5 +644,5 @@ jobs:
             commit -am "dewline $VERSION"
           gh auth setup-git
           git push origin "dewline-$VERSION"
-          gh pr create --repo ark-232/homebrew-tap --title "dewline $VERSION" --body "Bumps the cask to the notarized DMG of Dewline $VERSION."
+          gh pr create --repo ark-232/homebrew-tap --head "dewline-$VERSION" --title "dewline $VERSION" --body "Bumps the cask to the notarized DMG of Dewline $VERSION."
           gh pr merge --repo ark-232/homebrew-tap --auto --squash "dewline-$VERSION"

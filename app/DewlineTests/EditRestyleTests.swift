@@ -78,6 +78,17 @@ struct EditRestyleTests {
         #expect(editor.restyleChanges() == nil)
     }
 
+    /// A paragraph that becomes an item over an item leaves that item the space a list gives it, not the gap it had under
+    /// the paragraph.
+    @Test func anItemOverAnItemTakesTheListsSpacing() {
+        let editor = Editor("x\n- a\n", caret: 0)
+        defer { editor.close() }
+        editor.view.styler.restyleDocument()
+        editor.view.insertText("- ", replacementRange: NSRange(location: 0, length: 0))
+        #expect(editor.view.string == "- x\n- a\n")
+        #expect(editor.restyleChanges() == nil)
+    }
+
     /// A line break written into the storage before a code span's `*` makes the half after it start an emphasis: its
     /// markers carry the font they show in when the caret reveals them, as `MarkdownStyler.mark` needs.
     /// The break makes a blank line, which ends the code span at it and starts a paragraph with emphasis.

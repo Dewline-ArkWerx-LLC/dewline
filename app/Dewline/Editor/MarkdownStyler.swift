@@ -433,6 +433,16 @@ extension MarkdownStyler {
         if fresh == NSMaxRange(paragraphs) {
             paragraphs = NSUnionRange(paragraphs, storage.mutableString.paragraphRange(for: NSRange(location: NSMaxRange(paragraphs), length: 0)))
         }
+        // The next block restyles too when its own layout spaces it, as an item under an item: the space above it may be
+        // a gap the text above it no longer asks for, which `respace` cannot know to remove.
+        if !showsSource, code == nil {
+            map.walk(from: NSMaxRange(paragraphs)) { block in
+                if block.range.location >= NSMaxRange(paragraphs), gap(at: block.range.location, kind: block.kind) == nil {
+                    paragraphs = NSUnionRange(paragraphs, storage.mutableString.paragraphRange(for: block.range))
+                }
+                return false
+            }
+        }
         restyled = paragraphs
         unstyled.remove(integersIn: Range(paragraphs)!)
         let styled = NSMutableAttributedString(string: storage.mutableString.substring(with: paragraphs))

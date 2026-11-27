@@ -202,9 +202,12 @@ struct TextRhythmTests {
             }
         }
         // With the caret on the heading its markers show in their own room; hung by their width, they move left of the
-        // column's edge and the heading's text starts on it.
+        // column's edge and the heading's text starts on it. The styler's own hang comes off first, so the hand-set one
+        // is the only one.
         let head = lines[0].at
         editor.place(head + 3)
+        storage.removeAttribute(.dewlineHang, range: string.paragraphRange(for: NSRange(location: head, length: 0)))
+        editor.settle()
         let edge = editor.view.textContainerOrigin.x + (editor.view.textContainer?.lineFragmentPadding ?? 0)
         let shown = (0...3).map { editor.firstRect(NSRange(location: head + $0, length: 0)).minX }
         let width = shown[3] - shown[0]
@@ -264,6 +267,72 @@ struct TextRhythmTests {
         }
     }
 
+    /// R3: after a paragraph, each level takes its line box and its space above, and half a line below. H5 sets 13 pt
+    /// small caps and H6 italic in ink2, the other levels the heading color; tracking sits on the text, not the markers.
+    @Test func eachHeadingLevelTakesItsLineAndItsSpace() throws {
+        let store = ThemeStore.shared
+        try #require(store.bodySize == 16 && store.lineHeight == 1.5, "the defaults")
+        let boxes: [CGFloat] = [36, 30, 24, 24, 24, 24]
+        let above: [CGFloat] = [48, 42, 36, 24, 24, 24]
+        for level in 1...6 {
+            let markers = String(repeating: "#", count: level) + " "
+            let text = "Text.\n\n\(markers)Head\n\nText."
+            let editor = try Rhythm(text)
+            defer { editor.close() }
+            let storage = try #require(editor.view.textStorage)
+            let head = editor.at(markers + "Head")
+            let content = head + level + 1
+            let previous = try editor.line(at: 0)
+            let line = try editor.line(at: content)
+            let next = try editor.line(at: (text as NSString).range(of: "Text.", options: .backwards).location)
+            #expect(abs(line.height - boxes[level - 1]) <= 0.5, "H\(level): its line is \(line.height) pt")
+            #expect(abs(line.minY - previous.maxY - above[level - 1]) <= 0.5, "H\(level): \(line.minY - previous.maxY) pt above it")
+            #expect(abs(next.minY - line.maxY - 12) <= 0.5, "H\(level): \(next.minY - line.maxY) pt below it")
+            let color = storage.attribute(.foregroundColor, at: content, effectiveRange: nil) as? NSColor
+            #expect(color == store.color(level == 6 ? .ink2 : .heading), "H\(level) in \(String(describing: color))")
+            let kern = store.heading(level).kern
+            #expect((storage.attribute(.kern, at: content, effectiveRange: nil) as? CGFloat ?? 0) == kern, "H\(level): its text's tracking")
+            #expect(storage.attribute(.kern, at: head, effectiveRange: nil) == nil, "H\(level): its markers' tracking")
+            let font = try #require(storage.attribute(.font, at: content, effectiveRange: nil) as? NSFont)
+            switch level {
+            case 5:
+                // Small caps shape every letter of "Head" to other glyphs than the plain semibold face.
+                func glyphs(_ font: NSFont) -> [CGGlyph] {
+                    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Head", attributes: [.font: font]))
+                    return (CTLineGetGlyphRuns(line) as! [CTRun]).flatMap { run in
+                        var glyphs = [CGGlyph](repeating: 0, count: CTRunGetGlyphCount(run))
+                        CTRunGetGlyphs(run, CFRange(), &glyphs)
+                        return glyphs
+                    }
+                }
+                let plain = Faces.font(store.bodyFace, size: 13, weight: .semibold)
+                #expect(font.pointSize == 13 && font.familyName == plain.familyName, "H5 is \(font)")
+                let (small, letters) = (glyphs(font), glyphs(plain))
+                #expect(small.count == 4 && zip(small, letters).allSatisfy { $0 != $1 }, "H5 shapes \(small), the plain face \(letters)")
+                #expect(abs(kern - 0.06 * 13) < 0.001, "H5 tracks \(kern)")
+            case 6:
+                #expect(font.pointSize == 16 && font.fontDescriptor.symbolicTraits.contains(.italic), "H6 is \(font)")
+            default:
+                break
+            }
+        }
+    }
+
+    /// R3b: a heading right under a heading sits 18 pt below it, with a blank line between them or none, and the text
+    /// under the second 12 pt below that.
+    @Test func aHeadingUnderAHeadingSitsCloseToIt() throws {
+        try #require(ThemeStore.shared.bodySize == 16 && ThemeStore.shared.lineHeight == 1.5, "the defaults")
+        for (text, second) in [("## A\n### B\nText", "### B"), ("##### A\n\n###### B\nText", "###### B")] {
+            let editor = try Rhythm(text)
+            defer { editor.close() }
+            let first = try editor.line(at: editor.at("A"))
+            let under = try editor.line(at: editor.at(second) + second.utf16.count - 1)
+            let body = try editor.line(at: editor.at("Text"))
+            #expect(abs(under.minY - first.maxY - 18) <= 0.5, "\(text.debugDescription): \(under.minY - first.maxY) pt between the headings")
+            #expect(abs(body.minY - under.maxY - 12) <= 0.5, "\(text.debugDescription): \(body.minY - under.maxY) pt under the second")
+        }
+    }
+
     /// R4: a heading that starts the note takes no space above it: its line starts at the container's top inset.
     @Test func aHeadingThatStartsTheNoteSitsAtTheInset() throws {
         let editor = try Rhythm("# Title\n\nText.")
@@ -271,6 +340,69 @@ struct TextRhythmTests {
         let title = try editor.line(at: 2)
         #expect(editor.view.textContainerInset.height == 24)
         #expect(abs(title.minY - editor.view.textContainerOrigin.y) <= 0.5, "the title's line starts at \(title.minY)")
+    }
+
+    /// R5: the caret arriving on a heading and leaving it changes its markers' color and nothing else: no fragment
+    /// moves, the text keeps its x on the column's edge, and the markers' carets sit in the margin left of it in both
+    /// states. A heading that wraps starts its next line on the edge and ends within the measure.
+    @Test func aHeadingsMarkersShowInTheMargin() throws {
+        do {
+            let text = "Text.\n\n## Head\n\nText.\n"
+            let editor = try Rhythm(text)
+            defer { editor.close() }
+            let storage = try #require(editor.view.textStorage)
+            let string = text as NSString
+            let head = editor.at("## Head")
+            let edge = editor.view.textContainerOrigin.x + (editor.view.textContainer?.lineFragmentPadding ?? 0)
+            let hang = try #require(storage.attribute(.dewlineHang, at: head, effectiveRange: nil) as? CGFloat)
+            var starts: [Int] = []
+            var at = 0
+            while at < string.length {
+                starts.append(at)
+                at = NSMaxRange(string.paragraphRange(for: NSRange(location: at, length: 0)))
+            }
+            let frames = try starts.map { try editor.fragment(at: $0) }
+            let keys: [NSAttributedString.Key] = [
+                .font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .strikethroughStyle, .kern,
+                .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .dewlineHang, .dewlineRule, .dewlineListMarker, .dewlineSkip,
+            ]
+            for (state, caret, color) in [("shown", head + 5, ThemeStore.shared.color(.ink3)), ("hidden", 0, NSColor.clear)] {
+                let before = NSAttributedString(attributedString: storage)
+                editor.place(caret)
+                for (start, (old, new)) in zip(starts, zip(frames, try starts.map { try editor.fragment(at: $0) })) {
+                    #expect(abs(new.minX - old.minX) <= 0.5 && abs(new.minY - old.minY) <= 0.5 && abs(new.height - old.height) <= 0.5, "\(state): the fragment at \(start) moved from \(old) to \(new)")
+                }
+                let carets = (0...3).map { editor.firstRect(NSRange(location: head + $0, length: 0)).minX }
+                #expect(abs(carets[3] - edge) <= 0.5, "\(state): the text starts at \(carets[3]), the edge at \(edge)")
+                #expect(abs(carets[0] - (edge - hang)) <= 0.5 && carets[..<3].allSatisfy { $0 < edge }, "\(state): the markers' carets \(carets[..<3]), the edge at \(edge)")
+                var changed: [(key: NSAttributedString.Key, at: Int)] = []
+                for offset in 0..<storage.length {
+                    let (old, new) = (before.attributes(at: offset, effectiveRange: nil), storage.attributes(at: offset, effectiveRange: nil))
+                    changed += keys.filter { old[$0] as? NSObject != new[$0] as? NSObject }.map { (key: $0, at: offset) }
+                }
+                #expect(changed.map(\.at) == [head, head + 1, head + 2] && changed.allSatisfy { $0.key == .foregroundColor }, "\(state): \(changed)")
+                #expect(storage.attribute(.foregroundColor, at: head, effectiveRange: nil) as? NSColor == color, "\(state): the markers' color")
+            }
+        }
+        let words = "## A heading long enough to wrap twice in this column, since every word of it is set in the heading face"
+        let wrapped = try Rhythm("Text.\n\n\(words)\n\nText.\n")
+        defer { wrapped.close() }
+        let edge = wrapped.view.textContainerOrigin.x + (wrapped.view.textContainer?.lineFragmentPadding ?? 0)
+        let layout = try #require(wrapped.view.textLayoutManager)
+        let content = try #require(layout.textContentManager)
+        let start = wrapped.at(words)
+        let location = try #require(content.location(content.documentRange.location, offsetBy: start))
+        layout.ensureLayout(for: NSTextRange(location: location))
+        let fragment = try #require(layout.textLayoutFragment(for: location))
+        try #require(fragment.textLineFragments.count >= 2, "the heading wraps")
+        let measure = ThemeStore.shared.measure
+        for (number, line) in fragment.textLineFragments.enumerated() {
+            let range = NSRange(location: start + line.characterRange.location, length: line.characterRange.length)
+            let ink = (wrapped.view.string as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rect = wrapped.firstRect(NSRange(location: range.location, length: (ink as NSString).length))
+            if number > 0 { #expect(abs(rect.minX - edge) <= 0.5, "line \(number) starts at \(rect.minX), the edge at \(edge)") }
+            #expect(rect.maxX <= edge + measure + 0.5, "line \(number) ends at \(rect.maxX), past the measure's \(edge + measure)")
+        }
     }
 
     /// R6: Return at the end of a paragraph makes a fresh line, a line tall with the caret as tall at its top, and moves

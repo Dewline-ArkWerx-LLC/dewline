@@ -825,13 +825,15 @@ final class EditorTextView: CaretTextView {
     }
 
     /// Cmd-click follows a link, wikilink, embed, footnote or tag; a plain click follows a dewline: link. A click in the margin beside a foldable block folds or
-    /// unfolds it; a click on a task box toggles it and leaves the caret where it was.
+    /// unfolds it, but one on a heading's shown markers places the caret; a click on a task box toggles it and leaves the caret where it was.
     override func mouseDown(with event: NSEvent) {
         history.breakCoalescing()
         let point = convert(event.locationInWindow, from: nil)
         if event.modifierFlags.contains(.command) || link(at: point)?.url?.scheme?.lowercased() == "dewline", follow(at: point) { return }
         if let box = taskBox(at: point) { return toggleTask(at: box) }
-        guard point.x < textContainerOrigin.x, let (block, _) = foldable(at: point) else { return super.mouseDown(with: event) }
+        guard point.x < textContainerOrigin.x, let (block, _) = foldable(at: point),
+            point.x < textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0) - (shownHang(of: block) ?? 0)
+        else { return super.mouseDown(with: event) }
         let anchor = NSMaxRange(textStorage!.mutableString.lineRange(for: NSRange(location: block.range.location, length: 0)))
         if styler.folds.contains(where: { $0.location == anchor }) {
             styler.setFolds(styler.folds.filter { $0.location != anchor })
@@ -1023,22 +1025,24 @@ final class MeasureContainer: NSTextContainer {
     var prose = CGFloat.greatestFiniteMagnitude
 
     /// Sets each paragraph of `styled` but a fenced code block's and a laid-out table row's to wrap `measure` points
-    /// from the column's start; a narrower container wraps it at its own width.
+    /// from the column's start, which a hanging paragraph lays out its hang left of; a narrower container wraps it at its
+    /// own width.
     static func keepProse(_ styled: NSMutableAttributedString, to measure: CGFloat) {
         let text = styled.mutableString
-        var narrowed: [NSParagraphStyle: NSParagraphStyle] = [:]
+        var narrowed: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
         var at = 0
         while at < styled.length {
             let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
             at = NSMaxRange(paragraph)
             if styled.attribute(.dewlineCode, at: paragraph.location, effectiveRange: nil) != nil { continue }
             if case .table = (styled.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) as? BlockLine)?.role { continue }
+            let hang = styled.attribute(.dewlineHang, at: paragraph.location, effectiveRange: nil) as? CGFloat ?? 0
             styled.enumerateAttribute(.paragraphStyle, in: paragraph) { value, run, _ in
                 let style = value as? NSParagraphStyle ?? .default
-                let narrow = narrowed[style] ?? {
+                let narrow = narrowed[style]?[hang] ?? {
                     let copy = style.mutableCopy() as! NSMutableParagraphStyle
-                    copy.tailIndent = measure
-                    narrowed[style] = copy
+                    copy.tailIndent = measure + hang
+                    narrowed[style, default: [:]][hang] = copy
                     return copy
                 }()
                 styled.addAttribute(.paragraphStyle, value: narrow, range: run)

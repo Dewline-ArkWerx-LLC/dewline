@@ -123,6 +123,17 @@ extension EditorTextView {
         return NSRect(x: 0, y: y, width: bounds.width, height: line.typographicBounds.height)
     }
 
+    /// How far the markers of the heading that starts `block` hang left of the column while they show; nil while they
+    /// are hidden, and for any other block.
+    func shownHang(of block: BlockMap.Block) -> CGFloat? {
+        let storage = textStorage!
+        guard let hang = storage.attribute(.dewlineHang, at: block.range.location, effectiveRange: nil) as? CGFloat,
+            let heading = block.spans.first(where: { if case .heading = $0.kind { true } else { false } }),
+            storage.attribute(.foregroundColor, at: block.range.location + heading.range.location, effectiveRange: nil) as? NSColor != .clear
+        else { return nil }
+        return hang
+    }
+
     /// Draws a chevron in the left margin beside each folded block, and beside the foldable block under the pointer.
     func drawDisclosures(in rect: NSRect) {
         let text = textStorage!.mutableString
@@ -142,7 +153,9 @@ extension EditorTextView {
                 .withSymbolConfiguration(configuration)
             else { continue }
             let size = image.size
-            let target = NSRect(x: column - 22 - size.width / 2, y: line.midY - size.height / 2, width: size.width, height: size.height)
+            // Beside a heading's shown markers, it steps left of them.
+            let center = shownHang(of: block).map { max(column - $0 - 12, 8) } ?? column - 22
+            let target = NSRect(x: center - size.width / 2, y: line.midY - size.height / 2, width: size.width, height: size.height)
             image.draw(in: target.integral, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
     }

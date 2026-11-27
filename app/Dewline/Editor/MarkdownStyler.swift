@@ -43,6 +43,8 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private var spacedStyles: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
     /// Paragraph styles as a body line that continues them, by style.
     private var continuedStyles: [NSParagraphStyle: NSParagraphStyle] = [:]
+    /// Heading styles whose wrapped lines start past their hanging markers, by style and hang.
+    private var hungStyles: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
     private var pending: NSRange?
     /// Where the caret lands after the edit `shouldChangeText` approved, until the storage processes that edit.
     var landing: Int?
@@ -470,11 +472,22 @@ extension MarkdownStyler {
                 styled.addAttribute(.foregroundColor, value: store.color(.heading), range: lines)
             case .heading(let level):
                 let heading = store.heading(level)
-                styled.addAttributes([
-                    .font: heading.font, .paragraphStyle: store.paragraphStyle(lineHeight: heading.lineHeight),
-                    .foregroundColor: store.color(level < 5 ? .heading : .ink2),
-                ], range: lines)
-                if heading.kern != 0 { styled.addAttribute(.kern, value: heading.kern, range: lines) }
+                let style = store.paragraphStyle(lineHeight: heading.lineHeight)
+                styled.addAttributes([.font: heading.font, .paragraphStyle: style, .foregroundColor: store.color(level < 6 ? .heading : .ink2)], range: lines)
+                // The markers keep their room in the marker font, shown or hidden, and the run that opens the line hangs
+                // in the margin by its width, so the text starts at the column's edge and a reveal changes their color
+                // alone. Tracking goes on the text, so it leaves the run's width alone.
+                guard let span = block.spans.first(where: { if case .heading = $0.kind { true } else { false } })?.shifted(by: offset) else { break }
+                for marker in span.markers { styled.addAttribute(.font, value: heading.markerFont, range: marker) }
+                if heading.kern != 0 { styled.addAttribute(.kern, value: heading.kern, range: span.content) }
+                let first = styled.mutableString.paragraphRange(for: NSRange(location: lines.location, length: 0))
+                let run = NSRange(location: first.location, length: span.content.location - first.location)
+                guard run.length > 0, span.content.location <= NSMaxRange(first) else { break }
+                styled.addAttribute(.font, value: heading.markerFont, range: run)
+                let markers = styled.attributedSubstring(from: run)
+                let hang = widths[markers] ?? markers.size().width
+                widths[markers] = hang
+                styled.addAttributes([.dewlineHang: hang, .paragraphStyle: hung(style, hang)], range: first)
             case .quote where !source, .callout where !source:
                 styled.addAttributes([.paragraphStyle: store.quoteParagraphStyle, .foregroundColor: store.color(.heading), .dewlineQuote: true], range: lines)
                 // A line holding only its markers is the quote's blank line.
@@ -755,6 +768,15 @@ extension MarkdownStyler {
         return ThemeStore.shared.paragraphStyle(lineHeight: line, before: gap(at: paragraph.location, kind: .paragraph) ?? 0)
     }
 
+    /// `style` with its wrapped lines `hang` in, under a first line that starts `hang` left of the column.
+    private func hung(_ style: NSParagraphStyle, _ hang: CGFloat) -> NSParagraphStyle {
+        if let hung = hungStyles[style]?[hang] { return hung }
+        let hung = style.mutableCopy() as! NSMutableParagraphStyle
+        hung.headIndent = hang
+        hungStyles[style, default: [:]][hang] = hung
+        return hung
+    }
+
     /// `style` with `amount` above it.
     private func spaced(_ style: NSParagraphStyle, _ amount: CGFloat) -> NSParagraphStyle {
         if let spaced = spacedStyles[style]?[amount] { return spaced }
@@ -790,12 +812,12 @@ extension MarkdownStyler {
                 // number stays as typed.
                 guard Self.isBullet(at: marker.location, in: storage.mutableString) else { continue }
                 storage.addAttribute(.foregroundColor, value: revealed ? ThemeStore.shared.color(showsSource ? .ink2 : .syntax) : NSColor.clear, range: marker)
+            } else if case .heading = span.kind, !showsSource {
+                // A heading's markers keep their room, in the margin, so the reveal writes their color alone.
+                storage.addAttribute(.foregroundColor, value: revealed ? ThemeStore.shared.color(.ink3) : NSColor.clear, range: marker)
             } else if revealed {
                 let font = storage.attribute(.dewlineMarkerFont, at: marker.location, effectiveRange: nil)!
-                let quiet: Bool = switch span.kind {
-                case .heading, .quote: true
-                default: false
-                }
+                let quiet = span.kind == .quote
                 storage.addAttributes([.font: font, .foregroundColor: ThemeStore.shared.color(showsSource ? .ink2 : quiet ? .ink3 : .syntax)], range: marker)
             } else {
                 CFAttributedStringSetAttributes(storage, CFRange(location: marker.location, length: marker.length), Self.hiddenMarker, false)
@@ -862,8 +884,12 @@ extension MarkdownStyler {
         for span in show.sorted(by: { $0.range.location < $1.range.location }) { mark(span, revealed: true, in: storage) }
         for range in changedBlocks { restyle(range, in: storage, selection: selection) }
         storage.endEditing()
-        // Code wells and inline math draw behind the text, so a block that changes shape repaints them.
+        // Code wells and inline math draw behind the text, so a block that changes shape repaints them; a heading's
+        // fold chevron in the margin steps aside from its markers while they show.
         if !changedBlocks.isEmpty { textView.needsDisplay = true }
+        if hide.union(show).contains(where: { if case .heading = $0.kind { true } else { false } }) {
+            textView.setNeedsDisplay(NSRect(x: 0, y: textView.visibleRect.minY, width: textView.textContainerOrigin.x, height: textView.visibleRect.height))
+        }
     }
 
     /// Restyles, between events, what a whole parse changed.

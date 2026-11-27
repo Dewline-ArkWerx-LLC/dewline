@@ -31,7 +31,10 @@ final class ThemeStore {
     @ObservationIgnored private var code: [CGFloat: NSFont] = [:]
     @ObservationIgnored private var traited: [NSFont: [UInt32: NSFont]] = [:]
     @ObservationIgnored private var lines: [CGFloat: NSParagraphStyle] = [:]
+    @ObservationIgnored private var spaced: [CGFloat: [CGFloat: NSParagraphStyle]] = [:]
     @ObservationIgnored private var quote: NSParagraphStyle?
+    @ObservationIgnored private var quoteBlank: NSParagraphStyle?
+    @ObservationIgnored private var tabulars: [NSFont: NSFont] = [:]
 
     var appearance: Appearance {
         didSet {
@@ -90,7 +93,10 @@ final class ThemeStore {
         code = [:]
         traited = [:]
         lines = [:]
+        spaced = [:]
         quote = nil
+        quoteBlank = nil
+        tabulars = [:]
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }
 
@@ -165,14 +171,44 @@ final class ThemeStore {
         return style
     }
 
+    /// A paragraph style whose lines are all `height` tall, `before` below the paragraph above.
+    func paragraphStyle(lineHeight height: CGFloat, before: CGFloat) -> NSParagraphStyle {
+        guard before != 0 else { return paragraphStyle(lineHeight: height) }
+        if let style = spaced[height]?[before] { return style }
+        let style = paragraphStyle(lineHeight: height).mutableCopy() as! NSMutableParagraphStyle
+        style.paragraphSpacingBefore = before
+        spaced[height, default: [:]][before] = style
+        return style
+    }
+
     /// The body's paragraph style, indented for a quote.
     var quoteParagraphStyle: NSParagraphStyle {
         if let quote { return quote }
         let style = paragraphStyle(lineHeight: bodyLineHeight).mutableCopy() as! NSMutableParagraphStyle
-        style.firstLineHeadIndent = (18 * bodySize / 17).rounded()
+        style.firstLineHeadIndent = inset
         style.headIndent = style.firstLineHeadIndent
         quote = style
         return style
+    }
+
+    /// A quote's line that holds only its markers: the quote's blank line, half a line tall.
+    var quoteBlankParagraphStyle: NSParagraphStyle {
+        if let quoteBlank { return quoteBlank }
+        let style = quoteParagraphStyle.mutableCopy() as! NSMutableParagraphStyle
+        style.minimumLineHeight = bodyLineHeight / 2
+        style.maximumLineHeight = style.minimumLineHeight
+        quoteBlank = style
+        return style
+    }
+
+    /// The indent of quote, callout and code text: 1.125 em.
+    var inset: CGFloat {
+        (1.125 * bodySize).rounded()
+    }
+
+    /// A list level's step: 1.75 em.
+    var listStep: CGFloat {
+        (1.75 * bodySize).rounded()
     }
 
     /// The text column's width: `columnWidth` times the body font's average advance over the lowercase alphabet and
@@ -200,15 +236,47 @@ final class ThemeStore {
         return derived
     }
 
+    /// `font` with tabular figures when it has monospaced numbers, else `font` itself.
+    func tabular(_ font: NSFont) -> NSFont {
+        if let tabular = tabulars[font] { return tabular }
+        let tabular = Self.has(font, kNumberSpacingType, kMonospacedNumbersSelector)
+            ? Self.font(font, setting: [(kNumberSpacingType, kMonospacedNumbersSelector)]) : font
+        tabulars[font] = tabular
+        return tabular
+    }
+
+    /// Whether `font` lists the feature `type` with the selector `selector`.
+    private static func has(_ font: NSFont, _ type: Int, _ selector: Int) -> Bool {
+        let features = CTFontCopyFeatures(font as CTFont) as? [[String: Any]] ?? []
+        return features.contains { feature in
+            feature[kCTFontFeatureTypeIdentifierKey as String] as? Int == type
+                && (feature[kCTFontFeatureTypeSelectorsKey as String] as? [[String: Any]] ?? []).contains {
+                    $0[kCTFontFeatureSelectorIdentifierKey as String] as? Int == selector
+                }
+        }
+    }
+
+    /// `font` with each feature type set to its selector.
+    private static func font(_ font: NSFont, setting features: [(type: Int, selector: Int)]) -> NSFont {
+        let settings = features.map { [NSFontDescriptor.FeatureKey.typeIdentifier: $0.type, .selectorIdentifier: $0.selector] }
+        return NSFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: settings]), size: font.pointSize) ?? font
+    }
+
     struct Heading {
         let font: NSFont
         let lineHeight: CGFloat
         let kern: CGFloat
+        /// The space above the heading's line after a block that is not a heading.
+        let spaceAbove: CGFloat
+        /// The font of the level's `#`s and their blank, small enough that the run stays within 2 em.
+        let markerFont: NSFont
     }
 
     /// Heading levels 1 to 6 (synthesis 2.3) on a 1.25 ratio from the body, in whole points: at 16 pt, H1 31 / 620 with
-    /// -0.01 em tracking, H2 25 / 600, H3 20 / 600, then the body size in semibold; those weights and the optical size
-    /// axis apply to Bricolage, and other faces set semibold.
+    /// -0.01 em tracking, H2 25 / 600, H3 20 / 600, H4 the body size in semibold, H5 13 in semibold small caps when the
+    /// body face has them, tracked +0.06 em, H6 the body size in italic; those weights and the optical size axis apply to
+    /// Bricolage, and other faces set semibold. A line box is 1.2 times the size on the quarter-line grid, at least a
+    /// body line; the space above is 2, 1.75 and 1.5 lines for H1 to H3 and one line for the rest.
     func heading(_ level: Int) -> Heading {
         if let heading = headings[level] { return heading }
         func step(_ steps: Double) -> CGFloat {
@@ -222,18 +290,30 @@ final class ThemeStore {
             return NSFont(descriptor: NSFontDescriptor(fontAttributes: [.family: headingFace, .variation: variation]), size: size)
                 ?? Faces.font(headingFace, size: size, weight: .semibold)
         }
-        let heading = switch level {
-        case 1:
-            Heading(font: display(step(3), 620, opticalSize: 48), lineHeight: (step(3) * 1.2).rounded(), kern: -0.01 * step(3))
-        case 2:
-            Heading(font: display(step(2), 600), lineHeight: (step(2) * 1.25).rounded(), kern: 0)
-        case 3:
-            Heading(font: display(step(1), 600), lineHeight: (step(1) * 1.3).rounded(), kern: 0)
-        default:
-            Heading(font: Faces.font(bodyFace, size: bodySize, weight: .semibold), lineHeight: bodyLineHeight, kern: 0)
+        let small = (0.8125 * bodySize).rounded()
+        let (font, kern, above): (NSFont, CGFloat, CGFloat) = switch level {
+        case 1: (display(step(3), 620, opticalSize: 48), -0.01 * step(3), 2)
+        case 2: (display(step(2), 600), 0, 1.75)
+        case 3: (display(step(1), 600), 0, 1.5)
+        case 4: (Faces.font(bodyFace, size: bodySize, weight: .semibold), 0, 1)
+        case 5: (smallCaps(Faces.font(bodyFace, size: small, weight: .semibold)), 0.06 * small, 1)
+        default: (self.font(bodyFont, adding: .italic), 0, 1)
         }
+        let line = bodyLineHeight, quarter = line / 4
+        let markers = NSAttributedString(string: String(repeating: "#", count: level) + " ", attributes: [.font: font]).size().width
+        let scale = min(1, 2 * bodySize / markers)
+        let heading = Heading(
+            font: font, lineHeight: max(line, quarter * (1.2 * font.pointSize / quarter).rounded()), kern: kern, spaceAbove: above * line,
+            markerFont: scale < 1 ? NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale) ?? font : font
+        )
         headings[level] = heading
         return heading
+    }
+
+    /// `font` in small caps, lowercase and capitals both, when it has them.
+    private func smallCaps(_ font: NSFont) -> NSFont {
+        guard Self.has(font, kLowerCaseType, kLowerCaseSmallCapsSelector), Self.has(font, kUpperCaseType, kUpperCaseSmallCapsSelector) else { return font }
+        return Self.font(font, setting: [(kLowerCaseType, kLowerCaseSmallCapsSelector), (kUpperCaseType, kUpperCaseSmallCapsSelector)])
     }
 }
 

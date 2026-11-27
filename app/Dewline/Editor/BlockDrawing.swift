@@ -109,9 +109,14 @@ final class BlockFragment: NSTextLayoutFragment {
         textLineFragments.last?.typographicBounds.maxY ?? 0
     }
 
+    /// The first line's top, below the space before the paragraph.
+    private var lineTop: CGFloat {
+        textLineFragments.first?.typographicBounds.minY ?? 0
+    }
+
     override var renderingSurfaceBounds: CGRect {
         switch line.role {
-        case .picture(let picture, _): CGRect(origin: CGPoint(x: picture.x(in: column), y: 0), size: picture.size)
+        case .picture(let picture, _): CGRect(origin: CGPoint(x: picture.x(in: column), y: lineTop), size: picture.size)
         case .collapsed: .zero
         case .table(let rule):
             super.renderingSurfaceBounds.union(CGRect(x: 0, y: -1, width: textStart + rule.width + 1, height: layoutFragmentFrame.height + 2))
@@ -128,7 +133,7 @@ final class BlockFragment: NSTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         switch line.role {
         case .picture(let picture, _):
-            let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y), size: picture.size)
+            let frame = CGRect(origin: CGPoint(x: point.x + picture.x(in: column), y: point.y + lineTop), size: picture.size)
             let dark = NSAppearance.currentDrawing().isDark
             guard case .image = picture.art, dark || picture.kind == .image else { return picture.draw(in: frame, of: context) }
             // An embedded image draws in 6 pt corners with a 1 px rim, black at 8% on a light page and white at 10% on a
@@ -165,7 +170,8 @@ final class BlockFragment: NSTextLayoutFragment {
         case .summary(let line):
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-            line.draw(at: CGPoint(x: point.x + (textLayoutManager?.textContainer?.lineFragmentPadding ?? 0), y: point.y + (layoutFragmentFrame.height - line.size().height) / 2))
+            let height = textLineFragments.first?.typographicBounds.height ?? layoutFragmentFrame.height
+            line.draw(at: CGPoint(x: point.x + (textLayoutManager?.textContainer?.lineFragmentPadding ?? 0), y: point.y + lineTop + (height - line.size().height) / 2))
             NSGraphicsContext.restoreGraphicsState()
         case .error(let message):
             super.draw(at: point, in: context)
@@ -185,7 +191,7 @@ final class BlockFragment: NSTextLayoutFragment {
                 NSRect(x: left, y: point.y + (layoutFragmentFrame.height / 2).rounded() - 0.5, width: rule.width, height: 1).fill()
             }
             for cell in rule.cells {
-                cell.text.draw(with: NSRect(x: left + cell.x, y: point.y, width: cell.width, height: layoutFragmentFrame.height), options: .usesLineFragmentOrigin)
+                cell.text.draw(with: NSRect(x: left + cell.x, y: point.y + lineTop, width: cell.width, height: layoutFragmentFrame.height - lineTop), options: .usesLineFragmentOrigin)
             }
             NSGraphicsContext.restoreGraphicsState()
         case .task(let task):

@@ -39,7 +39,7 @@ private struct Editor {
         view.styler.restyleDocument()
         let keys: [NSAttributedString.Key] = [
             .font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .strikethroughStyle, .kern,
-            .dewlineMarkerFont, .dewlineBlock, .dewlineQuote,
+            .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .dewlineHang, .dewlineRule, .dewlineListMarker, .dewlineSkip,
         ]
         for offset in 0..<storage.length {
             let old = before.attributes(at: offset, effectiveRange: nil)

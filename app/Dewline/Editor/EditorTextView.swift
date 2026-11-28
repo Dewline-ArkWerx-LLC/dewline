@@ -688,8 +688,10 @@ final class EditorTextView: CaretTextView {
             guard let now = baseline(at: anchor) else { return }
             let top = visibleRect.minY
             let step = ((now - offset - top) / pixel).rounded() * pixel
+            print("DBGSHEP hold anchor \(anchor) offset \(offset) now \(now) top \(top) step \(step) pixel \(pixel) docH \(frame.height)")
             guard step != 0 else { return }
             scroll(NSPoint(x: visible.minX, y: top + step))
+            print("DBGSHEP hold moved to \(visibleRect.minY)")
             guard visibleRect.minY != top else { return }
         }
     }

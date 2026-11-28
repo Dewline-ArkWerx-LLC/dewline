@@ -406,6 +406,13 @@ extension MarkdownStyler {
             let line = [restored, textView.selectedRange().location].compactMap { $0 }.first { top <= $0 && $0 <= bottom }
             let anchor = min(line ?? top, storage.length - 1)
             held = textView.baseline(at: anchor).map { (anchor, $0 - visible.minY) }
+            // A hold lands its line within half a pixel of its aim, and a display after it can snap the view to the pixel
+            // grid, up to a pixel more, as between a restore and this pass: a line that close to the last hold's aim goes
+            // back to it.
+            let pixel = 1 / (textView.window?.backingScaleFactor ?? 1)
+            if let aimed = textView.aimed, let now = held, aimed.anchor == anchor, abs(aimed.offset - now.offset) < 1.5 * pixel {
+                held = aimed
+            }
         }
         let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, passLength, map.parsed - first)
         let start = ContinuousClock.now

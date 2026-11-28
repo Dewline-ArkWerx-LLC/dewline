@@ -11,6 +11,8 @@ final class EditorTextView: CaretTextView {
     private var composing = false
     private var toggleWaits = false
     private var held: (anchor: Int, offset: CGFloat)?
+    /// The line the last `hold` placed and the offset it aimed that line's baseline at.
+    private(set) var aimed: (anchor: Int, offset: CGFloat)?
     private weak var snapshot: NSView?
     /// When the last toggle committed its first frame and started the fade.
     private(set) var fadeStarted: ContinuousClock.Instant?
@@ -676,6 +678,7 @@ final class EditorTextView: CaretTextView {
     /// Scrolls so the baseline of the line holding `anchor` sits `offset` below the top of the visible rect.
     func hold(_ anchor: Int, at offset: CGFloat) {
         guard let layout = textLayoutManager else { return }
+        aimed = (anchor, offset)
         let visible = visibleRect
         // TextKit 2 sizes the view and stacks the viewport from estimates it refreshes as it lays the viewport out, and
         // places a line below text it has not laid out by that text's estimated height: lay out, scroll to the line, and

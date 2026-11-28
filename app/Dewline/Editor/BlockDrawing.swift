@@ -33,32 +33,42 @@ final class BlockLine: NSObject {
         case .picture(let picture, _): picture.identity.hashValue
         case .collapsed: 0
         case .error(let message): message.hashValue
-        case .table(let rule): rule.width.hashValue
+        case .table(let rule): [rule.width, rule.hang].hashValue ^ rule.kind.hashValue
         case .task(let task): task.at
         case .summary(let line): line.string.hashValue
         }
     }
 }
 
-/// A table line's rule, in points from where its text starts: the delimiter row's runs across the columns under the
-/// head. A row too wide for the text draws its cells, wrapped in their columns.
+/// A table line's rules, in points from its first column's start: the delimiter line's runs across the columns under the
+/// head (`across`) unless the caret shows its source, and a body row's hairline sits in the space above it. A line whose
+/// source starts with a pipe hangs that pipe `hang` left of the column. A row too wide for the text draws its cells,
+/// wrapped in their columns.
 struct TableRule: Equatable {
+    enum Kind {
+        case head, delimiter, body
+    }
+
     let width: CGFloat
     let across: Bool
+    /// The delimiter line's rule, or a body row's hairline, which draws at 60%.
     let color: NSColor
+    var kind = Kind.body
+    var hang: CGFloat = 0
     var cells: [TableCell] = []
 }
 
-/// A cell drawn at `x`, wrapped to `width`, both in points from where its row's text starts. `source` is the cell's
-/// text in the row's paragraph, from the paragraph's start.
+/// A cell drawn at `x`, `top` below its row's first line top, wrapped to `width`, all in points from its row's first
+/// column. `source` is the cell's text in the row's paragraph, from the paragraph's start.
 struct TableCell: Equatable {
     let x: CGFloat
+    let top: CGFloat
     let width: CGFloat
     let text: NSAttributedString
     let source: NSRange
 }
 
-/// A task item's box over its hidden `[ ]`, which starts `at` characters into the line.
+/// A task item's box, where a sibling's bullet sits, for the `[ ]` that starts `at` characters into the line.
 struct TaskMark: Equatable {
     let at: Int
     let checked: Bool
@@ -110,7 +120,7 @@ final class BlockFragment: NSTextLayoutFragment {
     }
 
     /// The first line's top, below the space before the paragraph.
-    private var lineTop: CGFloat {
+    var lineTop: CGFloat {
         textLineFragments.first?.typographicBounds.minY ?? 0
     }
 
@@ -119,7 +129,7 @@ final class BlockFragment: NSTextLayoutFragment {
         case .picture(let picture, _): CGRect(origin: CGPoint(x: picture.x(in: column), y: lineTop), size: picture.size)
         case .collapsed: .zero
         case .table(let rule):
-            super.renderingSurfaceBounds.union(CGRect(x: 0, y: -1, width: textStart + rule.width + 1, height: layoutFragmentFrame.height + 2))
+            super.renderingSurfaceBounds.union(CGRect(x: min(textStart, 0), y: -1, width: tableStart + rule.width + 1, height: layoutFragmentFrame.height + 2))
         case .task: super.renderingSurfaceBounds
         case .summary(let line): CGRect(origin: .zero, size: CGSize(width: line.size().width + 16, height: layoutFragmentFrame.height))
         case .error:
@@ -185,13 +195,21 @@ final class BlockFragment: NSTextLayoutFragment {
             super.draw(at: point, in: context)
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-            rule.color.setFill()
-            let left = point.x + textStart
+            let left = point.x + tableStart
             if rule.across {
-                NSRect(x: left, y: point.y + (layoutFragmentFrame.height / 2).rounded() - 0.5, width: rule.width, height: 1).fill()
+                rule.color.setFill()
+                let middle = ((textLineFragments.first?.typographicBounds.height ?? layoutFragmentFrame.height) / 2).rounded()
+                NSRect(x: left, y: point.y + lineTop + middle - 0.5, width: rule.width, height: 1).fill()
+            }
+            // One device pixel at the middle of the space above a body row.
+            if rule.kind == .body, lineTop > 0 {
+                let pixel = 1 / max(abs(context.convertToDeviceSpace(CGSize(width: 1, height: 1)).width), 1)
+                rule.color.withAlphaComponent(0.6).setFill()
+                NSRect(x: left, y: ((point.y + lineTop / 2) / pixel).rounded(.down) * pixel, width: rule.width, height: pixel).fill()
             }
             for cell in rule.cells {
-                cell.text.draw(with: NSRect(x: left + cell.x, y: point.y + lineTop, width: cell.width, height: layoutFragmentFrame.height - lineTop), options: .usesLineFragmentOrigin)
+                let top = lineTop + cell.top
+                cell.text.draw(with: NSRect(x: left + cell.x, y: point.y + top, width: cell.width, height: layoutFragmentFrame.height - top), options: .usesLineFragmentOrigin)
             }
             NSGraphicsContext.restoreGraphicsState()
         case .task(let task):
@@ -221,22 +239,36 @@ final class BlockFragment: NSTextLayoutFragment {
         }
     }
 
+    /// A table line's leading pipe hangs left of its first column.
+    override var leadingPadding: CGFloat {
+        guard case .table(let rule) = line.role else { return super.leadingPadding }
+        return -rule.hang
+    }
+
     /// Where the first line's text starts, in this fragment's coordinates.
     var textStart: CGFloat {
         guard let line = textLineFragments.first else { return 0 }
         return line.typographicBounds.minX + line.locationForCharacter(at: line.characterRange.location).x
     }
 
-    /// A task's box, in this fragment's coordinates: a square over the `[ ]` that sits on the baseline.
+    /// Where a table line's first column starts, in this fragment's coordinates: past its hanging pipe.
+    var tableStart: CGFloat {
+        guard case .table(let rule) = line.role else { return textStart }
+        return textStart + rule.hang
+    }
+
+    /// A task's box, in this fragment's coordinates: a 0.75 em square centered 0.75 em left of the item's text, on the
+    /// first line's x-height middle, where a sibling bullet sits.
     var taskBoxRect: CGRect? {
-        guard case .task(let task) = line.role,
-            let text = textLineFragments.first(where: { NSLocationInRange(task.at, $0.characterRange) })
+        guard case .task = line.role, let text = textLineFragments.first,
+            let style = text.attributedString.attribute(.paragraphStyle, at: text.characterRange.location, effectiveRange: nil) as? NSParagraphStyle
         else { return nil }
-        let start = text.locationForCharacter(at: task.at).x
-        let end = text.locationForCharacter(at: task.at + 3).x
+        let (size, xHeight) = MainActor.assumeIsolated { (ThemeStore.shared.bodyFont.pointSize, ThemeStore.shared.bodyFont.xHeight) }
+        let side = (0.75 * size).rounded()
         let bounds = text.typographicBounds
-        let side = min(end - start, bounds.height * 0.6).rounded()
-        let baseline = bounds.minY + text.glyphOrigin.y
-        return CGRect(x: bounds.minX + start + ((end - start - side) / 2).rounded(), y: (baseline + 1 - side).rounded(), width: side, height: side)
+        // The paragraph's first character starts at its first line's head indent.
+        let x = textStart - style.firstLineHeadIndent + style.headIndent - side
+        let y = bounds.minY + text.glyphOrigin.y - xHeight / 2
+        return CGRect(x: x - side / 2, y: y - side / 2, width: side, height: side)
     }
 }

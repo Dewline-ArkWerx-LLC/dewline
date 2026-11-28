@@ -239,6 +239,28 @@ extension LaneATests {
         #expect(abs(receipt.frame.maxX - place.maxX) < 1 && abs(receipt.frame.minY - place.minY) < 1)
     }
 
+    @Test func aFoldedStampBeforeAHeadingSitsRightAboveItsFirstLineUnderItsGap() async throws {
+        let before = "Intro line.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n## Next\n\nText.\n"
+        let note = try Note(before)
+        defer { note.close() }
+        note.textView.window!.setContentSize(NSSize(width: 420, height: 600))
+        await waitForMain { note.isHidden(note.location(of: "|---")) }
+        try Data(before.replacingOccurrences(of: "| 1 | 2 |", with: "| 1 | 3 |").utf8).write(to: note.url)
+        await note.live.refresh()
+        // The change's row is drawn and takes no space under it, so the stamp folds into room before the heading.
+        let heading = note.location(of: "## Next")
+        let storage = try #require(note.textView.textStorage)
+        let gap = ThemeStore.shared.heading(2).spaceAbove
+        await waitForMain { (storage.attribute(.paragraphStyle, at: heading, effectiveRange: nil) as? NSParagraphStyle)?.paragraphSpacingBefore ?? 0 > gap + ChangeStamp.barHeight }
+        let stamp = try #require(note.stamps.first)
+        #expect(stamp.folded)
+        let top = try note.lineTop(of: heading)
+        let row = try note.lineTop(of: note.location(of: "| 1 | 3 |")) + ThemeStore.shared.bodyLineHeight
+        // The bar keeps its 6 pt margin above the heading's first line, and the heading's gap stays above the bar.
+        #expect(abs(top - stamp.frame.maxY - 6) < 1, "the bar ends at \(stamp.frame.maxY), the heading's line starts at \(top)")
+        #expect(stamp.frame.minY - row >= gap, "the bar starts \(stamp.frame.minY - row) under the row")
+    }
+
     @Test func codexWithAnUntrustedHookIsAskedForTrust() {
         #expect(ChangeStamp.codexNeedsTrust("Version: 0.7.0\n  Codex: installed in /Users/a/.codex/hooks.json; needs trust\n"))
         #expect(!ChangeStamp.codexNeedsTrust("Version: 0.7.0\n  Codex: installed in /Users/a/.codex/hooks.json\n"))

@@ -155,7 +155,6 @@ import Testing
         let second = try await resume(at: place)
         defer { close(second) }
         let resumed = try #require(second.place)
-        print("DBGSHEP test place \(place) resumed \(resumed) again \(String(describing: second.place))")
         #expect(resumed.caret == target + 4)
         #expect(resumed.top == place.top)
         #expect(abs(resumed.offset - place.offset) < 1)

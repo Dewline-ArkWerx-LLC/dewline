@@ -765,9 +765,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let top = min(max(place.top, 0), max(length - 1, 0))
         // Lays the text out to the anchor, so the page is tall enough to scroll there.
         textView.scrollRangeToVisible(NSRange(location: top, length: 0))
-        print("DBGSHEP restore \(place) scale \(String(describing: textView.window?.backingScaleFactor))")
         textView.hold(top, at: -place.offset)
-        print("DBGSHEP restore after: \(String(describing: self.place))")
         // Past the first screen the text styles once the whole parse lands, and that pass keeps this line in place.
         textView.styler.restored = textView.styler.hasUnstyledText ? top : nil
     }

@@ -414,11 +414,7 @@ extension MarkdownStyler {
         storage.endEditing()
         let took = max(ContinuousClock.now - start, .microseconds(100))
         if !past { passLength = max(Self.pass, Int(Double(length) * (Self.passTime / took))) }
-        if let held {
-            print("DBGSHEP styleSome past held \(held) restored \(String(describing: restored)) first \(first) length \(length) parsed \(map.parsed)")
-            textView.hold(held.anchor, at: held.offset)
-            print("DBGSHEP styleSome after: \(String(describing: textView.baseline(at: held.anchor).map { $0 - textView.visibleRect.minY }))")
-        }
+        if let held { textView.hold(held.anchor, at: held.offset) }
         if unstyled.isEmpty { restored = nil } else { schedule() }
     }
 

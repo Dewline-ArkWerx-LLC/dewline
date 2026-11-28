@@ -67,7 +67,7 @@ enum Export {
         init(_ name: NSAppearance.Name) {
             var palette: (String, DiagramColors, NSColor)?
             NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
-                let tokens: [Token] = [.paper, .ink, .ink2, .heading, .link, .codeBackground, .quoteRule, .syntax]
+                let tokens: [Token] = [.paper, .ink, .ink2, .heading, .link, .codeBackground, .quoteRule, .rule, .syntax]
                 palette = (
                     tokens.map { "--\($0.rawValue): \(String(format: "#%08x", Export.rgba($0)));" }.joined(separator: " "),
                     DiagramColors(
@@ -190,12 +190,15 @@ enum Export {
         return "\(name), \(generic)"
     }
 
-    /// The editor's faces, and the theme's colors in the light palette, switched to `dark` on a dark page.
+    /// The editor's faces and rhythm at the current Text size and Line height, and the theme's colors in the light
+    /// palette, switched to `dark` on a dark page.
     private static func stylesheet(light: Palette, dark: Palette?) -> String {
         let store = ThemeStore.shared
         let scheme = dark.map { "@media (prefers-color-scheme: dark) { :root { \($0.properties) } }\n" } ?? ""
+        func px(_ value: CGFloat) -> String { String(format: "%gpx", Double(value)) }
+        let headings = (1...6).map { "h\($0) { margin: \(px(store.heading($0).spaceAbove)) 0 calc(var(--L) / 2); }" }.joined(separator: "\n")
         return """
-        :root { color-scheme: \(dark == nil ? "light" : "light dark"); \(light.properties) }
+        :root { color-scheme: \(dark == nil ? "light" : "light dark"); --L: \(px(store.bodyLineHeight)); \(light.properties) }
         \(scheme)html { background: var(--paper); }
         body { color: var(--ink); font-family: \(family(store.bodyFace, "serif")); font-size: \(store.bodySize)px; line-height: \(store.lineHeight); max-width: 40em; margin: 0 auto; padding: 2em 3em; }
         h1, h2, h3, h4, h5, h6 { font-family: \(family(store.headingFace, "serif")); color: var(--heading); line-height: 1.25; }
@@ -204,15 +207,25 @@ enum Export {
         code { padding: 0.1em 0.3em; }
         pre { padding: 0.8em 1em; white-space: pre-wrap; }
         pre code { padding: 0; background: none; font-size: 1em; }
-        blockquote { margin-left: 0; padding-left: 1em; border-left: 3px solid var(--quoteRule); color: var(--ink2); }
-        table { border-collapse: collapse; }
-        th, td { border: 1px solid var(--syntax); padding: 0.3em 0.6em; }
-        hr { border: 0; border-top: 1px solid var(--syntax); }
+        p, ul, ol, pre, blockquote, table, figure, .math-display { margin: 0 0 calc(var(--L) / 2); }
+        \(headings)
+        :is(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6) { margin-top: calc(var(--L) * 0.75); }
+        body > :first-child { margin-top: 0; }
+        ul, ol { padding-left: \(px(store.listStep)); }
+        li + li { margin-top: calc(var(--L) / 6); }
+        li > ul, li > ol { margin: calc(var(--L) / 6) 0 0; }
+        blockquote { padding-left: \(px(store.inset)); border-left: 2px solid var(--quoteRule); color: var(--ink2); }
+        table { margin: var(--L) 0; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        :is(h1, h2, h3, h4, h5, h6) + table { margin-top: calc(var(--L) / 2); }
+        th { font-weight: 600; border: 0; border-bottom: 1px solid var(--quoteRule); padding: 0 0 calc(var(--L) / 4); }
+        td { border: 0; border-top: 0.5px solid var(--rule); padding: calc(var(--L) / 4) 0; }
+        tr:last-child > td { padding-bottom: 0; }
+        th + th, td + td { padding-left: 1.5em; }
+        hr { border: 0; border-top: 1px solid var(--quoteRule); width: 4em; margin: calc(var(--L) / 2) auto; }
         img { max-width: 100%; }
-        figure.diagram { margin: 1em 0; }
         figure.diagram svg { max-width: 100%; height: auto; }
         img.math { vertical-align: middle; }
-        .math-display { display: block; text-align: center; margin: 1em 0; }
+        .math-display { display: block; text-align: center; }
         .footnote-definition { font-size: 0.9em; color: var(--ink2); }
         """
     }

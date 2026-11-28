@@ -67,6 +67,34 @@ struct ExportTests {
         #expect(css[media.upperBound...].contains("--paper: \(hex(dark))"))
     }
 
+    /// E1: the page's stylesheet spaces headings, list items and table rows in the editor's lines at the current Text
+    /// size and Line height, and rules tables as the editor does.
+    @Test func stylesheetFollowsTheEditorsRhythm() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = ThemeStore.shared
+        let (size, leading) = (store.bodySize, store.lineHeight)
+        defer { (store.bodySize, store.lineHeight) = (size, leading) }
+        for (points, height, line) in [(16.0, 1.5, 24.0), (20.0, 1.3, 26.0)] {
+            (store.bodySize, store.lineHeight) = (points, height)
+            try #require(Double(store.bodyLineHeight) == line)
+            let url = folder.appending(path: "rhythm.html")
+            try await Export.write("# Title\n\nText.", title: "rhythm", as: .html, to: url, folder: nil)
+            let page = try String(contentsOf: url, encoding: .utf8)
+            let start = try #require(page.range(of: "<style>\n")), end = try #require(page.range(of: "\n</style>"))
+            let css = page[start.upperBound..<end.lowerBound]
+            func rule(_ selector: String) throws -> Substring {
+                try #require(css.split(separator: "\n").first { $0.hasPrefix(selector + " {") }, "\(selector) at \(points)/\(height)")
+            }
+            #expect(!css.contains("border: 1px solid var(--syntax)"))
+            #expect(try rule("th").contains("border-bottom: 1px solid var(--quoteRule)"))
+            #expect(try rule(":root").contains("--L: \(String(format: "%g", line))px;"))
+            let margin = try #require(try rule("h2").firstMatch(of: /margin: ([\d.]+)px/)?.1)
+            #expect(Double(margin) == 1.75 * line, "h2 at \(points)/\(height)")
+            #expect(try rule("li + li").contains("margin-top: calc(var(--L) / 6)"))
+        }
+    }
+
     private let sample = """
         # Report
 

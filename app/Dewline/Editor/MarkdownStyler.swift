@@ -1,4 +1,5 @@
 import AppKit
+import MdCore
 
 /// Styles markdown through attributes only and owns the editor's undo history.
 @MainActor
@@ -22,6 +23,8 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     let cards: LinkCards
     private(set) var hover: LinkHover?
     private(set) var restyles = 0
+    /// The paragraphs the last restyle styled.
+    private(set) var restyled = NSRange()
     private(set) var showsSource = false
     /// A code file's language: the whole text is code, in SF Mono and highlighted, and nothing styles as Markdown.
     var code: String? {
@@ -33,6 +36,13 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
         return height > 0 ? height : 22
     }()
     private var revealed: Set<SyntaxSpan> = []
+    /// The empty line Return made, laid out as the line typing there will make, until it gains a character, Return
+    /// moves on from it or the caret leaves it.
+    var fresh: Int?
+    /// Paragraph styles with space above them, by style and amount.
+    private var spacedStyles: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
+    /// Paragraph styles as a body line that continues them, by style.
+    private var continuedStyles: [NSParagraphStyle: NSParagraphStyle] = [:]
     private var pending: NSRange?
     /// Where the caret lands after the edit `shouldChangeText` approved, until the storage processes that edit.
     var landing: Int?
@@ -69,6 +79,7 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private static let keys = [
         NSAttributedString.Key.font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .underlineColor, .strikethroughStyle, .kern, .toolTip,
         .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .baselineOffset, .dewlineCallout, .dewlineCode, .dewlineMath, .dewlineCodeChip,
+        .dewlineHang, .dewlineRule, .dewlineListMarker, .dewlineSkip,
     ].map { $0.rawValue as NSString }
     /// The text a long restyle styles at once, which covers the view: several screens.
     private static let chunk = BlockMap.screen
@@ -246,6 +257,16 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
             unstyled.remove(integersIn: editedRange.location..<oldEnd)
             unstyled.shift(startingAt: oldEnd, by: delta)
             let text = textView!.textStorage!.mutableString
+            // The fresh line moves with the text; a line break typed at it moves it past the break, and any other edit
+            // that reaches it ends it.
+            if let at = fresh {
+                let changedEnd = NSMaxRange(edit) - delta
+                let moved = at < edit.location ? at : at > changedEnd ? at + delta
+                    : edit.length > 0 && [0x0A, 0x0D].contains(text.character(at: NSMaxRange(edit) - 1)) ? NSMaxRange(edit) : nil
+                fresh = moved.flatMap { at in
+                    (at == 0 || [0x0A, 0x0D].contains(text.character(at: at - 1))) && (at == text.length || [0x0A, 0x0D].contains(text.character(at: at))) ? at : nil
+                }
+            }
             // Lines after an edit can move, and what the view draws under them (bullets, wells, chips) must move with
             // them: an agent's write lands in the storage, outside the view's own redraw. One typed character is the
             // view's.
@@ -385,6 +406,13 @@ extension MarkdownStyler {
             let line = [restored, textView.selectedRange().location].compactMap { $0 }.first { top <= $0 && $0 <= bottom }
             let anchor = min(line ?? top, storage.length - 1)
             held = textView.baseline(at: anchor).map { (anchor, $0 - visible.minY) }
+            // A hold lands its line within half a pixel of its aim, and a display after it can snap the view to the pixel
+            // grid, up to a pixel more, as between a restore and this pass: a line that close to the last hold's aim goes
+            // back to it.
+            let pixel = 1 / (textView.window?.backingScaleFactor ?? 1)
+            if let aimed = textView.aimed, let now = held, aimed.anchor == anchor, abs(aimed.offset - now.offset) < 1.5 * pixel {
+                held = aimed
+            }
         }
         let length = past ? map.parsed - first : min(unstyled.rangeView.first!.count, passLength, map.parsed - first)
         let start = ContinuousClock.now
@@ -407,11 +435,27 @@ extension MarkdownStyler {
 
     private func restyle(_ range: NSRange, in storage: NSTextStorage, selection: [NSRange]) {
         restyles += 1
-        let paragraphs = storage.mutableString.paragraphRange(for: tables.covering(map.covering(storage.mutableString.paragraphRange(for: range))))
+        var paragraphs = storage.mutableString.paragraphRange(for: tables.covering(map.covering(storage.mutableString.paragraphRange(for: range))))
+        // A fresh line takes its look from the text above it.
+        if fresh == NSMaxRange(paragraphs) {
+            paragraphs = NSUnionRange(paragraphs, storage.mutableString.paragraphRange(for: NSRange(location: NSMaxRange(paragraphs), length: 0)))
+        }
+        // The next block restyles too when its own layout spaces it, as an item under an item: the space above it may be
+        // a gap the text above it no longer asks for, which `respace` cannot know to remove.
+        if !showsSource, code == nil {
+            map.walk(from: NSMaxRange(paragraphs)) { block in
+                if block.range.location >= NSMaxRange(paragraphs), gap(at: block.range.location, kind: block.kind) == nil {
+                    paragraphs = NSUnionRange(paragraphs, storage.mutableString.paragraphRange(for: block.range))
+                }
+                return false
+            }
+        }
+        restyled = paragraphs
         unstyled.remove(integersIn: Range(paragraphs)!)
         let styled = NSMutableAttributedString(string: storage.mutableString.substring(with: paragraphs))
         let whole = NSRange(location: 0, length: styled.length)
         let source = showsSource
+        let prose = !source && code == nil
         let store = ThemeStore.shared
         styled.addAttributes(baseAttributes, range: whole)
         revealed = revealed.filter { !NSLocationInRange($0.range.location, paragraphs) }
@@ -423,7 +467,8 @@ extension MarkdownStyler {
         }
         // Markers repeat: each one's width is measured once.
         var widths: [NSAttributedString: CGFloat] = [:]
-        for block in map.blocks(in: paragraphs) {
+        let found = map.blocks(in: paragraphs)
+        for block in found {
             let offset = block.range.location - paragraphs.location
             let lines = NSRange(location: offset, length: block.range.length)
             switch block.kind {
@@ -439,6 +484,13 @@ extension MarkdownStyler {
                 if heading.kern != 0 { styled.addAttribute(.kern, value: heading.kern, range: lines) }
             case .quote where !source, .callout where !source:
                 styled.addAttributes([.paragraphStyle: store.quoteParagraphStyle, .foregroundColor: store.color(.heading), .dewlineQuote: true], range: lines)
+                // A line holding only its markers is the quote's blank line.
+                var at = lines.location
+                while at < NSMaxRange(lines) {
+                    let line = styled.mutableString.paragraphRange(for: NSRange(location: at, length: 0))
+                    at = NSMaxRange(line)
+                    if Self.isBlank(line, in: styled.mutableString, quoted: true) { styled.addAttribute(.paragraphStyle, value: store.quoteBlankParagraphStyle, range: line) }
+                }
             default:
                 break
             }
@@ -510,6 +562,22 @@ extension MarkdownStyler {
                 styled.addAttribute(.paragraphStyle, value: style, range: paragraph)
             }
         }
+        // A blank line is half a line, outside code, front matter and HTML. It counts toward the space between the
+        // blocks around it, so zero or one of them between two blocks read the same.
+        if prose {
+            let literals = found.filter { [.code, .html, .frontMatter].contains($0.kind) }.map(\.range)
+            let half = store.paragraphStyle(lineHeight: store.bodyLineHeight / 2)
+            var (at, next) = (0, 0)
+            while at < whole.length {
+                let paragraph = styled.mutableString.paragraphRange(for: NSRange(location: at, length: 0))
+                at = NSMaxRange(paragraph)
+                guard Self.isBlank(paragraph, in: styled.mutableString) else { continue }
+                let location = paragraphs.location + paragraph.location
+                while next < literals.count, NSMaxRange(literals[next]) <= location { next += 1 }
+                if next < literals.count, NSLocationInRange(location, literals[next]) { continue }
+                styled.addAttribute(.paragraphStyle, value: half, range: paragraph)
+            }
+        }
         blocks.style(styled, at: paragraphs.location, selection: source ? [whole] : selection)
         if !source {
             let container = textView?.textContainer
@@ -518,6 +586,24 @@ extension MarkdownStyler {
             fences.style(styled, at: paragraphs.location, selection: selection, folds: folds)
             math.style(styled, at: paragraphs.location, selection: selection)
             cards.style(styled, at: paragraphs.location, selection: selection)
+        }
+        if prose {
+            // Each block's first line takes the space its kind asks above it, less what the blank lines above it draw.
+            for block in found where block.range.location >= paragraphs.location {
+                guard let gap = gap(at: block.range.location, kind: block.kind), gap > 0 else { continue }
+                let first = styled.mutableString.paragraphRange(for: NSRange(location: block.range.location - paragraphs.location, length: 0))
+                let style = styled.attribute(.paragraphStyle, at: first.location, effectiveRange: nil) as? NSParagraphStyle ?? .default
+                styled.addAttribute(.paragraphStyle, value: spaced(style, gap), range: first)
+            }
+            if let fresh, NSLocationInRange(fresh, paragraphs) {
+                let line = styled.mutableString.paragraphRange(for: NSRange(location: fresh - paragraphs.location, length: 0))
+                let style = freshStyle(at: fresh) { location in
+                    location < paragraphs.location
+                        ? storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+                        : styled.attribute(.paragraphStyle, at: location - paragraphs.location, effectiveRange: nil) as? NSParagraphStyle
+                }
+                if let style, line.length > 0 { styled.addAttribute(.paragraphStyle, value: style, range: line) }
+            }
         }
         if code == nil { MeasureContainer.keepProse(styled, to: store.measure) }
         for fold in folds {
@@ -576,6 +662,119 @@ extension MarkdownStyler {
             }
             offset = run.location + run.length
         }
+        if prose { respace(after: paragraphs, in: storage) }
+    }
+
+    /// Sets the space above the first block after `paragraphs`, which depends on the text above it, where it changed:
+    /// one paragraph style in the same write, so a restyle reaches no further than the text it styles.
+    private func respace(after paragraphs: NSRange, in storage: NSTextStorage) {
+        var after: BlockMap.Block?
+        map.walk(from: NSMaxRange(paragraphs)) { block in
+            after = block
+            return false
+        }
+        guard let block = after, block.range.location >= NSMaxRange(paragraphs), let gap = gap(at: block.range.location, kind: block.kind),
+            !folds.contains(where: { NSLocationInRange(block.range.location, $0) })
+        else { return }
+        let first = storage.mutableString.paragraphRange(for: NSRange(location: block.range.location, length: 0))
+        guard let style = storage.attribute(.paragraphStyle, at: first.location, effectiveRange: nil) as? NSParagraphStyle else { return }
+        // A change's folded stamp before the block adds its room, as the restyle's own pass for it does.
+        let room: CGFloat = storage.attribute(.dewlineBlock, at: first.location, effectiveRange: nil) != nil ? 0
+            : (textView?.marks.space(in: first) ?? []).reduce(0) { $0 + ($1.before ? $1.height : 0) }
+        guard style.paragraphSpacingBefore != gap + room else { return }
+        let attributes = [NSAttributedString.Key.paragraphStyle.rawValue: spaced(style, gap + room)] as CFDictionary
+        CFAttributedStringSetAttributes(storage, CFRange(location: first.location, length: first.length), attributes, false)
+    }
+
+    /// The space the block of `kind` at `location` takes above its first line: what the block before it asks, 0 at the
+    /// top of the note, less the blank lines between them at their drawn height. Nil for a table row under its table's
+    /// head or a row, and a top-level item under an item, which their own layouts space. A fresh line above stands for
+    /// the paragraph typing there will make.
+    private func gap(at location: Int, kind: MarkdownBlock.Kind) -> CGFloat? {
+        let store = ThemeStore.shared
+        let line = store.bodyLineHeight
+        let text = textView!.textStorage!.mutableString
+        var blanks: CGFloat = 0
+        var top = location
+        var typed = false
+        // Four blank lines draw more than any gap.
+        for _ in 0..<4 where top > 0 {
+            let above = text.paragraphRange(for: NSRange(location: top - 1, length: 0))
+            if above.location == fresh {
+                typed = true
+                break
+            }
+            guard Self.isBlank(above, in: text) else { break }
+            if !folds.contains(where: { NSLocationInRange(above.location, $0) }) { blanks += line / 2 }
+            top = above.location
+        }
+        var before: MarkdownBlock.Kind? = typed ? .paragraph : nil
+        if !typed {
+            map.walk(from: location, backward: true) { block in
+                before = block.kind
+                return false
+            }
+        }
+        let wanted: CGFloat
+        switch (kind, before) {
+        case (_, nil): wanted = 0
+        case (.tableRow, .tableHead?), (.tableRow, .tableRow?), (.item, .item?): return nil
+        // A paragraph right under a fresh line is the text that line's typing joins, and one right under a paragraph is
+        // that paragraph's continuation, which only a window parse splits off until the whole parse lands.
+        case (.paragraph, .paragraph?) where top == location: wanted = 0
+        case (.heading, .heading?): wanted = 0.75 * line
+        case (.heading(let level), _): wanted = store.heading(level).spaceAbove
+        case (.tableHead, .heading?): wanted = line / 2
+        case (.tableHead, _), (_, .tableHead?), (_, .tableRow?): wanted = line
+        default: wanted = line / 2
+        }
+        return max(wanted - blanks, 0)
+    }
+
+    /// How an empty line at `location` lays out until typing there, so the first character moves nothing, in a note in
+    /// Live: as a body line of the paragraph, item or quote text right above it, which typing there continues, else as a
+    /// paragraph with the space a paragraph takes there. Nil off an empty line and in code, front matter and HTML.
+    func freshStyle(at location: Int) -> NSParagraphStyle? {
+        guard !showsSource, code == nil, let storage = textView?.textStorage else { return nil }
+        return freshStyle(at: location) { storage.attribute(.paragraphStyle, at: $0, effectiveRange: nil) as? NSParagraphStyle }
+    }
+
+    /// `freshStyle(at:)` with the paragraph styles `style(at:)` reads.
+    private func freshStyle(at location: Int, style: (Int) -> NSParagraphStyle?) -> NSParagraphStyle? {
+        let text = textView!.textStorage!.mutableString
+        let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+        guard Self.isBlank(paragraph, in: text),
+            !map.blocks(in: NSRange(location: paragraph.location, length: 0)).contains(where: { [.code, .html, .frontMatter].contains($0.kind) })
+        else { return nil }
+        let line = ThemeStore.shared.bodyLineHeight
+        if paragraph.location > 0 {
+            let above = text.paragraphRange(for: NSRange(location: paragraph.location - 1, length: 0))
+            if !Self.isBlank(above, in: text, quoted: true),
+                map.blocks(in: NSRange(location: above.location, length: 0)).contains(where: { [.paragraph, .item, .quote, .callout].contains($0.kind) }),
+                let style = style(above.location)
+            {
+                if let continued = continuedStyles[style], continued.minimumLineHeight == line { return continued }
+                let continued = style.mutableCopy() as! NSMutableParagraphStyle
+                (continued.minimumLineHeight, continued.maximumLineHeight, continued.paragraphSpacingBefore, continued.paragraphSpacing) = (line, line, 0, 0)
+                continuedStyles[style] = continued
+                return continued
+            }
+        }
+        return ThemeStore.shared.paragraphStyle(lineHeight: line, before: gap(at: paragraph.location, kind: .paragraph) ?? 0)
+    }
+
+    /// `style` with `amount` above it.
+    private func spaced(_ style: NSParagraphStyle, _ amount: CGFloat) -> NSParagraphStyle {
+        if let spaced = spacedStyles[style]?[amount] { return spaced }
+        let spaced = style.mutableCopy() as! NSMutableParagraphStyle
+        spaced.paragraphSpacingBefore = amount
+        spacedStyles[style, default: [:]][amount] = spaced
+        return spaced
+    }
+
+    /// Whether `paragraph` holds only spaces, tabs, its line break and, when `quoted`, quote markers.
+    private static func isBlank(_ paragraph: NSRange, in text: NSString, quoted: Bool = false) -> Bool {
+        (paragraph.location..<NSMaxRange(paragraph)).allSatisfy { [0x20, 0x09, 0x0A, 0x0D].contains(text.character(at: $0)) || (quoted && text.character(at: $0) == 0x3E) }
     }
 
     /// `current` with `wanted`'s value for each key styling owns, or nil when the two agree on all of them.
@@ -636,6 +835,12 @@ extension MarkdownStyler {
     func updateReveal() {
         LatencyProbe.begin(.reveal)
         defer { LatencyProbe.end(.reveal) }
+        // A fresh line the caret leaves empty is a blank line.
+        var left: [NSRange] = []
+        if let at = fresh, textView!.selectedRanges.map(\.rangeValue) != [NSRange(location: at, length: 0)] {
+            fresh = nil
+            left = [NSRange(location: at, length: 0)]
+        }
         guard !showsSource else { return }
         let textView = textView!
         let storage = textView.textStorage!
@@ -657,7 +862,7 @@ extension MarkdownStyler {
         let show = now.subtracting(revealed)
         revealed = now
         let changedBlocks = blocks.revealChanges(selection) + tables.revealChanges(selection) + tasks.revealChanges(selection)
-            + fences.revealChanges(selection, in: storage.mutableString) + math.revealChanges(selection) + cards.revealChanges(selection)
+            + fences.revealChanges(selection, in: storage.mutableString) + math.revealChanges(selection) + cards.revealChanges(selection) + left
         guard !hide.isEmpty || !show.isEmpty || !changedBlocks.isEmpty else { return }
         storage.beginEditing()
         // In document order, the storage's attribute writes stay linear in the span count.
@@ -747,4 +952,12 @@ extension NSAttributedString.Key {
     static let dewlineMarkerFont = NSAttributedString.Key("DewlineMarkerFont")
     /// A code span, whose chip the view draws under the change marks.
     static let dewlineCodeChip = NSAttributedString.Key("DewlineCodeChip")
+    /// A heading's paragraph, whose markers hang this many points into the left margin.
+    static let dewlineHang = NSAttributedString.Key("DewlineHang")
+    /// A thematic break's line, which the view draws as a rule.
+    static let dewlineRule = NSAttributedString.Key("DewlineRule")
+    /// A list item's marker, by the item's depth.
+    static let dewlineListMarker = NSAttributedString.Key("DewlineListMarker")
+    /// Characters the caret never rests among.
+    static let dewlineSkip = NSAttributedString.Key("DewlineSkip")
 }

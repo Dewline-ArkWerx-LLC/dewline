@@ -290,7 +290,8 @@ struct RenderedBlockTests {
         #expect(editor.rect(fence, 3).width > 2 && editor.rect(tex, 2).width > 2, "the source shows")
         let between = closing + 4
         let gap = editor.rect(closing, 3).minY - editor.rect(between, 1).maxY
-        #expect(abs(gap - BlockLine.errorHeight) <= 0.5, "the error line is \(gap) pt")
+        // "Between" follows the closing fence with no blank line, so the paragraph gap comes after the error's room.
+        #expect(abs(gap - (BlockLine.errorHeight + ThemeStore.shared.bodyLineHeight / 2)) <= 0.5, "the error line is \(gap) pt")
         editor.place((text as NSString).range(of: "a diagram").location)
         editor.view.insertText("x", replacementRange: editor.view.selectedRange())
         #expect(editor.view.string == text.replacingOccurrences(of: "not a", with: "not xa") + "!?")

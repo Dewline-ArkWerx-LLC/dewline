@@ -11,6 +11,8 @@ final class EditorTextView: CaretTextView {
     private var composing = false
     private var toggleWaits = false
     private var held: (anchor: Int, offset: CGFloat)?
+    /// The line the last `hold` placed and the offset it aimed that line's baseline at.
+    private(set) var aimed: (anchor: Int, offset: CGFloat)?
     private weak var snapshot: NSView?
     /// When the last toggle committed its first frame and started the fade.
     private(set) var fadeStarted: ContinuousClock.Instant?
@@ -123,6 +125,7 @@ final class EditorTextView: CaretTextView {
             NSSpellChecker.shared.ignoreWord(word, inSpellDocumentWithTag: spellCheckerDocumentTag)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange(_:)), name: ThemeStore.didChange, object: ThemeStore.shared)
+        NotificationCenter.default.addObserver(self, selector: #selector(willSwitchToTextKit1(_:)), name: NSTextView.willSwitchToNSLayoutManagerNotification, object: self)
     }
 
     required init?(coder: NSCoder) {
@@ -214,6 +217,13 @@ final class EditorTextView: CaretTextView {
         applyTheme()
         styler.restyleDocument()
         styler.highlights.recolor()
+    }
+
+    /// Live draws its bullets, boxes, rules and hangs in TextKit 2's layout fragments, which a switch to TextKit 1 drops;
+    /// Source is attributes alone, so the note shows its source instead.
+    @objc private func willSwitchToTextKit1(_ notification: Notification) {
+        guard !styler.showsSource else { return }
+        styler.toggleSource(restyling: NSRange(location: 0, length: textStorage!.length))
     }
 
     override var string: String {
@@ -356,7 +366,9 @@ final class EditorTextView: CaretTextView {
             case .picture(let picture, let label)?:
                 let line = firstRect(forCharacterRange: NSRange(location: range.location, length: 0), actualRange: nil)
                 let x = line.minX + picture.x(in: textContainer?.column ?? 0)
-                let frame = NSRect(x: x, y: line.maxY - picture.size.height, width: picture.size.width, height: picture.size.height)
+                // The block's frame, as its fragment lays it out: from the space above it to the picture's foot.
+                let above = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.paragraphSpacingBefore ?? 0
+                let frame = NSRect(x: x, y: line.maxY - picture.size.height, width: picture.size.width, height: picture.size.height + above)
                 children.append(NSAccessibilityElement.element(withRole: .image, frame: frame, label: label, parent: self))
             case .task(let task)?:
                 let box = range.location + task.at
@@ -630,22 +642,58 @@ final class EditorTextView: CaretTextView {
         for key in [NSAttributedString.Key.font, .foregroundColor, .paragraphStyle] {
             typingAttributes[key] = neighbor[key]
         }
+        typeInTheCaretsLine()
+    }
+
+    /// A caret on an empty line, or at the end of the note, types in the body's font and color on the line typing there
+    /// makes, and one at a paragraph's start in that paragraph's style rather than the line's above, so neither the first
+    /// character nor marked text moves anything.
+    private func typeInTheCaretsLine() {
+        let caret = selectedRange()
+        let storage = textStorage!
+        let text = storage.mutableString
+        guard caret.length == 0, styler.code == nil, !styler.showsSource else { return }
+        var attributes = typingAttributes
+        if let style = styler.freshStyle(at: caret.location) {
+            let base = styler.baseAttributes
+            attributes[.font] = base[.font]
+            attributes[.foregroundColor] = base[.foregroundColor]
+            attributes[.paragraphStyle] = style
+        } else if caret.location > 0, caret.location < text.length, [0x0A, 0x0D].contains(text.character(at: caret.location - 1)) {
+            attributes[.paragraphStyle] = storage.attribute(.paragraphStyle, at: caret.location, effectiveRange: nil)
+        } else {
+            return
+        }
+        typingAttributes = attributes
+        // The line after the note's last line break takes its height from the typing attributes when the paragraph
+        // before it lays out again.
+        let length = text.length
+        guard caret.location == length, length > 0, let layout = textLayoutManager, let content = layout.textContentManager,
+            let last = content.location(content.documentRange.location, offsetBy: length - 1),
+            let range = NSTextRange(location: last, end: content.documentRange.endLocation)
+        else { return }
+        layout.invalidateLayout(for: range)
     }
 
     /// Scrolls so the baseline of the line holding `anchor` sits `offset` below the top of the visible rect.
     func hold(_ anchor: Int, at offset: CGFloat) {
         guard let layout = textLayoutManager else { return }
+        aimed = (anchor, offset)
         let visible = visibleRect
-        // TextKit 2 sizes the view and stacks the viewport from estimates it refreshes as it lays the viewport out:
-        // lay out, scroll to the line, lay out again, correct. A refresh can leave the clip view a fraction of a pixel
-        // off the grid, where a scroll to a point lands up to a pixel from it, so the scroll moves by whole pixels and
-        // lands within half of one.
+        // TextKit 2 sizes the view and stacks the viewport from estimates it refreshes as it lays the viewport out, and
+        // places a line below text it has not laid out by that text's estimated height: lay out, scroll to the line, and
+        // repeat until a layout leaves the line where it should be. A refresh can leave the clip view a fraction of a
+        // pixel off the grid, where a scroll to a point lands up to a pixel from it, so the scroll moves by whole pixels
+        // and lands within half of one; at either end of the text the view cannot scroll on.
         let pixel = 1 / (window?.backingScaleFactor ?? 1)
-        for _ in 0..<2 {
+        for _ in 0..<4 {
             layout.textViewportLayoutController.layoutViewport()
             guard let now = baseline(at: anchor) else { return }
             let top = visibleRect.minY
-            scroll(NSPoint(x: visible.minX, y: top + ((now - offset - top) / pixel).rounded() * pixel))
+            let step = ((now - offset - top) / pixel).rounded() * pixel
+            guard step != 0 else { return }
+            scroll(NSPoint(x: visible.minX, y: top + step))
+            guard visibleRect.minY != top else { return }
         }
     }
 
@@ -674,14 +722,20 @@ final class EditorTextView: CaretTextView {
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         guard !stillSelecting else { return }
+        typeInTheCaretsLine()
         marks.caretMoved()
         updateFocus()
         centerCaretSoon()
     }
 
-    /// Return breaks the line with CRLF in a note whose lines end that way.
+    /// Return breaks the line with CRLF in a note whose lines end that way. An empty line after the break is fresh.
     override func insertNewline(_ sender: Any?) {
         guard hasMarkedText() || !continueList() else { return }
+        let selection = selectedRange()
+        let text = textStorage!.mutableString
+        if !hasMarkedText(), NSMaxRange(selection) == text.length || [0x0A, 0x0D].contains(text.character(at: NSMaxRange(selection))) {
+            styler.fresh = selection.location
+        }
         if !hasMarkedText(), lineBreak == "\r\n" {
             insertText("\r\n", replacementRange: selectedRange())
         } else {
@@ -1012,9 +1066,10 @@ extension NSAttributedString.Key {
     static let dewlineQuote = NSAttributedString.Key("DewlineQuote")
 }
 
-/// The layout manager's delegate: `BlockFragments` lays out drawn blocks, a list item with a hidden bullet draws its
-/// dot with its own line, so the dot moves whenever the line does, and no line breaks between a hidden marker and the
-/// text it closes, such as a code span's closing backtick and the period after it.
+/// The layout manager's delegate: `BlockFragments` lays out drawn blocks, a paragraph's hanging markers sit in the
+/// margin, a list item with a hidden bullet draws its dot with its own line, so the dot moves whenever the line does,
+/// and no line breaks between a hidden marker and the text it closes, such as a code span's closing backtick and the
+/// period after it.
 private final class Fragments: NSObject, NSTextLayoutManagerDelegate {
     private let blocks = BlockFragments()
 
@@ -1026,6 +1081,9 @@ private final class Fragments: NSObject, NSTextLayoutManagerDelegate {
         guard let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0,
             paragraph.attributedString.attribute(.dewlineBlock, at: 0, effectiveRange: nil) == nil
         else { return blocks.textLayoutManager(textLayoutManager, textLayoutFragmentFor: location, in: textElement) }
+        if let hang = paragraph.attributedString.attribute(.dewlineHang, at: 0, effectiveRange: nil) as? CGFloat {
+            return HangFragment(hang: hang, textElement: textElement)
+        }
         guard let bullet = BulletFragment.bullet(in: paragraph.attributedString) else {
             return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
         }
@@ -1037,6 +1095,24 @@ private final class Fragments: NSObject, NSTextLayoutManagerDelegate {
         let at = content.offset(from: content.documentRange.location, to: location)
         guard at > 0, at < storage.length, (storage.attribute(.font, at: at, effectiveRange: nil) as? NSFont)?.pointSize ?? 1 < 1 else { return true }
         return [0x20, 0x09, 0x0A, 0x0D, 0xA0].contains(storage.mutableString.character(at: at - 1))
+    }
+}
+
+/// A paragraph whose first characters hang `.dewlineHang` points into the left margin, carets and clicks with them.
+private final class HangFragment: NSTextLayoutFragment {
+    private let hang: CGFloat
+
+    init(hang: CGFloat, textElement: NSTextElement) {
+        self.hang = hang
+        super.init(textElement: textElement, range: textElement.elementRange)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("HangFragment is built in code")
+    }
+
+    override var leadingPadding: CGFloat {
+        -hang
     }
 }
 

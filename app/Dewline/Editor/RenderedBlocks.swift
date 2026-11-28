@@ -14,7 +14,9 @@ final class RenderedBlocks {
     private var pending: Set<PictureRequest> = []
     private let queue = DispatchQueue(label: "dev.arkwerx.dewline.pictures", qos: .utility)
 
-    private static let sourceLines = lines(20)
+    private static var sourceLines: NSParagraphStyle {
+        ThemeStore.shared.paragraphStyle(lineHeight: ThemeStore.shared.bodyLineHeight)
+    }
     static let collapsedLines = lines(0.01)
 
     init(map: BlockMap) {

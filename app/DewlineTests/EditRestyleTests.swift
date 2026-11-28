@@ -39,7 +39,7 @@ private struct Editor {
         view.styler.restyleDocument()
         let keys: [NSAttributedString.Key] = [
             .font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .strikethroughStyle, .kern,
-            .dewlineMarkerFont, .dewlineBlock, .dewlineQuote,
+            .dewlineMarkerFont, .dewlineBlock, .dewlineQuote, .dewlineHang, .dewlineRule, .dewlineListMarker, .dewlineSkip,
         ]
         for offset in 0..<storage.length {
             let old = before.attributes(at: offset, effectiveRange: nil)
@@ -75,6 +75,17 @@ struct EditRestyleTests {
         defer { editor.close() }
         editor.view.insertNewline(nil)
         #expect(editor.view.string == "Some **bold\n words** here\nNext line\n")
+        #expect(editor.restyleChanges() == nil)
+    }
+
+    /// A paragraph that becomes an item over an item leaves that item the space a list gives it, not the gap it had under
+    /// the paragraph.
+    @Test func anItemOverAnItemTakesTheListsSpacing() {
+        let editor = Editor("x\n- a\n", caret: 0)
+        defer { editor.close() }
+        editor.view.styler.restyleDocument()
+        editor.view.insertText("- ", replacementRange: NSRange(location: 0, length: 0))
+        #expect(editor.view.string == "- x\n- a\n")
         #expect(editor.restyleChanges() == nil)
     }
 

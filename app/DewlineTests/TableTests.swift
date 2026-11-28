@@ -467,6 +467,10 @@ struct TableTests {
             #expect(hairline.count == 1 && abs((hairline.first ?? 0) - fragment.lineTop / 2) <= 0.5, "the hairline's rows \(hairline)")
             let faint = contrast(drawn.pixel(x: fragment.tableStart + 20, y: hairline.first ?? 0))
             #expect(faint > 0 && faint <= ruleContrast * 2 / 3, "hairline \(faint) against the rule's \(ruleContrast)")
+            guard case .table(let rowRule) = fragment.line.role else { Issue.record("no rule on a body row"); return }
+            let end = fragment.tableStart + rowRule.width
+            #expect(drawn.inked(left: end - 40, right: end - 1, top: 0, bottom: fragment.lineTop) == hairline, "the hairline's right end")
+            #expect(fragment.renderingSurfaceBounds.maxX >= end, "bounds \(fragment.renderingSurfaceBounds) short of the hairline's end at \(end)")
         }
         let heading = try editor.lineBox(at: 0), head = try editor.lineBox(at: rows[0])
         #expect(abs(head.minY - heading.maxY - line / 2) <= 0.5)
@@ -477,6 +481,10 @@ struct TableTests {
         guard case .table(let wrapped) = wide.line.role, wrapped.cells.count == 5 else { Issue.record("the wide table does not wrap at 900"); return }
         let platform = wrapped.cells[1]
         let drawnTop = try Drawn(wide).inked(left: wide.tableStart + platform.x, right: wide.tableStart + platform.x + platform.width, top: wide.lineTop).first
+        let escalation = try #require(wrapped.cells.last)
+        let escalationEnd = wide.tableStart + escalation.x + escalation.width
+        #expect(try Drawn(wide).center(left: wide.tableStart + escalation.x, right: escalationEnd) != nil, "the last column draws no text")
+        #expect(wide.renderingSurfaceBounds.maxX >= escalationEnd, "bounds \(wide.renderingSurfaceBounds) short of the last column's end at \(escalationEnd)")
         let plain = try #require(editor.fragment(at: rows[1]) as? BlockFragment)
         let notes = editor.frame("First retry is fast so a blip costs nothing")
         let plainTop = try Drawn(plain).inked(left: editor.x(notes.minX, in: plain), right: editor.x(notes.maxX, in: plain), top: plain.lineTop).first

@@ -129,7 +129,9 @@ final class BlockFragment: NSTextLayoutFragment {
         case .picture(let picture, _): CGRect(origin: CGPoint(x: picture.x(in: column), y: lineTop), size: picture.size)
         case .collapsed: .zero
         case .table(let rule):
-            super.renderingSurfaceBounds.union(CGRect(x: min(textStart, 0), y: -1, width: tableStart + rule.width + 1, height: layoutFragmentFrame.height + 2))
+            super.renderingSurfaceBounds.union(CGRect(
+                x: min(textStart, 0), y: -1, width: tableStart + rule.width + 1 - min(textStart, 0), height: layoutFragmentFrame.height + 2
+            ))
         case .task: super.renderingSurfaceBounds
         case .summary(let line): CGRect(origin: .zero, size: CGSize(width: line.size().width + 16, height: layoutFragmentFrame.height))
         case .error:

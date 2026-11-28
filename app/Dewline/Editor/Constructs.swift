@@ -199,23 +199,31 @@ enum CalloutGlyph: CaseIterable {
 extension EditorTextView {
     /// Fills each callout in `visible` with the code well and draws its type's glyph before the title.
     func drawCallouts(in visible: NSRange, line: (Int) -> NSRect) {
-        let storage = textStorage!
-        let padding = textContainer?.lineFragmentPadding ?? 0
-        let left = textContainerOrigin.x + padding
-        var drawn = Set<Int>()
-        storage.enumerateAttribute(.dewlineCallout, in: visible) { value, range, _ in
-            guard let type = value as? String else { return }
-            var whole = NSRange()
-            storage.attribute(.dewlineCallout, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
-            guard drawn.insert(whole.location).inserted else { return }
-            let top = line(whole.location)
+        let left = textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0)
+        for (well, top, type) in callouts(in: visible, line: line) {
             ThemeStore.shared.color(.codeBackground).setFill()
-            NSBezierPath(roundedRect: calloutWell(top: top, bottom: line(max(NSMaxRange(whole) - 1, whole.location))), xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: well, xRadius: 6, yRadius: 6).fill()
             let look = Constructs.look(type)
             let size = (ThemeStore.shared.bodyFont.pointSize * 0.94).rounded()
             let indent = ThemeStore.shared.quoteParagraphStyle.firstLineHeadIndent
             look.glyph.draw(in: NSRect(x: left + indent + (Constructs.iconSpace - size) / 2 - 2, y: top.midY - size / 2, width: size, height: size), color: look.color)
         }
+    }
+
+    /// Each callout in `visible` that a fold doesn't hide: its well, its first line and its type.
+    func callouts(in visible: NSRange, line: (Int) -> NSRect) -> [(well: NSRect, top: NSRect, type: String)] {
+        let storage = textStorage!
+        var callouts: [(well: NSRect, top: NSRect, type: String)] = []
+        var drawn = Set<Int>()
+        storage.enumerateAttribute(.dewlineCallout, in: visible) { value, range, _ in
+            guard let type = value as? String else { return }
+            var whole = NSRange()
+            storage.attribute(.dewlineCallout, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
+            guard drawn.insert(whole.location).inserted, !collapsed(at: whole.location) else { return }
+            let top = line(whole.location)
+            callouts.append((calloutWell(top: top, bottom: line(max(NSMaxRange(whole) - 1, whole.location))), top, type))
+        }
+        return callouts
     }
 
     /// A callout's well from the line at `top` to the one at `bottom`, as wide as the column, with the code well's

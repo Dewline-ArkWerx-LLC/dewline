@@ -324,15 +324,29 @@ final class EditorTextView: CaretTextView {
             let bottom = line(at: max(NSMaxRange(range) - 1, range.location))
             NSRect(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0), y: top.minY, width: 2, height: bottom.maxY - top.minY).fill()
         }
+        for rule in rules(in: visible, line: line(at:)) { rule.fill() }
+        drawInlineMath(in: visible, line: line(at:))
+    }
+
+    /// The rule of each thematic break in `visible` that a fold doesn't hide.
+    func rules(in visible: NSRange, line: (Int) -> NSRect) -> [NSRect] {
+        let storage = textStorage!
+        var rules: [NSRect] = []
         storage.enumerateAttribute(.dewlineRule, in: visible) { value, range, _ in
             guard value != nil else { return }
             var at = range.location
             while at < NSMaxRange(range) {
-                rule(on: line(at: at)).fill()
+                if !collapsed(at: at) { rules.append(rule(on: line(at))) }
                 at = NSMaxRange(storage.mutableString.paragraphRange(for: NSRange(location: at, length: 0)))
             }
         }
-        drawInlineMath(in: visible, line: line(at:))
+        return rules
+    }
+
+    /// Whether the line at `index` is collapsed: folded, or hidden in a rendered block.
+    func collapsed(at index: Int) -> Bool {
+        guard case .collapsed? = (textStorage!.attribute(.dewlineBlock, at: index, effectiveRange: nil) as? BlockLine)?.role else { return false }
+        return true
     }
 
     /// A thematic break's rule on its line: 1 pt, 4 em wide, centered on the column at the line's middle.
@@ -364,7 +378,7 @@ final class EditorTextView: CaretTextView {
         guard let layout = textLayoutManager, let content = layout.textContentManager else { return [] }
         var chips: [(rect: NSRect, button: Bool)] = []
         storage.enumerateAttribute(.dewlineCodeChip, in: visible) { value, range, _ in
-            guard value != nil else { return }
+            guard value != nil, !collapsed(at: range.location) else { return }
             let button = value as? String == LinkCards.button
             var code = range
             while !button, code.length > 0, text.character(at: NSMaxRange(code) - 1) == 0x60 { code.length -= 1 }

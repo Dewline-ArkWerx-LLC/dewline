@@ -690,6 +690,24 @@ struct TextRhythmTests {
         #expect(editor.restyleChanges() == nil)
     }
 
+    /// A folded section draws no callout well, thematic break rule or code chip for the text it hides.
+    @Test func aFoldDrawsNothingItHides() throws {
+        let text = "# A\n\n> [!note] Title\n> Body.\n\n---\n\nSome `code` here.\n\n# B\n"
+        let editor = try Rhythm(text)
+        defer { editor.close() }
+        let all = NSRange(location: 0, length: try #require(editor.view.textStorage).length)
+        let line: (Int) -> NSRect = { editor.firstRect(NSRange(location: $0, length: 0)) }
+        #expect(editor.view.callouts(in: all, line: line).count == 1)
+        #expect(editor.view.rules(in: all, line: line).count == 1)
+        #expect(editor.view.codeChips(in: all).filter { !$0.button }.count == 1)
+        editor.view.foldBlock(nil)
+        editor.settle()
+        try #require(editor.view.styler.folds.count == 1, "the section under A folds")
+        #expect(editor.view.callouts(in: all, line: line).isEmpty, "a folded callout's well")
+        #expect(editor.view.rules(in: all, line: line).isEmpty, "a folded break's rule")
+        #expect(editor.view.codeChips(in: all).isEmpty, "a folded code span's chip")
+    }
+
     /// 5.11: a caret proposed inside a run marked `.dewlineSkip` moves past it the way it moved; a run that starts its
     /// line takes the line's start with it and one that ends its line the line's end. Selections and Source pass.
     @Test func theCaretSkipsMarkedRuns() throws {

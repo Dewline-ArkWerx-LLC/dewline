@@ -430,7 +430,7 @@ struct TableTests {
         // A blank typed after a cell's text holds the caret for the word after it.
         editor.place(NSMaxRange(editor.find("applex")))
         for typed in [" ", "y"] { editor.edit { view.insertText(typed, replacementRange: view.selectedRange()) } }
-        #expect(view.string.contains("| applex y |   3 |"))
+        #expect(view.string == "| Name   | Qty |\n|--------|----:|\n| applex y  |   3 |\n")
     }
 
     /// T2: rows 1.5 lines apart, a 1 pt rule in the half-line delimiter line, a fainter one-pixel hairline between body

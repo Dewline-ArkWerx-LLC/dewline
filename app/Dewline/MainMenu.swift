@@ -151,7 +151,7 @@ enum MainMenu {
             menu.addItem(format(command, key, modifiers))
         }
         menu.addItem(.separator())
-        for command in [TableEditing.rowAbove, .rowBelow, .columnLeft, .columnRight] {
+        for command in TableEditing.menu {
             menu.addItem(withTitle: command.name, action: #selector(EditorTextView.editTableItem(_:)), keyEquivalent: "").tag = command.rawValue
         }
         return menu

@@ -85,6 +85,13 @@ struct TableKeyTests {
         #expect(editor.view.styler.fresh == editor.caret)
         #expect(editor.view.styler.tables.range(at: editor.caret) == nil)
 
+        let crlf = Self.text.replacingOccurrences(of: "\n", with: "\r\n") + "|   |   |   |\r\n"
+        let ended = Editor(crlf, at: "|   |   | ")
+        ended.edit { ended.view.insertNewline(nil) }
+        #expect(ended.text == Self.text.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n\r\n")
+        #expect(ended.caret == (crlf as NSString).range(of: "|   |   |   |").location + 2)
+        #expect(ended.view.styler.fresh == ended.caret)
+
         let option = Editor(Self.text, at: "5")
         option.edit { option.view.insertNewlineIgnoringFieldEditor(nil) }
         #expect(option.text == Self.text)

@@ -194,6 +194,11 @@ struct SmartListTests {
         #expect(editor.caret == 3)
         editor.undo()
         #expect(editor.text == "- a\n  b")
+        // At a nested item's marker, past its hidden indent, the item stays an item.
+        let marker = Editor("- a\n  - b", caret: 6)
+        marker.view.textStorage!.addAttribute(.dewlineSkip, value: true, range: NSRange(location: 4, length: 2))
+        marker.edit { marker.view.deleteBackward(nil) }
+        #expect(marker.text.hasPrefix("- a\n") && marker.text.hasSuffix("- b"))
     }
 }
 

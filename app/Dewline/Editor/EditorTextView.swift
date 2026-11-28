@@ -855,7 +855,11 @@ final class EditorTextView: CaretTextView {
             start -= 1
         }
         let line = text.lineRange(for: NSRange(location: start, length: 0))
-        guard start < caret.location, line.location > 0,
+        // A marker line's hidden blanks are an item's indent, not a continuation line's.
+        let startsItem = styler.map.blocks(touching: NSRange(location: caret.location, length: 0)).contains { block in
+            block.spans.contains { $0.kind == .item && (line.location...caret.location).contains(block.range.location + $0.range.location) }
+        }
+        guard start < caret.location, line.location > 0, !startsItem,
             text.substring(with: NSRange(location: line.location, length: start - line.location)).allSatisfy({ " \t>".contains($0) })
         else { return super.deleteBackward(sender) }
         var above = 0
@@ -1018,8 +1022,9 @@ final class EditorTextView: CaretTextView {
         }
         history.perform(command.name) {
             guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
-            // Return out of a table ends on a line break, which moves the fresh line onto the line after it.
-            if edit.replacement.hasSuffix("\n") { styler.fresh = edit.range.location }
+            // Return out of a table replaces the empty last row with a line break, which moves the fresh line onto the
+            // line after it.
+            if command == .nextRow, edit.range.length > 0 { styler.fresh = edit.range.location }
             textStorage!.replaceCharacters(in: edit.range, with: edit.replacement)
             setSelectedRange(edit.selection)
             didChangeText()

@@ -36,6 +36,8 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
         return height > 0 ? height : 22
     }()
     private var revealed: Set<SyntaxSpan> = []
+    /// The thematic breaks whose characters show, the caret on their line, by their block's range.
+    private var rules: Set<NSRange> = []
     /// The empty line Return made, laid out as the line typing there will make, until it gains a character, Return
     /// moves on from it or the caret leaves it.
     var fresh: Int?
@@ -77,6 +79,12 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
     private static let hiddenMarker = NSDictionary(
         objects: [hiddenFont, NSColor.clear], forKeys: [NSAttributedString.Key.font.rawValue as NSString, NSAttributedString.Key.foregroundColor.rawValue as NSString]
     )
+    /// A code span's hidden backtick's attributes by body size: a hidden marker's, kerned to keep the chip's room.
+    private static var hiddenBackticks: [CGFloat: NSDictionary] = [:]
+    /// The room a code span's chip leaves past its glyphs on each side: 0.2 em.
+    static var chipPad: CGFloat {
+        (0.2 * ThemeStore.shared.bodySize).rounded()
+    }
     /// The attributes styling owns; restyling leaves every other attribute in the storage as it is.
     private static let keys = [
         NSAttributedString.Key.font, .foregroundColor, .backgroundColor, .paragraphStyle, .underlineStyle, .underlineColor, .strikethroughStyle, .kern, .toolTip,
@@ -255,6 +263,10 @@ final class MarkdownStyler: NSObject, NSTextViewDelegate, NSTextStorageDelegate 
                 if NSMaxRange(span.range) < editedRange.location { return span }
                 guard span.range.location > oldEnd else { return nil }
                 return span.shifted(by: delta)
+            })
+            rules = Set(rules.compactMap { rule in
+                if NSMaxRange(rule) < editedRange.location { return rule }
+                return rule.location > oldEnd ? NSRange(location: rule.location + delta, length: rule.length) : nil
             })
             unstyled.remove(integersIn: editedRange.location..<oldEnd)
             unstyled.shift(startingAt: oldEnd, by: delta)
@@ -454,6 +466,7 @@ extension MarkdownStyler {
         let store = ThemeStore.shared
         styled.addAttributes(baseAttributes, range: whole)
         revealed = revealed.filter { !NSLocationInRange($0.range.location, paragraphs) }
+        rules = rules.filter { !NSLocationInRange($0.location, paragraphs) }
         let selection = selection.map { NSRange(location: $0.location - paragraphs.location, length: $0.length) }
         // A caret in an agent's marked change, where Next Change puts it, leaves the markers around it hidden.
         let changed = textView?.marks.painted.values.map { NSRange(location: $0.location - paragraphs.location, length: $0.length) } ?? []
@@ -488,6 +501,15 @@ extension MarkdownStyler {
                 let hang = widths[markers] ?? markers.size().width
                 widths[markers] = hang
                 styled.addAttributes([.dewlineHang: hang, .paragraphStyle: hung(style, hang)], range: first)
+            case .thematicBreak where !source:
+                // Its characters keep their room, clear under the rule the view draws, and show instead of it to a caret
+                // on their line.
+                if Self.touches(Self.line(lines, in: styled.mutableString), selection) {
+                    rules.insert(block.range)
+                    styled.addAttribute(.foregroundColor, value: store.color(.syntax), range: lines)
+                } else {
+                    styled.addAttributes([.foregroundColor: NSColor.clear, .dewlineRule: true], range: lines)
+                }
             case .quote where !source, .callout where !source:
                 styled.addAttributes([.paragraphStyle: store.quoteParagraphStyle, .foregroundColor: store.color(.heading), .dewlineQuote: true], range: lines)
                 // A line holding only its markers is the quote's blank line.
@@ -539,33 +561,8 @@ extension MarkdownStyler {
             for hit in Links.imports(in: styled.mutableString, range: lines, at: paragraphs.location, of: block) where !source {
                 styled.addAttributes(Links.style, range: hit.range)
             }
-            // An item's later lines hang under its text, past its marker.
-            for item in block.spans where item.kind == .item && !source {
-                let item = item.shifted(by: offset)
-                let paragraph = styled.mutableString.paragraphRange(for: NSRange(location: item.range.location, length: 0))
-                guard item.content.location <= NSMaxRange(paragraph) else { continue }
-                let style = (styled.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle ?? .default).mutableCopy() as! NSMutableParagraphStyle
-                let marker = NSRange(location: paragraph.location, length: item.content.location - paragraph.location)
-                func measure(_ range: NSRange) -> CGFloat {
-                    let text = styled.attributedSubstring(from: range)
-                    let width = widths[text] ?? text.size().width
-                    widths[text] = width
-                    return width
-                }
-                var width = measure(marker)
-                // A bullet's text starts an en space past it; a task's box stands in for its bullet.
-                let task = block.spans.contains { span in
-                    if case .taskBox = span.kind { return span.range.location + offset == item.content.location }
-                    return false
-                }
-                if Self.isBullet(at: item.range.location, in: styled.mutableString), !task, NSMaxRange(marker) - 1 > item.range.location,
-                    let font = styled.attribute(.font, at: item.range.location, effectiveRange: nil) as? NSFont {
-                    let hang = measure(NSRange(location: paragraph.location, length: item.range.location + 1 - paragraph.location)) + font.pointSize / 2
-                    styled.addAttribute(.kern, value: hang - width, range: NSRange(location: NSMaxRange(marker) - 1, length: 1))
-                    width = hang
-                }
-                style.headIndent = style.firstLineHeadIndent + width
-                styled.addAttribute(.paragraphStyle, value: style, range: paragraph)
+            if !source {
+                ListLayout.style(block, offset: offset, in: styled, widths: &widths, quoteIndent: [.quote, .callout].contains(block.kind) ? store.inset : 0)
             }
         }
         // A blank line is half a line, outside code, front matter and HTML. It counts toward the space between the
@@ -733,7 +730,8 @@ extension MarkdownStyler {
         case (.tableHead, _), (_, .tableHead?), (_, .tableRow?): wanted = line
         default: wanted = line / 2
         }
-        return max(wanted - blanks, 0)
+        // A callout's first line sits the well's room below the well's top, which keeps the gap above it.
+        return max(wanted - blanks, 0) + (kind == .callout ? Constructs.wellAbove : 0)
     }
 
     /// How an empty line at `location` lays out until typing there, so the first character moves nothing, in a note in
@@ -810,7 +808,7 @@ extension MarkdownStyler {
             if span.kind == .item {
                 // A bullet keeps its room, so the text stays put when it shows, and the view draws a dot over it. A
                 // number stays as typed.
-                guard Self.isBullet(at: marker.location, in: storage.mutableString) else { continue }
+                guard ListLayout.isBullet(at: marker.location, in: storage.mutableString) else { continue }
                 storage.addAttribute(.foregroundColor, value: revealed ? ThemeStore.shared.color(showsSource ? .ink2 : .syntax) : NSColor.clear, range: marker)
             } else if case .heading = span.kind, !showsSource {
                 // A heading's markers keep their room, in the margin, so the reveal writes their color alone.
@@ -819,11 +817,24 @@ extension MarkdownStyler {
                 let font = storage.attribute(.dewlineMarkerFont, at: marker.location, effectiveRange: nil)!
                 let quiet = span.kind == .quote
                 storage.addAttributes([.font: font, .foregroundColor: ThemeStore.shared.color(showsSource ? .ink2 : quiet ? .ink3 : .syntax)], range: marker)
+                if span.kind == .inlineCode { storage.removeAttribute(.kern, range: marker) }
             } else {
-                CFAttributedStringSetAttributes(storage, CFRange(location: marker.location, length: marker.length), Self.hiddenMarker, false)
+                // A code span's hidden backticks keep the room its chip takes past the code.
+                let hidden = span.kind == .inlineCode ? Self.hiddenBacktick : Self.hiddenMarker
+                CFAttributedStringSetAttributes(storage, CFRange(location: marker.location, length: marker.length), hidden, false)
             }
         }
         if span.kind == .quote, !showsSource { hang(span.markers, in: storage) }
+    }
+
+    /// A hidden marker's attributes with a kern of `chipPad`, for the body size.
+    private static var hiddenBacktick: NSDictionary {
+        let size = ThemeStore.shared.bodySize
+        if let hidden = hiddenBackticks[size] { return hidden }
+        let hidden = hiddenMarker.mutableCopy() as! NSMutableDictionary
+        hidden[NSAttributedString.Key.kern.rawValue as NSString] = chipPad
+        hiddenBackticks[size] = hidden
+        return hidden
     }
 
     /// Sets each quote line's `> ` in the quote's indent, so its text stays put while they show. A callout's title line
@@ -877,6 +888,7 @@ extension MarkdownStyler {
         revealed = now
         let changedBlocks = blocks.revealChanges(selection) + tables.revealChanges(selection) + tasks.revealChanges(selection)
             + fences.revealChanges(selection, in: storage.mutableString) + math.revealChanges(selection) + cards.revealChanges(selection) + left
+            + ruleChanges(selection, in: storage.mutableString)
         guard !hide.isEmpty || !show.isEmpty || !changedBlocks.isEmpty else { return }
         storage.beginEditing()
         // In document order, the storage's attribute writes stay linear in the span count.
@@ -890,6 +902,60 @@ extension MarkdownStyler {
         if hide.union(show).contains(where: { if case .heading = $0.kind { true } else { false } }) {
             textView.setNeedsDisplay(NSRect(x: 0, y: textView.visibleRect.minY, width: textView.textContainerOrigin.x, height: textView.visibleRect.height))
         }
+    }
+
+    /// The thematic breaks the selection reached or left since they were last styled.
+    private func ruleChanges(_ selection: [NSRange], in text: NSString) -> [NSRange] {
+        var now: Set<NSRange> = []
+        for range in selection {
+            for block in map.blocks(touching: range) where block.kind == .thematicBreak && Self.touches(Self.line(block.range, in: text), selection) {
+                now.insert(block.range)
+            }
+        }
+        return Array(now.symmetricDifference(rules))
+    }
+
+    /// A caret never rests among characters marked `.dewlineSkip`, nor at the start of a line one of their runs starts
+    /// or the end of one a run ends: proposed there, it moves to the first place past them the way it moved, or to the
+    /// nearer of the places on either side for a click. Selections, Source and code files pass.
+    func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRanges oldSelectedCharRanges: [NSValue], toCharacterRanges newSelectedCharRanges: [NSValue]) -> [NSValue] {
+        guard !showsSource, code == nil, let storage = textView.textStorage, newSelectedCharRanges.count == 1, newSelectedCharRanges[0].rangeValue.length == 0
+        else { return newSelectedCharRanges }
+        let proposed = newSelectedCharRanges[0].rangeValue.location
+        guard proposed <= storage.length, !Self.isStop(proposed, in: storage) else { return newSelectedCharRanges }
+        let text = storage.mutableString
+        func stop(from location: Int, forward: Bool) -> Int? {
+            var at = location
+            while !Self.isStop(at, in: storage) {
+                if forward ? at == text.length : at == 0 { return nil }
+                at = forward ? NSMaxRange(text.rangeOfComposedCharacterSequence(at: at)) : text.rangeOfComposedCharacterSequence(at: at - 1).location
+            }
+            return at
+        }
+        let (before, after) = (stop(from: proposed, forward: false), stop(from: proposed, forward: true))
+        var forward = proposed > (oldSelectedCharRanges.first?.rangeValue.location ?? 0)
+        if let event = NSApp.currentEvent, [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown].contains(event.type),
+            let window = textView.window, let before, let after
+        {
+            let x = window.convertPoint(toScreen: event.locationInWindow).x
+            func distance(_ location: Int) -> CGFloat {
+                abs(textView.firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil).minX - x)
+            }
+            forward = distance(after) < distance(before)
+        }
+        guard let moved = forward ? after ?? before : before ?? after else { return newSelectedCharRanges }
+        return [NSValue(range: NSRange(location: moved, length: 0))]
+    }
+
+    /// Whether a caret can rest at `location`: not inside a run of `.dewlineSkip`, nor at the start of a line one starts
+    /// or the end of a line one ends.
+    private static func isStop(_ location: Int, in storage: NSTextStorage) -> Bool {
+        let text = storage.mutableString
+        let start = location == 0 || [0x0A, 0x0D].contains(text.character(at: location - 1))
+        let end = location == text.length || [0x0A, 0x0D].contains(text.character(at: location))
+        let before = !start && storage.attribute(.dewlineSkip, at: location - 1, effectiveRange: nil) != nil
+        let after = !end && storage.attribute(.dewlineSkip, at: location, effectiveRange: nil) != nil
+        return !(before && after) && !(start && after) && !(end && before)
     }
 
     /// Restyles, between events, what a whole parse changed.
@@ -930,18 +996,24 @@ extension MarkdownStyler {
         }
     }
 
-    /// Whether the item marker at `index` is a `-`, `*` or `+`.
-    static func isBullet(at index: Int, in text: NSString) -> Bool {
-        [0x2D, 0x2A, 0x2B].contains(text.character(at: index))
-    }
-
     /// Whether one of `changes` lies wholly inside one of `span`'s markers.
     private static func hides(_ span: SyntaxSpan, _ changes: [NSRange]) -> Bool {
         changes.contains { change in change.length > 0 && span.markers.contains { $0.location <= change.location && NSMaxRange(change) <= NSMaxRange($0) } }
     }
 
     private static func touches(_ span: SyntaxSpan, _ selection: [NSRange]) -> Bool {
-        selection.contains { $0.location <= NSMaxRange(span.range) && NSMaxRange($0) >= span.range.location }
+        touches(span.range, selection)
+    }
+
+    private static func touches(_ range: NSRange, _ selection: [NSRange]) -> Bool {
+        selection.contains { $0.location <= NSMaxRange(range) && NSMaxRange($0) >= range.location }
+    }
+
+    /// The first line of `lines` in `text`, without its line break.
+    private static func line(_ lines: NSRange, in text: NSString) -> NSRange {
+        var (start, end, contentsEnd) = (0, 0, 0)
+        text.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: lines.location, length: 0))
+        return NSRange(location: start, length: contentsEnd - start)
     }
 
     private static func add(_ traits: NSFontDescriptor.SymbolicTraits, in range: NSRange, of storage: NSMutableAttributedString) {
@@ -974,8 +1046,6 @@ extension NSAttributedString.Key {
     static let dewlineHang = NSAttributedString.Key("DewlineHang")
     /// A thematic break's line, which the view draws as a rule.
     static let dewlineRule = NSAttributedString.Key("DewlineRule")
-    /// A list item's marker, by the item's depth.
-    static let dewlineListMarker = NSAttributedString.Key("DewlineListMarker")
     /// Characters the caret never rests among.
     static let dewlineSkip = NSAttributedString.Key("DewlineSkip")
 }

@@ -302,7 +302,7 @@ final class EditorTextView: CaretTextView {
     }
 
     /// Draws the fold disclosures, code wells, callouts, each quote's rule at the column's left edge (a callout's well
-    /// stands alone), and inline math.
+    /// stands alone), thematic breaks' rules, and inline math.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         drawDisclosures(in: rect)
@@ -324,34 +324,85 @@ final class EditorTextView: CaretTextView {
             let bottom = line(at: max(NSMaxRange(range) - 1, range.location))
             NSRect(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0), y: top.minY, width: 2, height: bottom.maxY - top.minY).fill()
         }
+        for rule in rules(in: visible, line: line(at:)) { rule.fill() }
         drawInlineMath(in: visible, line: line(at:))
+    }
+
+    /// The rule of each thematic break in `visible` that a fold doesn't hide.
+    func rules(in visible: NSRange, line: (Int) -> NSRect) -> [NSRect] {
+        let storage = textStorage!
+        var rules: [NSRect] = []
+        storage.enumerateAttribute(.dewlineRule, in: visible) { value, range, _ in
+            guard value != nil else { return }
+            var at = range.location
+            while at < NSMaxRange(range) {
+                if !collapsed(at: at) { rules.append(rule(on: line(at))) }
+                at = NSMaxRange(storage.mutableString.paragraphRange(for: NSRange(location: at, length: 0)))
+            }
+        }
+        return rules
+    }
+
+    /// Whether the line at `index` is collapsed: folded, or hidden in a rendered block.
+    func collapsed(at index: Int) -> Bool {
+        guard case .collapsed? = (textStorage!.attribute(.dewlineBlock, at: index, effectiveRange: nil) as? BlockLine)?.role else { return false }
+        return true
+    }
+
+    /// A thematic break's rule on its line: 1 pt, 4 em wide, centered on the column at the line's middle.
+    func rule(on line: NSRect) -> NSRect {
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let width = 4 * ThemeStore.shared.bodySize
+        let column = (textContainer?.column ?? 0) - 2 * padding
+        return NSRect(x: textContainerOrigin.x + padding + (column - width) / 2, y: line.midY - 0.5, width: width, height: 1)
     }
 
     /// Fills a rounded chip behind each code span in `visible`, line by line, under the change marks so a change's
     /// wash and underline run on across it; a `dewline:` link alone in its paragraph gets a button, the accent at 14%
     /// with a 6 pt radius, over the room its kerning leaves each side.
     private func drawCodeChips(in visible: NSRange) {
-        let storage = textStorage!
-        guard let layout = textLayoutManager, let content = layout.textContentManager else { return }
         let accent = ThemeStore.shared.color(.accent)
-        storage.enumerateAttribute(.dewlineCodeChip, in: visible) { value, range, _ in
-            guard value != nil, let font = storage.attribute(.font, at: NSMaxRange(range) - 1, effectiveRange: nil) as? NSFont,
-                let start = content.location(content.documentRange.location, offsetBy: range.location),
-                let end = content.location(start, offsetBy: range.length), let text = NSTextRange(location: start, end: end)
-            else { return }
-            let button = value as? String == LinkCards.button
+        for (chip, button) in codeChips(in: visible) {
             (button ? accent.withAlphaComponent(0.14) : ThemeStore.shared.color(.codeBackground)).setFill()
-            layout.enumerateTextSegments(in: text, type: .standard, options: []) { _, frame, baseline, _ in
+            NSBezierPath(roundedRect: chip, xRadius: button ? 6 : 3, yRadius: button ? 6 : 3).fill()
+        }
+    }
+
+    /// The chips `drawCodeChips` fills in `visible`, line by line, in the view. A code span's chip runs `chipPad` past
+    /// the glyphs that show, from 1 pt over the code's ascender to 1 pt under its descender; hidden, its backticks are
+    /// kerned to that room. A caret after a kerned character stands inside its kern, so a hidden span's chip runs from
+    /// the start of its opening backtick to the end of its code, and `chipPad` on.
+    func codeChips(in visible: NSRange) -> [(rect: NSRect, button: Bool)] {
+        let storage = textStorage!
+        let text = storage.mutableString
+        guard let layout = textLayoutManager, let content = layout.textContentManager else { return [] }
+        var chips: [(rect: NSRect, button: Bool)] = []
+        storage.enumerateAttribute(.dewlineCodeChip, in: visible) { value, range, _ in
+            guard value != nil, !collapsed(at: range.location) else { return }
+            let button = value as? String == LinkCards.button
+            var code = range
+            while !button, code.length > 0, text.character(at: NSMaxRange(code) - 1) == 0x60 { code.length -= 1 }
+            let hidden = !button && (storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 < 1
+            let drawn = hidden ? NSRange(location: range.location, length: NSMaxRange(code) - range.location) : range
+            guard code.length > 0, let font = storage.attribute(.font, at: NSMaxRange(code) - 1, effectiveRange: nil) as? NSFont,
+                let start = content.location(content.documentRange.location, offsetBy: drawn.location),
+                let end = content.location(start, offsetBy: drawn.length), let segments = NSTextRange(location: start, end: end)
+            else { return }
+            let pad = MarkdownStyler.chipPad
+            var first = true
+            layout.enumerateTextSegments(in: segments, type: .standard, options: []) { _, frame, baseline, _ in
                 guard frame.width >= 0.5 else { return true }
-                let (pad, rise, radius): (CGFloat, CGFloat, CGFloat) = button ? (LinkCards.buttonPad, 5, 6) : (1, 2, 3)
+                let (left, right, rise): (CGFloat, CGFloat, CGFloat) = button ? (LinkCards.buttonPad, 0, 5) : (first && hidden ? 0 : pad, pad, 1)
+                first = false
                 let chip = NSRect(
-                    x: frame.minX - pad, y: frame.minY + baseline - font.ascender - rise, width: frame.width + (button ? pad : 2),
+                    x: frame.minX - left, y: frame.minY + baseline - font.ascender - rise, width: frame.width + left + right,
                     height: font.ascender - font.descender + 2 * rise
                 )
-                NSBezierPath(roundedRect: chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), xRadius: radius, yRadius: radius).fill()
+                chips.append((chip.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), button))
                 return true
             }
         }
+        return chips
     }
 
     /// The text's children plus one image per rendered block, labeled with its source, one checkbox per task box, and
@@ -1024,9 +1075,9 @@ private final class Snapshot: NSView {
 final class MeasureContainer: NSTextContainer {
     var prose = CGFloat.greatestFiniteMagnitude
 
-    /// Sets each paragraph of `styled` but a fenced code block's and a laid-out table row's to wrap `measure` points
-    /// from the column's start, which a hanging paragraph lays out its hang left of; a narrower container wraps it at its
-    /// own width.
+    /// Sets each paragraph of `styled` but a fenced code block's, a laid-out table row's and a callout's, which wraps
+    /// inside its well, to wrap `measure` points from the column's start, which a hanging paragraph lays out its hang
+    /// left of; a narrower container wraps it at its own width.
     static func keepProse(_ styled: NSMutableAttributedString, to measure: CGFloat) {
         let text = styled.mutableString
         var narrowed: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
@@ -1035,6 +1086,7 @@ final class MeasureContainer: NSTextContainer {
             let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
             at = NSMaxRange(paragraph)
             if styled.attribute(.dewlineCode, at: paragraph.location, effectiveRange: nil) != nil { continue }
+            if styled.attribute(.dewlineCallout, at: paragraph.location, effectiveRange: nil) != nil { continue }
             if case .table = (styled.attribute(.dewlineBlock, at: paragraph.location, effectiveRange: nil) as? BlockLine)?.role { continue }
             let hang = styled.attribute(.dewlineHang, at: paragraph.location, effectiveRange: nil) as? CGFloat ?? 0
             styled.enumerateAttribute(.paragraphStyle, in: paragraph) { value, run, _ in
@@ -1110,51 +1162,5 @@ private final class HangFragment: NSTextLayoutFragment {
 
     override var leadingPadding: CGFloat {
         -hang
-    }
-}
-
-/// A list item's paragraph whose `-`, `*` or `+` marker is hidden: a dot in `ink2` centered over the marker.
-private final class BulletFragment: NSTextLayoutFragment {
-    /// The marker's offset in the paragraph.
-    private let bullet: Int
-
-    init(bullet: Int, textElement: NSTextElement) {
-        self.bullet = bullet
-        super.init(textElement: textElement, range: textElement.elementRange)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("BulletFragment is built in code")
-    }
-
-    /// The hidden bullet in `paragraph`, past its indent and any quote markers, that keeps its room and is followed by
-    /// a space: the styler hides an item's marker that way and no other text.
-    static func bullet(in paragraph: NSAttributedString) -> Int? {
-        let text = paragraph.string as NSString
-        var at = 0
-        while at < text.length, [0x20, 0x09, 0x3E].contains(text.character(at: at)) { at += 1 }
-        guard at + 1 < text.length, [0x2D, 0x2A, 0x2B].contains(text.character(at: at)), [0x20, 0x09].contains(text.character(at: at + 1)),
-            paragraph.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor == NSColor.clear,
-            (paragraph.attribute(.font, at: at, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 > 1
-        else { return nil }
-        return at
-    }
-
-    override func draw(at point: CGPoint, in context: CGContext) {
-        super.draw(at: point, in: context)
-        guard let line = textLineFragments.first(where: { NSLocationInRange(bullet, $0.characterRange) }),
-            let font = line.attributedString.attribute(.font, at: bullet, effectiveRange: nil) as? NSFont
-        else { return }
-        let color = MainActor.assumeIsolated { ThemeStore.shared.color(.ink2) }
-        let dot = NSAttributedString(string: "\u{2022}", attributes: [.font: font, .foregroundColor: color])
-        let bounds = line.typographicBounds
-        let left = line.locationForCharacter(at: bullet).x
-        let right = line.locationForCharacter(at: bullet + 1).x
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        dot.draw(at: CGPoint(
-            x: point.x + bounds.minX + left + ((right - left - dot.size().width) / 2).rounded(),
-            y: point.y + bounds.minY + line.glyphOrigin.y - font.ascender))
-        NSGraphicsContext.restoreGraphicsState()
     }
 }

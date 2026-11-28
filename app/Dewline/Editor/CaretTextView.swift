@@ -239,7 +239,7 @@ class CaretTextView: NSTextView {
         if location < text.length, text.character(at: location) != 10 {
             let range = text.rangeOfComposedCharacterSequence(at: location)
             let glyph = convert(window.convertFromScreen(firstRect(forCharacterRange: range, actualRange: nil)), from: nil)
-            if glyph.width > 0 { block = NSRect(x: glyph.minX, y: caret.minY, width: glyph.width, height: caret.height) }
+            if glyph.width >= 1 { block = NSRect(x: glyph.minX, y: caret.minY, width: glyph.width, height: caret.height) }
         }
         effects.showBlock(block, color: cursorColor.copy(alpha: 0.4))
     }

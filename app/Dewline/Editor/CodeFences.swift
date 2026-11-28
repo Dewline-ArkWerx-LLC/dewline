@@ -1,23 +1,28 @@
 import AppKit
 
 /// Fenced code in Live: the block sits in a `codeBackground` well, as wide as the column or its widest line, up to the
-/// container's width, and its fence lines shrink to the well's top and bottom padding, hidden, while the selection is
-/// off them. A folded block keeps its fences. A Mermaid block is `RenderedBlocks`'.
+/// container's width, and its fence lines are the well's top and bottom padding, their text hidden while the selection
+/// is off them. A folded block keeps its fences. A Mermaid block is `RenderedBlocks`'.
 @MainActor
 final class CodeFences {
     private let map: BlockMap
     /// The blocks whose fence lines show, by their fenced span's range.
     private var revealed: Set<NSRange> = []
-    private var indented: [NSParagraphStyle: NSParagraphStyle] = [:]
-    /// The well's padding: a hidden fence line's height and the room on each side of the code.
-    static let padding: CGFloat = 12
+    private var indented: [CGFloat: [NSParagraphStyle: NSParagraphStyle]] = [:]
+    /// The room on each side of the code, the inset quote and callout text share.
+    static var padding: CGFloat {
+        ThemeStore.shared.inset
+    }
     static let radius: CGFloat = 8
-    private static let hiddenLine: NSParagraphStyle = {
-        let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = padding
-        style.maximumLineHeight = padding
-        return style
-    }()
+    /// Half the room a code line leaves around its glyphs, on the half-point grid.
+    static var lead: CGFloat {
+        let font = MarkdownStyler.code(matching: MarkdownStyler.bodyFont)
+        return (ThemeStore.shared.bodyLineHeight - font.ascender + font.descender).rounded() / 2
+    }
+    /// The room between a well's edge and the glyph box of its first and last lines: half a line and the lead.
+    static var margin: CGFloat {
+        ThemeStore.shared.bodyLineHeight / 2 + lead
+    }
 
     init(map: BlockMap) {
         self.map = map
@@ -65,16 +70,19 @@ final class CodeFences {
                 styled.addAttribute(.dewlineCode, value: CodeWell(start: fence.range.location, width: (lead + widest + Self.padding).rounded(.up)), range: well)
                 Self.hang(local.content, in: styled)
                 let lines = Self.lines(local, in: text)
-                if lines.contains(where: { Self.touches($0, selection) }) || folds.contains(where: { NSIntersectionRange($0, fence.range).length > 0 }) {
-                    revealed.insert(fence.range)
-                    for line in lines { styled.addAttribute(.foregroundColor, value: ThemeStore.shared.color(.syntax), range: line) }
-                    continue
-                }
-                for line in lines {
-                    let paragraph = text.paragraphRange(for: line)
+                // A fence line is the well's padding, shown or hidden: the opening one half a line less the lead, the
+                // closing one half a line and the lead, so the code's glyphs sit as far from the well's top as from its
+                // bottom. Shown, its text takes a smaller code font and the line keeps its height.
+                let shown = lines.contains(where: { Self.touches($0, selection) }) || folds.contains(where: { NSIntersectionRange($0, fence.range).length > 0 })
+                if shown { revealed.insert(fence.range) }
+                let store = ThemeStore.shared
+                let half = store.bodyLineHeight / 2
+                let font = shown ? store.codeFont(size: 0.75 * MarkdownStyler.code(matching: MarkdownStyler.bodyFont).pointSize) : MarkdownStyler.hiddenFont
+                for (index, line) in lines.enumerated() {
+                    let style = indent(store.paragraphStyle(lineHeight: index == 0 ? half - Self.lead : half + Self.lead))
                     styled.addAttributes([
-                        .font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear, .paragraphStyle: Self.hiddenLine,
-                    ], range: paragraph)
+                        .font: font, .foregroundColor: shown ? store.color(.syntax) : NSColor.clear, .paragraphStyle: style,
+                    ], range: text.paragraphRange(for: line))
                 }
             }
         }
@@ -104,12 +112,13 @@ final class CodeFences {
 
     /// `style` with the well's padding on both sides.
     private func indent(_ style: NSParagraphStyle) -> NSParagraphStyle {
-        if let indented = indented[style] { return indented }
+        let padding = Self.padding
+        if let indented = indented[padding]?[style] { return indented }
         let wider = style.mutableCopy() as! NSMutableParagraphStyle
-        wider.firstLineHeadIndent += Self.padding
-        wider.headIndent += Self.padding
-        wider.tailIndent = -Self.padding
-        indented[style] = wider
+        wider.firstLineHeadIndent += padding
+        wider.headIndent += padding
+        wider.tailIndent = -padding
+        indented[padding, default: [:]][style] = wider
         return wider
     }
 

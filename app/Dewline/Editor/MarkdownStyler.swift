@@ -712,8 +712,9 @@ extension MarkdownStyler {
         switch (kind, before) {
         case (_, nil): wanted = 0
         case (.tableRow, .tableHead?), (.tableRow, .tableRow?), (.item, .item?): return nil
-        // A paragraph right under a fresh line is the text that line's typing joins.
-        case (.paragraph, _) where typed && blanks == 0: wanted = 0
+        // A paragraph right under a fresh line is the text that line's typing joins, and one right under a paragraph is
+        // that paragraph's continuation, which only a window parse splits off until the whole parse lands.
+        case (.paragraph, .paragraph?) where top == location: wanted = 0
         case (.heading, .heading?): wanted = 0.75 * line
         case (.heading(let level), _): wanted = store.heading(level).spaceAbove
         case (.tableHead, .heading?): wanted = line / 2

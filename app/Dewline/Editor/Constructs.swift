@@ -7,6 +7,8 @@ enum Constructs {
     private static var superscripts: [NSFont: NSFont] = [:]
     private static var washes: [NSColor: NSColor] = [:]
     private static var titleStyles: [NSParagraphStyle: NSParagraphStyle] = [:]
+    /// Callout styles that keep the well's padding at the right, and below the last line, by style and space below.
+    private static var calloutStyles: [NSParagraphStyle: [CGFloat: NSParagraphStyle]] = [:]
     /// The room a callout's title line leaves for its icon.
     static let iconSpace: CGFloat = 24
 
@@ -37,14 +39,20 @@ enum Constructs {
         }
     }
 
-    /// Tags are dim tokens whose `#` stays. A callout's lines carry its type for the view to draw, its title line
-    /// leaves room for the icon, and the title is bold. `lines` is the block in the coordinates of `styled`.
+    /// Tags are dim tokens whose `#` stays, and a footnote definition's label is dim. A callout's lines carry its type
+    /// for the view to draw, its title line leaves room for the icon, and the title is bold; its text keeps the well's
+    /// padding from the well's right edge, and the well's padding below its last line. `lines` is the block in the
+    /// coordinates of `styled`.
     static func style(_ block: BlockMap.Block, lines: NSRange, in styled: NSMutableAttributedString, source: Bool) {
         let store = ThemeStore.shared
         for tag in block.spans where tag.kind == .tag {
             styled.addAttributes(
                 [.foregroundColor: store.color(.ink2), .backgroundColor: store.color(.codeBackground)], range: tag.shifted(by: lines.location).range
             )
+        }
+        for definition in block.spans where definition.kind == .footnoteDefinition && !source {
+            let label = definition.shifted(by: lines.location)
+            styled.addAttribute(.foregroundColor, value: store.color(.ink3), range: NSRange(location: label.range.location, length: label.content.location - label.range.location))
         }
         guard block.kind == .callout, !source, let callout = block.spans.first(where: { $0.kind == .callout }) else { return }
         let text = styled.mutableString
@@ -65,6 +73,27 @@ enum Constructs {
         }()
         titleStyles[quote] = style
         styled.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: end - start))
+        let tail = store.measure - store.inset
+        let last = text.paragraphRange(for: NSRange(location: max(NSMaxRange(lines) - 1, lines.location), length: 0)).location
+        for (part, below) in [(NSRange(location: lines.location, length: last - lines.location), 0), (NSRange(location: last, length: NSMaxRange(lines) - last), CodeFences.margin)] {
+            styled.enumerateAttribute(.paragraphStyle, in: part) { value, run, _ in
+                let style = value as? NSParagraphStyle ?? .default
+                let framed = calloutStyles[style]?[below].flatMap { $0.tailIndent == tail ? $0 : nil } ?? {
+                    let copy = style.mutableCopy() as! NSMutableParagraphStyle
+                    (copy.tailIndent, copy.paragraphSpacing) = (tail, below)
+                    calloutStyles[style, default: [:]][below] = copy
+                    return copy
+                }()
+                styled.addAttribute(.paragraphStyle, value: framed, range: run)
+            }
+        }
+    }
+
+    /// The room a callout's well leaves above its first line: the well's padding less what the line leaves over its
+    /// glyphs.
+    static var wellAbove: CGFloat {
+        let store = ThemeStore.shared
+        return CodeFences.margin - (store.bodyLineHeight - store.bodyFont.ascender + store.bodyFont.descender)
     }
 
     /// A callout's glyph and color by type, with Obsidian's aliases; an unknown type looks like a note.
@@ -173,7 +202,6 @@ extension EditorTextView {
         let storage = textStorage!
         let padding = textContainer?.lineFragmentPadding ?? 0
         let left = textContainerOrigin.x + padding
-        let width = (textContainer?.column ?? 0) - 2 * padding
         var drawn = Set<Int>()
         storage.enumerateAttribute(.dewlineCallout, in: visible) { value, range, _ in
             guard let type = value as? String else { return }
@@ -181,14 +209,21 @@ extension EditorTextView {
             storage.attribute(.dewlineCallout, at: range.location, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
             guard drawn.insert(whole.location).inserted else { return }
             let top = line(whole.location)
-            let bottom = line(max(NSMaxRange(whole) - 1, whole.location))
             ThemeStore.shared.color(.codeBackground).setFill()
-            NSBezierPath(roundedRect: NSRect(x: left, y: top.minY, width: width, height: bottom.maxY - top.minY), xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: calloutWell(top: top, bottom: line(max(NSMaxRange(whole) - 1, whole.location))), xRadius: 6, yRadius: 6).fill()
             let look = Constructs.look(type)
             let size = (ThemeStore.shared.bodyFont.pointSize * 0.94).rounded()
             let indent = ThemeStore.shared.quoteParagraphStyle.firstLineHeadIndent
             look.glyph.draw(in: NSRect(x: left + indent + (Constructs.iconSpace - size) / 2 - 2, y: top.midY - size / 2, width: size, height: size), color: look.color)
         }
+    }
+
+    /// A callout's well from the line at `top` to the one at `bottom`, as wide as the column, with the code well's
+    /// padding between its edge and the glyphs of its first and last lines.
+    func calloutWell(top: NSRect, bottom: NSRect) -> NSRect {
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let minY = top.minY - Constructs.wellAbove
+        return NSRect(x: textContainerOrigin.x + padding, y: minY, width: (textContainer?.column ?? 0) - 2 * padding, height: bottom.maxY + CodeFences.margin - minY)
     }
 }
 

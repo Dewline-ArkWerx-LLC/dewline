@@ -97,6 +97,47 @@ private struct Rhythm {
         return try #require(union).offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
     }
 
+    /// The frame of every paragraph's layout fragment, by the paragraph's start.
+    func frames() throws -> [(at: Int, frame: NSRect)] {
+        let string = view.string as NSString
+        var frames: [(at: Int, frame: NSRect)] = []
+        var at = 0
+        while at < string.length {
+            frames.append((at, try fragment(at: at)))
+            at = NSMaxRange(string.paragraphRange(for: NSRange(location: at, length: 0)))
+        }
+        return frames
+    }
+
+    /// The characters of each line the paragraph holding `index` lays out, in the text.
+    func lines(of index: Int) throws -> [NSRange] {
+        let (fragment, _) = try laidOut(index)
+        let content = try #require(view.textLayoutManager?.textContentManager)
+        let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+        return fragment.textLineFragments.map { NSRange(location: start + $0.characterRange.location, length: $0.characterRange.length) }
+    }
+
+    /// Where CoreText sets each glyph of the line holding `index`, by character, from its origin to its advance, in the
+    /// view: a kern is in its character's advance.
+    func glyphs(around index: Int) throws -> [Int: (minX: CGFloat, maxX: CGFloat)] {
+        let (fragment, line) = try laidOut(index)
+        let content = try #require(view.textLayoutManager?.textContentManager)
+        let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location) + line.characterRange.location
+        let left = view.textContainerOrigin.x + fragment.layoutFragmentFrame.minX + line.typographicBounds.minX
+        var glyphs: [Int: (minX: CGFloat, maxX: CGFloat)] = [:]
+        for run in CTLineGetGlyphRuns(CTLineCreateWithAttributedString(line.attributedString.attributedSubstring(from: line.characterRange))) as! [CTRun] {
+            let count = CTRunGetGlyphCount(run)
+            var positions = [CGPoint](repeating: .zero, count: count)
+            var advances = [CGSize](repeating: .zero, count: count)
+            var indices = [CFIndex](repeating: 0, count: count)
+            CTRunGetPositions(run, CFRange(), &positions)
+            CTRunGetAdvances(run, CFRange(), &advances)
+            CTRunGetStringIndices(run, CFRange(), &indices)
+            for k in 0..<count { glyphs[start + indices[k]] = (left + positions[k].x, left + positions[k].x + advances[k].width) }
+        }
+        return glyphs
+    }
+
     /// Restyles the whole text at the selection and describes the first attribute that changed, if any did.
     func restyleChanges() -> String? {
         let storage = view.textStorage!
@@ -500,6 +541,183 @@ struct TextRhythmTests {
         for (old, new) in zip(composing, committed) {
             #expect(abs(new.minY - old.minY) <= 0.5 && abs(new.height - old.height) <= 0.5, "the commit moved \(old) to \(new)")
         }
+    }
+
+    /// R7: a list sits half a line below the paragraph above it, with a blank line between them or none.
+    @Test func aListSitsHalfALineBelowAParagraph() throws {
+        let line = ThemeStore.shared.bodyLineHeight
+        for text in ["Para.\n- a\n- b", "Para.\n\n- a\n- b"] {
+            let editor = try Rhythm(text)
+            defer { editor.close() }
+            let paragraph = try editor.line(at: 0)
+            let item = try editor.line(at: editor.at("- a"))
+            #expect(abs(item.minY - paragraph.maxY - line / 2) <= 0.5, "\(text.debugDescription): \(item.minY - paragraph.maxY) pt above the list")
+        }
+    }
+
+    /// R8: a code block's well leaves V between its edge and the glyphs of its first and last lines, its code starts at
+    /// the inset quote and callout text start at, and the caret on its opening fence moves no line.
+    @Test func codeSitsInTheMiddleOfItsWell() throws {
+        let store = ThemeStore.shared
+        try #require(store.bodySize == 16 && store.lineHeight == 1.5, "the defaults")
+        let text = "> A crash sends the event again.\n\n> [!warning] Deploy order\n> Run the migration first.\n\n```rust\npub fn next(attempt: u32) -> u32 {\n    attempt + 1\n}\n```\n\nAfter.\n"
+        let editor = try Rhythm(text, caret: text.utf16.count)
+        defer { editor.close() }
+        let storage = try #require(editor.view.textStorage)
+        let code = editor.at("pub fn")
+        let last = editor.at("}\n```")
+        let well = try #require(storage.attribute(.dewlineCode, at: code, effectiveRange: nil) as? CodeWell)
+        var whole = NSRange()
+        storage.attribute(.dewlineCode, at: code, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
+        let drawn = editor.view.codeWell(
+            well, top: editor.firstRect(NSRange(location: whole.location, length: 0)), bottom: editor.firstRect(NSRange(location: NSMaxRange(whole) - 1, length: 0))
+        )
+        let font = try #require(storage.attribute(.font, at: code, effectiveRange: nil) as? NSFont)
+        let top = try #require(editor.view.baseline(at: code)) - font.ascender
+        let bottom = try #require(editor.view.baseline(at: last)) - font.descender
+        let (above, below) = (top - drawn.minY, drawn.maxY - bottom)
+        #expect(abs(above - below) <= 1, "\(above) pt over the code, \(below) pt under it")
+        #expect(abs(above - 15.5) <= 1 && abs(below - 15.5) <= 1, "\(above) pt over the code, \(below) pt under it")
+        let edge = editor.view.textContainerOrigin.x + (editor.view.textContainer?.lineFragmentPadding ?? 0)
+        for start in [code, editor.at("A crash"), editor.at("Run the")] {
+            let x = editor.firstRect(NSRange(location: start, length: 1)).minX - edge
+            #expect(abs(x - store.inset) <= 0.5, "the text at \(start) starts at \(x)")
+        }
+        let frames = try editor.frames()
+        editor.place(editor.at("```rust") + 3)
+        #expect((storage.attribute(.font, at: editor.at("rust"), effectiveRange: nil) as? NSFont)?.pointSize ?? 0 > 1, "the fence shows")
+        for ((start, old), (_, new)) in zip(frames, try editor.frames()) {
+            #expect(abs(new.minY - old.minY) <= 0.5 && abs(new.height - old.height) <= 0.5, "the fragment at \(start) moved from \(old) to \(new)")
+        }
+    }
+
+    /// R9: a callout's well leaves V between its edge and the glyphs of its first and last lines, half a line between it
+    /// and the text around it, and the inset between its lines' ends and its right edge.
+    @Test func aCalloutsWellPadsItsText() throws {
+        let store = ThemeStore.shared
+        try #require(store.bodySize == 16 && store.lineHeight == 1.5, "the defaults")
+        let body = String(repeating: "Run the migration before the new worker starts, or it fails its first claim. ", count: 3)
+        let text = "Above.\n\n> [!warning] Deploy order\n> \(body)\n\nBelow.\n"
+        let editor = try Rhythm(text, caret: text.utf16.count)
+        defer { editor.close() }
+        let storage = try #require(editor.view.textStorage)
+        let title = editor.at("Deploy")
+        var whole = NSRange()
+        storage.attribute(.dewlineCallout, at: title, longestEffectiveRange: &whole, in: NSRange(location: 0, length: storage.length))
+        let well = editor.view.calloutWell(
+            top: editor.firstRect(NSRange(location: whole.location, length: 0)), bottom: editor.firstRect(NSRange(location: NSMaxRange(whole) - 1, length: 0))
+        )
+        let end = NSMaxRange(whole) - 2
+        let (head, tail) = try (#require(storage.attribute(.font, at: title, effectiveRange: nil) as? NSFont), #require(storage.attribute(.font, at: end, effectiveRange: nil) as? NSFont))
+        let top = try #require(editor.view.baseline(at: title)) - head.ascender
+        let bottom = try #require(editor.view.baseline(at: end)) - tail.descender
+        #expect(abs(top - well.minY - 15.5) <= 1 && abs(well.maxY - bottom - 15.5) <= 1, "\(top - well.minY) pt over the text, \(well.maxY - bottom) pt under it")
+        let above = try editor.line(at: 0)
+        let after = try editor.line(at: editor.at("Below."))
+        #expect(abs(well.minY - above.maxY - 12) <= 0.5 && abs(after.minY - well.maxY - 12) <= 0.5, "\(well.minY - above.maxY) pt above the well, \(after.minY - well.maxY) pt below it")
+        let lines = try editor.lines(of: title) + editor.lines(of: editor.at("Run the"))
+        #expect(lines.count >= 3, "the callout's body wraps")
+        for line in lines {
+            let ink = (editor.view.string as NSString).substring(with: line).replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+            let rect = editor.firstRect(NSRange(location: line.location, length: (ink as NSString).length))
+            #expect(rect.maxX <= well.maxX - store.inset + 0.5, "the line at \(line.location) ends at \(rect.maxX), the well at \(well.maxX)")
+        }
+    }
+
+    /// R10: a thematic break is a 1 pt rule 4 em wide, centered on the column at its line's middle, half a line from the
+    /// text around it; the caret on its line shows its characters instead and moves no line.
+    @Test func aThematicBreakIsACenteredRule() throws {
+        let store = ThemeStore.shared
+        let text = "Above.\n\n---\n\nBelow.\n"
+        let editor = try Rhythm(text)
+        defer { editor.close() }
+        let storage = try #require(editor.view.textStorage)
+        let at = editor.at("---")
+        #expect(storage.attribute(.dewlineRule, at: at, effectiveRange: nil) != nil)
+        #expect(storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor == NSColor.clear)
+        let line = try editor.line(at: at)
+        let rule = editor.view.rule(on: editor.firstRect(NSRange(location: at, length: 0)))
+        let padding = editor.view.textContainer?.lineFragmentPadding ?? 0
+        let center = editor.view.textContainerOrigin.x + padding + ((editor.view.textContainer?.column ?? 0) - 2 * padding) / 2
+        #expect(rule.height == 1 && abs(rule.width - 4 * store.bodySize) <= 0.5, "the rule is \(rule)")
+        #expect(abs(rule.midX - center) <= 0.5 && abs(rule.midY - line.midY) <= 0.5, "the rule \(rule) on the line \(line), the column's center at \(center)")
+        let above = try editor.line(at: 0)
+        let below = try editor.line(at: editor.at("Below."))
+        let half = store.bodyLineHeight / 2
+        #expect(abs(line.minY - above.maxY - half) <= 0.5 && abs(below.minY - line.maxY - half) <= 0.5, "\(line.minY - above.maxY) pt above, \(below.minY - line.maxY) below")
+        let frames = try editor.frames()
+        editor.place(at + 1)
+        #expect(storage.attribute(.dewlineRule, at: at, effectiveRange: nil) == nil, "the caret's rule is not drawn")
+        #expect(storage.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor == store.color(.syntax))
+        for ((start, old), (_, new)) in zip(frames, try editor.frames()) {
+            #expect(abs(new.minY - old.minY) <= 0.5 && abs(new.height - old.height) <= 0.5, "the fragment at \(start) moved from \(old) to \(new)")
+        }
+        editor.place(0)
+        #expect(storage.attribute(.dewlineRule, at: at, effectiveRange: nil) != nil, "the rule is back")
+        #expect(editor.restyleChanges() == nil)
+    }
+
+    /// R11: a code span's chip stands 3 pt past its first and last glyphs and over their ascenders and descenders, in
+    /// the room its hidden backticks keep, so the word spaces on each side keep their full width outside it.
+    @Test func aCodeSpansChipStandsClearOfItsGlyphs() throws {
+        let store = ThemeStore.shared
+        try #require(store.bodySize == 16, "the default size")
+        let text = "a `code` b\n"
+        let editor = try Rhythm(text, caret: text.utf16.count)
+        defer { editor.close() }
+        let storage = try #require(editor.view.textStorage)
+        let (open, close) = (editor.at("`code"), editor.at("` b"))
+        for backtick in [open, close] {
+            #expect(storage.attribute(.kern, at: backtick, effectiveRange: nil) as? CGFloat == 3, "the hidden backtick at \(backtick)")
+        }
+        let chips = editor.view.codeChips(in: NSRange(location: 0, length: storage.length)).filter { !$0.button }
+        try #require(chips.count == 1, "\(chips)")
+        let chip = chips[0].rect
+        let glyphs = try editor.glyphs(around: open + 1)
+        let (first, last) = try (#require(glyphs[open + 1]), #require(glyphs[close - 1]))
+        let (before, after) = try (#require(glyphs[open - 1]), #require(glyphs[close + 1]))
+        #expect(chip.minX <= first.minX - 3 + 0.5 && chip.maxX >= last.maxX + 3 - 0.5, "the chip \(chip) around \(first.minX) to \(last.maxX)")
+        #expect(chip.minX >= before.maxX - 0.5 && chip.maxX <= after.minX + 0.5, "the chip \(chip) between the spaces at \(before.maxX) and \(after.minX)")
+        let space = NSAttributedString(string: " ", attributes: [.font: store.bodyFont]).size().width
+        #expect(abs(before.maxX - before.minX - space) <= 0.5 && abs(after.maxX - after.minX - space) <= 0.5, "the spaces are \(before) and \(after)")
+        let font = try #require(storage.attribute(.font, at: open + 1, effectiveRange: nil) as? NSFont)
+        let baseline = try #require(editor.view.baseline(at: open + 1))
+        #expect(chip.minY <= baseline - font.ascender && chip.maxY >= baseline - font.descender, "the chip \(chip) over the baseline at \(baseline)")
+        editor.place(open + 2)
+        for backtick in [open, close] {
+            #expect(storage.attribute(.kern, at: backtick, effectiveRange: nil) == nil, "the shown backtick at \(backtick)")
+        }
+        #expect(editor.restyleChanges() == nil)
+    }
+
+    /// 5.11: a caret proposed inside a run marked `.dewlineSkip` moves past it the way it moved; a run that starts its
+    /// line takes the line's start with it and one that ends its line the line's end. Selections and Source pass.
+    @Test func theCaretSkipsMarkedRuns() throws {
+        let text = "abXXcd\n  ef\ngh  \nij\n"
+        let editor = try Rhythm(text)
+        defer { editor.close() }
+        let storage = try #require(editor.view.textStorage)
+        let runs = [NSRange(location: 2, length: 2), NSRange(location: 7, length: 2), NSRange(location: 14, length: 2)]
+        for run in runs { storage.addAttribute(.dewlineSkip, value: true, range: run) }
+        for (from, right, to) in [(2, true, 4), (4, false, 2), (6, true, 9), (9, false, 6), (14, true, 17), (17, false, 14)] {
+            editor.place(from)
+            if right { editor.view.moveRight(nil) } else { editor.view.moveLeft(nil) }
+            #expect(editor.view.selectedRange() == NSRange(location: to, length: 0), "\(right ? "Right" : "Left") from \(from)")
+        }
+        let styler = editor.view.styler
+        func proposed(_ from: Int, _ to: NSRange) -> [NSRange] {
+            styler.textView(editor.view, willChangeSelectionFromCharacterRanges: [NSValue(range: NSRange(location: from, length: 0))], toCharacterRanges: [NSValue(range: to)])
+                .map(\.rangeValue)
+        }
+        #expect(proposed(0, NSRange(location: 3, length: 0)) == [NSRange(location: 4, length: 0)])
+        #expect(proposed(5, NSRange(location: 3, length: 0)) == [NSRange(location: 2, length: 0)])
+        #expect(proposed(0, NSRange(location: 3, length: 2)) == [NSRange(location: 3, length: 2)], "a selection passes")
+        editor.place(2)
+        editor.view.moveRightAndModifySelection(nil)
+        #expect(editor.view.selectedRange() == NSRange(location: 2, length: 1), "an extended selection passes")
+        editor.view.toggleSource(nil)
+        for run in runs { storage.addAttribute(.dewlineSkip, value: true, range: run) }
+        #expect(proposed(0, NSRange(location: 3, length: 0)) == [NSRange(location: 3, length: 0)], "Source passes")
     }
 
     /// R12: at the end of a note that ends in a blank line, the caret is a line tall, and typing there moves nothing

@@ -28,6 +28,34 @@ private struct Editor {
         view.styler.undoManager.undo()
     }
 
+    /// Runs `edit` in its own undo group, as an event would.
+    func edit(_ edit: () -> Void) {
+        let undo = view.styler.undoManager
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        edit()
+        undo.endUndoGrouping()
+    }
+
+    /// The box of the line holding the character at `index` in the view, without the space above it.
+    func line(at index: Int) throws -> NSRect {
+        let layout = try #require(view.textLayoutManager)
+        let content = try #require(layout.textContentManager)
+        let location = try #require(content.location(content.documentRange.location, offsetBy: index))
+        layout.ensureLayout(for: NSTextRange(location: location))
+        let fragment = try #require(layout.textLayoutFragment(for: location))
+        let offset = content.offset(from: fragment.rangeInElement.location, to: location)
+        let line = try #require(fragment.textLineFragments.first { NSLocationInRange(offset, $0.characterRange) } ?? fragment.textLineFragments.first)
+        let origin = view.textContainerOrigin
+        return line.typographicBounds.offsetBy(dx: origin.x + fragment.layoutFragmentFrame.minX, dy: origin.y + fragment.layoutFragmentFrame.minY)
+    }
+
+    /// Where the character at `index` starts, from the column's text edge.
+    func x(at index: Int) -> CGFloat {
+        let rect = view.convert(window.convertFromScreen(view.firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)), from: nil)
+        return rect.minX - view.textContainerOrigin.x - (view.textContainer?.lineFragmentPadding ?? 0)
+    }
+
     /// Whether the character at `index` is laid out hidden, as a fold leaves it.
     func isHidden(_ index: Int) -> Bool {
         let storage = view.textStorage!
@@ -57,10 +85,11 @@ struct SmartListTests {
     @Test func returnOnAnEmptyItemEndsTheList() {
         let editor = Editor("- one\n- ")
         editor.view.insertNewline(nil)
-        #expect(editor.text == "- one\n")
+        #expect(editor.text == "- one\n\n")
+        #expect(editor.caret == editor.text.utf16.count)
         let task = Editor("1. [ ] one\n2. [ ] ")
         task.view.insertNewline(nil)
-        #expect(task.text == "1. [ ] one\n")
+        #expect(task.text == "1. [ ] one\n\n")
     }
 
     @Test func returnOutsideAListIsPlain() {
@@ -98,6 +127,78 @@ struct SmartListTests {
         let prose = Editor("prose")
         prose.view.insertTab(nil)
         #expect(prose.text == "prose\t")
+    }
+
+    /// L8: Tab moves an item with its children onto its previous sibling's text, in the list's spaces or tabs, as one
+    /// edit; a first child has no sibling to move under and stays.
+    @Test func tabMovesAnItemAndItsChildrenUnderItsSibling() {
+        for (text, indented) in [("- a\n- b\n  - c", "- a\n  - b\n    - c"), ("- a\n- b\n\t- c", "- a\n\t- b\n\t\t- c")] {
+            let editor = Editor(text, caret: 7)
+            editor.view.insertTab(nil)
+            #expect(editor.text == indented)
+            #expect(editor.caret == (indented as NSString).range(of: "b").location + 1)
+            editor.undo()
+            #expect(editor.text == text)
+        }
+        let child = Editor("- a\n  - b")
+        child.view.insertTab(nil)
+        #expect(child.text == "- a\n  - b")
+        #expect(child.caret == child.text.utf16.count)
+    }
+
+    /// L9: Return on an empty nested item moves it to its parent's indent; on an empty top-level item it leaves a blank
+    /// line and a fresh line after the list, where typing makes a paragraph at the column's edge a blank line below.
+    @Test func returnOnAnEmptyItemOutdentsItThenEndsTheList() throws {
+        let nested = Editor("- a\n  - b\n  - ")
+        nested.view.insertNewline(nil)
+        #expect(nested.text == "- a\n  - b\n- ")
+        #expect(nested.caret == nested.text.utf16.count)
+        let editor = Editor("- b\n- c\n- ")
+        editor.view.insertNewline(nil)
+        #expect(editor.text == "- b\n- c\n\n")
+        #expect(editor.caret == editor.text.utf16.count && editor.view.styler.fresh == editor.caret)
+        editor.view.insertText("Text", replacementRange: editor.view.selectedRange())
+        #expect(editor.text == "- b\n- c\n\nText")
+        let text = (editor.text as NSString).range(of: "Text").location
+        #expect(abs(editor.x(at: text)) <= 0.5)
+        let gap = try editor.line(at: text).minY - editor.line(at: 4).maxY
+        #expect(abs(gap - ThemeStore.shared.bodyLineHeight / 2) <= 0.5, "\(gap) pt above Text")
+    }
+
+    /// L10: in a quote, Return and Tab keep the line's markers and measure the indent after them.
+    @Test func listKeysKeepAQuotesMarkers() {
+        let editor = Editor("> - a")
+        editor.view.insertNewline(nil)
+        #expect(editor.text == "> - a\n> - ")
+        editor.view.insertText("b", replacementRange: editor.view.selectedRange())
+        editor.view.insertTab(nil)
+        #expect(editor.text == "> - a\n>   - b")
+        #expect(editor.caret == editor.text.utf16.count)
+    }
+
+    /// L11: Backspace at an item's text outdents a nested item and turns a top-level marker into blanks, which make the
+    /// line the item above's continuation; at that line's text, past its hidden blanks, Backspace joins it to the item.
+    @Test func backspaceAtAnItemsTextOutdentsThenJoins() {
+        let nested = Editor("- a\n  - b", caret: 8)
+        nested.view.deleteBackward(nil)
+        #expect(nested.text == "- a\n- b")
+        #expect(nested.caret == 6)
+        let editor = Editor("- a\n- b", caret: 6)
+        editor.edit { editor.view.deleteBackward(nil) }
+        #expect(editor.text == "- a\n  b")
+        #expect(editor.caret == 6)
+        // The list layout hides a continuation line's leading blanks this way.
+        editor.view.textStorage!.addAttribute(.dewlineSkip, value: true, range: NSRange(location: 4, length: 2))
+        editor.edit { editor.view.deleteBackward(nil) }
+        #expect(editor.text == "- ab")
+        #expect(editor.caret == 3)
+        editor.undo()
+        #expect(editor.text == "- a\n  b")
+        // At a nested item's marker, past its hidden indent, the item stays an item.
+        let marker = Editor("- a\n  - b", caret: 6)
+        marker.view.textStorage!.addAttribute(.dewlineSkip, value: true, range: NSRange(location: 4, length: 2))
+        marker.edit { marker.view.deleteBackward(nil) }
+        #expect(marker.text.hasPrefix("- a\n") && marker.text.hasSuffix("- b"))
     }
 }
 

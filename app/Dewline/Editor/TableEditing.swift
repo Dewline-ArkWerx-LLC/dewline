@@ -1,20 +1,27 @@
 import AppKit
 
 /// Editing a GFM table in its source. Tab and Shift-Tab move between cells and select the next one's text; Tab in the
-/// last cell adds a row. An insertion rewrites the table with its pipes aligned and puts the caret in the new cell;
-/// moving between cells leaves the text alone.
+/// last cell adds a row. Return moves to the same column one row down; on the last row it adds an empty row, and on an
+/// empty last row it ends the table. An insertion rewrites the table with its pipes aligned and puts the caret in the
+/// new cell; moving between cells leaves the text alone, and Return and the deletions change only the lines they touch.
 enum TableEditing: Int, CaseIterable {
-    case nextCell = 1, previousCell, rowAbove, rowBelow, columnLeft, columnRight
+    case nextCell = 1, previousCell, rowAbove, rowBelow, columnLeft, columnRight, nextRow, deleteRow, deleteColumn
 
-    /// The menu item's title and the undo action's name; Next Cell edits only when it adds a row.
+    /// The commands of the Format menu and of the context menu's Table submenu, in order.
+    static let menu: [TableEditing] = [.rowAbove, .rowBelow, .columnLeft, .columnRight, .deleteRow, .deleteColumn]
+
+    /// The menu item's title and the undo action's name. Next Cell edits only when it adds a row, Next Row when it adds a
+    /// row or ends the table.
     var name: String {
         switch self {
-        case .nextCell: "Add Row"
+        case .nextCell, .nextRow: "Add Row"
         case .previousCell: "Previous Cell"
         case .rowAbove: "Insert Row Above"
         case .rowBelow: "Insert Row Below"
         case .columnLeft: "Insert Column Left"
         case .columnRight: "Insert Column Right"
+        case .deleteRow: "Delete Row"
+        case .deleteColumn: "Delete Column"
         }
     }
 
@@ -26,7 +33,8 @@ enum TableEditing: Int, CaseIterable {
 
     /// The edit this command makes in the table whose lines `table` covers, for a caret or selection on one of them.
     /// Moving to a cell is an empty edit at the cell that selects it. Nil when the selection leaves the line it starts
-    /// on or is outside the table's lines, or for a row above the header.
+    /// on or is outside the table's lines, for a row above the header, for deleting the header, the delimiter row or the
+    /// only column, and for deleting a column that would leave the header or the delimiter row without a pipe.
     func edit(in text: NSString, table: NSRange, selection: NSRange) -> MarkdownFormat.Edit? {
         let lines = Self.lines(in: text, table)
         guard lines.count >= 2, let row = lines.firstIndex(where: { $0.range.location <= selection.location && selection.location <= NSMaxRange($0.range) }),
@@ -63,7 +71,67 @@ enum TableEditing: Int, CaseIterable {
                 grid.alignments.insert(nil, at: at)
                 return (gridRow, at)
             }
+        case .nextRow:
+            let below = max(row + 1, 2)
+            if below < lines.count {
+                let cells = lines[below].cells
+                let end = NSMaxRange(Self.trimmed(cells[min(column, cells.count - 1)], in: text))
+                return MarkdownFormat.Edit(range: NSRange(location: end, length: 0), replacement: "", selection: NSRange(location: end, length: 0))
+            }
+            let last = lines[lines.count - 1]
+            let lineEnd = Self.lineEnd(after: lines[0], in: text)
+            // An empty last row becomes a blank line under the table, with the caret on a line after it: a line right
+            // under the table would be a row.
+            if row > 1, last.cells.allSatisfy({ Self.trimmed($0, in: text).length == 0 }) {
+                return MarkdownFormat.Edit(range: last.range, replacement: lineEnd, selection: NSRange(location: last.range.location + lineEnd.utf16.count, length: 0))
+            }
+            // The new row is the last one with its cells blanked: the same cells, pipes and indent.
+            let blank = NSMutableString(string: text.substring(with: last.range))
+            for cell in last.cells.reversed() {
+                blank.replaceCharacters(in: NSRange(location: cell.location - last.range.location, length: cell.length), with: String(repeating: " ", count: cell.length))
+            }
+            let cell = last.cells[min(column, last.cells.count - 1)]
+            let caret = NSMaxRange(last.range) + lineEnd.utf16.count + cell.location - last.range.location + min(cell.length, 1)
+            return MarkdownFormat.Edit(range: NSRange(location: NSMaxRange(last.range), length: 0), replacement: lineEnd + (blank as String), selection: NSRange(location: caret, length: 0))
+        case .deleteRow:
+            guard row > 1 else { return nil }
+            let line = lines[row].range
+            let whole = text.lineRange(for: line)
+            // The text's last line takes the line break before it.
+            let removed = NSMaxRange(whole) > NSMaxRange(line) ? whole
+                : NSRange(location: NSMaxRange(lines[row - 1].range), length: NSMaxRange(line) - NSMaxRange(lines[row - 1].range))
+            let next = row + 1 < lines.count ? row + 1 : row == 2 ? 0 : row - 1
+            let cells = lines[next].cells
+            var caret = NSMaxRange(Self.trimmed(cells[min(column, cells.count - 1)], in: text))
+            if caret > removed.location { caret -= removed.length }
+            return MarkdownFormat.Edit(range: removed, replacement: "", selection: NSRange(location: caret, length: 0))
+        case .deleteColumn:
+            // A header or delimiter row without a pipe is no longer a table's.
+            guard lines[0].cells.count > 1, lines.prefix(2).allSatisfy({ line in text.substring(with: line.range).filter { $0 == "|" }.count > 1 }) else { return nil }
+            var removed: [NSRange] = []
+            for line in lines where column < line.cells.count {
+                // The cell and the pipe after it, or before it when none follows.
+                let cell = line.cells[column]
+                let pipe = (NSMaxRange(cell) < NSMaxRange(line.range) && text.character(at: NSMaxRange(cell)) == 0x7C) ? NSMaxRange(cell) : cell.location - 1
+                guard pipe >= line.range.location, text.character(at: pipe) == 0x7C else { return nil }
+                removed.append(NSUnionRange(cell, NSRange(location: pipe, length: 1)))
+            }
+            let range = NSRange(location: removed[0].location, length: NSMaxRange(removed[removed.count - 1]) - removed[0].location)
+            let kept = NSMutableString(string: text.substring(with: range))
+            for cut in removed.reversed() {
+                kept.deleteCharacters(in: NSRange(location: cut.location - range.location, length: cut.length))
+            }
+            // The caret goes to the end of the cell that takes the column's place, or of the one before it.
+            let cells = lines[row].cells
+            let end = NSMaxRange(Self.trimmed(cells[column + 1 < cells.count ? column + 1 : max(column - 1, 0)], in: text))
+            let caret = end - removed.reduce(0) { $0 + max(0, min(NSMaxRange($1), end) - $1.location) }
+            return MarkdownFormat.Edit(range: range, replacement: kept as String, selection: NSRange(location: caret, length: 0))
         }
+    }
+
+    /// The line break after `line`: CRLF when the text has one there, else LF.
+    private static func lineEnd(after line: Line, in text: NSString) -> String {
+        NSMaxRange(line.range) + 1 < text.length && text.character(at: NSMaxRange(line.range)) == 0x0D ? "\r\n" : "\n"
     }
 
     /// The table's rows as cell text, header first, and each column's alignment: nil for `---`, else the side or
@@ -95,7 +163,7 @@ enum TableEditing: Int, CaseIterable {
 
         let first = lines[0].range
         let indent = String(text.substring(with: first).prefix { $0 == " " || $0 == "\t" })
-        let lineEnd = NSMaxRange(first) + 1 < text.length && text.character(at: NSMaxRange(first)) == 0x0D ? "\r\n" : "\n"
+        let lineEnd = Self.lineEnd(after: lines[0], in: text)
         let widths = (0..<grid.columns).map { column in max(3, grid.rows.map { $0[column].count }.max() ?? 0) }
         var out = ""
         var selection = NSRange(location: 0, length: 0)

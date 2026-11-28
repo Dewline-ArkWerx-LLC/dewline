@@ -50,6 +50,7 @@ import Testing
     func vimClose() { closes += 1 }
     var steps: [Bool] = []
     func vimStepChange(forward: Bool) { steps.append(forward) }
+    func vimOpenRow(above: Bool) -> Int? { nil }
 
     /// Each key is one event and one undo step, as in the app; insert mode types the key itself, as the text view does.
     func type(_ keys: String) {
@@ -307,6 +308,23 @@ private let table: [VimCase] = [
             #expect(view.vim?.status == "NORMAL")
         }
         #expect(view.string.contains("one\ntwo\n"))
+    }
+
+    /// `o` and `O` on a table row open an empty row below or above it, in insert mode in the caret's column, and
+    /// never a bare line inside the table.
+    @Test func openingALineInATableOpensARow() {
+        for (key, expected, caret) in [
+            ("o", "| a   | b   |\n| --- | --- |\n| c   | d   |\n|     |     |\n", 50), ("O", "| a   | b   |\n| --- | --- |\n|     |     |\n| c   | d   |\n", 36),
+        ] {
+            let view = EditorTextView()
+            view.string = "| a | b |\n|---|---|\n| c | d |\n"
+            view.vim = VimEngine()
+            view.setSelectedRange(NSRange(location: 26, length: 0))
+            press(key, view)
+            #expect(view.vim?.mode == .insert, "\(key)")
+            #expect(view.string == expected, "\(key)")
+            #expect(view.selectedRange() == NSRange(location: caret, length: 0), "\(key)")
+        }
     }
 
     @Test func undoRestoresTheExactText() {

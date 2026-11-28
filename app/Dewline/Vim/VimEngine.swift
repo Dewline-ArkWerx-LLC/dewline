@@ -17,6 +17,9 @@ enum VimMode {
     func vimClose()
     /// `]c` and `[c`: Next Change and Previous Change.
     func vimStepChange(forward: Bool)
+    /// `o` and `O` in a table: an empty row below or above the caret's, and the offset of its cell in the caret's
+    /// column. Nil outside a table.
+    func vimOpenRow(above: Bool) -> Int?
 }
 
 /// Vim's keys over a host's text and selection, with no window. A key is one character or one of `<Esc>`, `<CR>`,
@@ -221,14 +224,16 @@ enum VimMode {
             place(at + (count - 1) * character.utf16.count, host)
         case "o" where started != .normal:
             swap(&anchor, &cursor)
-        case "o":
-            let end = text.lineEnd(at)
-            replace(NSRange(location: end, length: 0), with: "\n", host)
-            enterInsert(at: end + 1, host)
-        case "O":
-            let start = text.lineStart(at)
+        case "o", "O":
+            // A table opens a row, never a bare line inside it.
+            if let cell = host.vimOpenRow(above: command.name == "O") {
+                enterInsert(at: cell, host)
+                break
+            }
+            let below = command.name == "o"
+            let start = below ? text.lineEnd(at) : text.lineStart(at)
             replace(NSRange(location: start, length: 0), with: "\n", host)
-            enterInsert(at: start, host)
+            enterInsert(at: below ? start + 1 : start, host)
         case "J":
             var line = at
             var joint: Int?

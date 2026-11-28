@@ -774,7 +774,7 @@ final class EditorTextView: CaretTextView {
 
     /// Return breaks the line with CRLF in a note whose lines end that way. An empty line after the break is fresh.
     override func insertNewline(_ sender: Any?) {
-        guard hasMarkedText() || !continueList() else { return }
+        guard hasMarkedText() || !(editTable(.nextRow) || continueList()) else { return }
         let selection = selectedRange()
         let text = textStorage!.mutableString
         if !hasMarkedText(), NSMaxRange(selection) == text.length || [0x0A, 0x0D].contains(text.character(at: NSMaxRange(selection))) {
@@ -825,6 +825,46 @@ final class EditorTextView: CaretTextView {
     override func insertBacktab(_ sender: Any?) {
         guard hasMarkedText() || !(editTable(.previousCell) || indentItems(outdent: true)) else { return }
         super.insertBacktab(sender)
+    }
+
+    /// Option-Return in a table does what Return does there.
+    override func insertNewlineIgnoringFieldEditor(_ sender: Any?) {
+        guard hasMarkedText() || !editTable(.nextRow) else { return }
+        super.insertNewlineIgnoringFieldEditor(sender)
+    }
+
+    /// Backspace at an item's text outdents a nested item and turns a top-level item's marker and task box into
+    /// blanks, which make the line a continuation of the item above. At a continuation line's text, past its hidden
+    /// blanks, it joins the line to the one above.
+    override func deleteBackward(_ sender: Any?) {
+        let caret = selectedRange()
+        guard !hasMarkedText(), caret.length == 0 else { return super.deleteBackward(sender) }
+        if let item = listItem(at: caret.location), item.content == caret.location {
+            if item.parentIndent != nil {
+                _ = indentItems(outdent: true)
+            } else {
+                let marker = NSRange(location: item.indent.location, length: item.content - item.indent.location)
+                replace(marker, with: String(repeating: " ", count: marker.length), selecting: caret)
+            }
+            return
+        }
+        let storage = textStorage!
+        let text = storage.mutableString
+        var start = caret.location
+        while start > 0, [0x20, 0x09].contains(text.character(at: start - 1)), storage.attribute(.dewlineSkip, at: start - 1, effectiveRange: nil) != nil {
+            start -= 1
+        }
+        let line = text.lineRange(for: NSRange(location: start, length: 0))
+        // A marker line's hidden blanks are an item's indent, not a continuation line's.
+        let startsItem = styler.map.blocks(touching: NSRange(location: caret.location, length: 0)).contains { block in
+            block.spans.contains { $0.kind == .item && (line.location...caret.location).contains(block.range.location + $0.range.location) }
+        }
+        guard start < caret.location, line.location > 0, !startsItem,
+            text.substring(with: NSRange(location: line.location, length: start - line.location)).allSatisfy({ " \t>".contains($0) })
+        else { return super.deleteBackward(sender) }
+        var above = 0
+        text.getLineStart(nil, end: nil, contentsEnd: &above, for: NSRange(location: line.location - 1, length: 0))
+        replace(NSRange(location: above, length: caret.location - above), with: "")
     }
 
     /// Dims, by color alone, the text outside the caret's block, without touching the storage.
@@ -982,6 +1022,9 @@ final class EditorTextView: CaretTextView {
         }
         history.perform(command.name) {
             guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+            // Return out of a table replaces the empty last row with a line break, which moves the fresh line onto the
+            // line after it.
+            if command == .nextRow, edit.range.length > 0 { styler.fresh = edit.range.location }
             textStorage!.replaceCharacters(in: edit.range, with: edit.replacement)
             setSelectedRange(edit.selection)
             didChangeText()
@@ -989,7 +1032,27 @@ final class EditorTextView: CaretTextView {
         return true
     }
 
-    /// Format > Insert Row Above, Row Below, Column Left and Column Right, by the `TableEditing` in the sender's tag.
+    /// A right-click in a table puts the caret there, unless the selection holds the click, and opens the menu with the
+    /// table commands in a Table submenu at its top.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        let at = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        guard let menu, isEditable, styler.tables.range(at: at) != nil else { return menu }
+        let selection = selectedRange()
+        if !(selection.location...NSMaxRange(selection)).contains(at) { setSelectedRange(NSRange(location: at, length: 0)) }
+        let table = NSMenu(title: "Table")
+        for command in TableEditing.menu {
+            table.addItem(withTitle: command.name, action: #selector(editTableItem(_:)), keyEquivalent: "").tag = command.rawValue
+        }
+        let item = NSMenuItem(title: table.title, action: nil, keyEquivalent: "")
+        item.submenu = table
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    /// Format > Insert Row Above, Row Below, Column Left and Column Right, Delete Row and Delete Column, by the
+    /// `TableEditing` in the sender's tag.
     @objc func editTableItem(_ sender: Any?) {
         guard !hasMarkedText(), let command = (sender as? NSMenuItem).flatMap({ TableEditing(rawValue: $0.tag) }), editTable(command) else {
             return NSSound.beep()
@@ -1059,6 +1122,12 @@ extension EditorTextView: VimHost {
 
     func vimClose() {
         window?.performClose(nil)
+    }
+
+    func vimOpenRow(above: Bool) -> Int? {
+        guard styler.tables.range(at: selectedRange().location) != nil else { return nil }
+        _ = editTable(above ? .rowAbove : .rowBelow)
+        return selectedRange().location
     }
 }
 

@@ -384,8 +384,10 @@ struct TextRhythmTests {
         for (old, new) in zip(above, after) {
             #expect(abs(new.minY - old.minY) <= 0.5 && abs(new.height - old.height) <= 0.5, "typing moved \(old) to \(new)")
         }
+        // TextKit 2 puts the line after the last line break its own height below the top of the line above it
+        // (FB15131180), so after the 12 pt blank line the caret sits 12 pt below the line typing there makes.
         let typed = try editor.line(at: 7)
-        #expect(abs(typed.minY - caret.minY) <= 0.5 && abs(typed.height - line) <= 0.5, "the typed line \(typed) under the caret \(caret)")
+        #expect(abs(typed.minY - after[1].maxY) <= 0.5 && abs(typed.height - line) <= 0.5, "the typed line \(typed) under the blank line \(after[1])")
     }
 
     /// R13: typing in a paragraph over a 200-row table restyles at most two paragraphs a keystroke, in one storage edit,
@@ -422,7 +424,7 @@ struct TextRhythmTests {
     /// The find bar, Check Document Now and accessibility keep the editor on TextKit 2, which Live's drawing needs: the
     /// switch to TextKit 1 that would put the note in Source never comes.
     @Test func findSpellingAndAccessibilityKeepTextKit2() throws {
-        let editor = try Rhythm("A note with a tpyo.\n\n- an item\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+        let editor = try Rhythm("A note with a tpyo.\n\n- an item\n- [ ] a task\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
         defer { editor.close() }
         let switched = Count()
         let observer = NotificationCenter.default.addObserver(forName: NSTextView.willSwitchToNSLayoutManagerNotification, object: editor.view, queue: nil) { _ in
@@ -433,7 +435,7 @@ struct TextRhythmTests {
         find.tag = NSTextFinder.Action.showFindInterface.rawValue
         editor.view.performTextFinderAction(find)
         editor.view.checkTextInDocument(nil)
-        #expect(!(editor.view.accessibilityChildren() ?? []).isEmpty)
+        #expect((editor.view.accessibilityChildren() ?? []).contains { $0 is TaskBoxElement })
         editor.settle()
         #expect(editor.view.textLayoutManager != nil)
         #expect(switched.value == 0)

@@ -1,13 +1,15 @@
 import AppKit
 
-/// GFM tables laid out in place. Outside the selection a row hides its pipes, padding and extra cells, kerns its hidden
-/// characters so each cell starts at its column; the delimiter row collapses to a rule under the head, so the head
-/// sits one row's pitch above the first row. A column left unaligned whose body cells all start with a digit aligns
-/// right. A row the selection touches, or the head with its delimiter row, shows its source.
-/// Columns are as wide as their widest cell, and only widen while the selection stays in the table. A table's rows run
-/// past the measure to the container's width; a table wider than that shrinks its columns toward their least widths (a
-/// cell of 12 characters or fewer and a code span never wrap), gives the room left to its longest-text columns first,
-/// and its rows draw their cells wrapped in their columns.
+/// GFM tables laid out in place, every row on one geometry: each pipe and the blank on either side of it keep their
+/// room, clear, and further padding and extra cells take none, so each cell starts at its column, its leading pipe hangs
+/// left of the first column, and the caret's row only shows its pipes. The delimiter line is a half line holding the rule
+/// under the head, and shows its dashes in their columns to a caret on it. Body rows stand half a line apart, a hairline
+/// between them. A column left unaligned whose body cells are all numbers aligns right.
+/// Columns are as wide as their widest cell. A table's rows run past the measure to the container's width; a table wider
+/// than that shrinks its columns toward their least widths (a cell of 12 characters or fewer and a code span never
+/// wrap), shares the room left in proportion to what each column wants beyond its least, and its rows draw their cells
+/// wrapped in their columns. While the selection is in the table, its columns only widen and its rows never switch
+/// between one line and wrapped.
 @MainActor
 final class Tables {
     enum Alignment {
@@ -26,8 +28,10 @@ final class Tables {
     private let map: BlockMap
     /// The token ranges of the heads and rows showing their source.
     private var revealed: Set<NSRange> = []
-    /// The table holding the selection, by its head's location, and its column widths.
-    private var active: (head: Int, widths: [CGFloat])?
+    /// The table holding the selection, by its head's location, its column widths and whether its rows wrap.
+    private var active: (head: Int, widths: [CGFloat], wraps: Bool)?
+    /// The delimiter line's font for a body font and line height.
+    private var dashes: (body: NSFont, line: CGFloat, font: NSFont)?
 
     init(map: BlockMap) {
         self.map = map
@@ -54,8 +58,7 @@ final class Tables {
         var now: Set<NSRange> = []
         for range in selection {
             for block in map.blocks(touching: range) {
-                guard let line = Self.line(block) else { continue }
-                if Self.touches(line, selection) { now.insert(line) }
+                for line in Self.lines(block) where Self.touches(line, selection) { now.insert(line) }
             }
         }
         return Array(Set(now.symmetricDifference(revealed).compactMap { table(at: $0.location)?.range }))
@@ -85,145 +88,290 @@ final class Tables {
         func spans(_ kind: SyntaxSpan.Kind, of block: BlockMap.Block) -> [SyntaxSpan] {
             block.spans.filter { $0.kind == kind }.map { $0.shifted(by: block.range.location - offset) }
         }
-        var lines = [(range: header, token: headToken.range, cells: spans(.tableCell, of: table.head), code: spans(.inlineCode, of: table.head))]
+        // A caret in a cell's padding, where only typing puts it, keeps the blanks before it as the cell's text, so a
+        // typed blank stays a caret stop.
+        func cells(of block: BlockMap.Block) -> [(range: NSRange, content: NSRange)] {
+            spans(.tableCell, of: block).map { cell in
+                guard let caret = selection.first(where: { $0.length == 0 && NSMaxRange(cell.content) < $0.location && $0.location <= NSMaxRange(cell.range) })
+                else { return (cell.range, cell.content) }
+                return (cell.range, NSRange(location: cell.content.location, length: caret.location - cell.content.location))
+            }
+        }
+        var lines = [(range: header, token: header, cells: cells(of: table.head), code: spans(.inlineCode, of: table.head))]
         for row in table.rows {
             guard let token = row.spans.first(where: { $0.kind == .tableRow })?.shifted(by: row.range.location - offset) else { continue }
-            lines.append((token.range, token.range, spans(.tableCell, of: row), spans(.inlineCode, of: row)))
+            lines.append((token.range, token.range, cells(of: row), spans(.inlineCode, of: row)))
         }
         let count = lines[0].cells.count
         guard count > 0 else { return }
 
-        styled.enumerateAttribute(.font, in: header) { value, run, _ in
-            styled.addAttribute(.font, value: store.font(value as! NSFont, adding: .bold), range: run)
-        }
-        // A column whose body cells all start with a digit sets its figures tabular, so they line up, and aligns right
-        // unless its delimiter row sets an alignment.
-        var aligned = (0..<count).map { alignments.count > $0 ? alignments[$0] ?? .left : .left }
-        for column in 0..<count {
-            let cells = lines.dropFirst().compactMap { $0.cells.count > column ? $0.cells[column].content : nil }
-            let numeric = !cells.isEmpty && cells.allSatisfy { cell in
-                let value = text.substring(with: cell).trimmingCharacters(in: .whitespaces)
-                return value.first?.isASCII == true && value.first?.isNumber == true
-            }
-            guard numeric else { continue }
-            if alignments.count <= column || alignments[column] == nil { aligned[column] = .right }
-            for cell in cells {
-                styled.enumerateAttribute(.font, in: cell) { value, run, _ in
-                    styled.addAttribute(.font, value: Self.tabular(value as! NSFont), range: run)
+        // Every cell sets its figures tabular when its face has them; the head is semibold, H4's weight, in the
+        // heading color.
+        let body = MarkdownStyler.bodyFont
+        let ink = store.color(.ink)
+        for (index, line) in lines.enumerated() {
+            for cell in line.cells.prefix(count) {
+                styled.enumerateAttribute(.font, in: cell.content) { value, run, _ in
+                    guard let font = value as? NSFont, font.pointSize >= 1 else { return }
+                    let weighted = index > 0 ? font : font == body ? store.heading(4).font : store.font(font, adding: .bold)
+                    styled.addAttribute(.font, value: store.tabular(weighted), range: run)
+                }
+                guard index == 0 else { continue }
+                styled.enumerateAttribute(.foregroundColor, in: cell.content) { value, run, _ in
+                    if value as? NSColor === ink { styled.addAttribute(.foregroundColor, value: store.color(.heading), range: run) }
                 }
             }
         }
+        // A column whose body cells are all numbers aligns right unless its delimiter row sets an alignment.
+        var aligned = (0..<count).map { alignments.count > $0 ? alignments[$0] ?? .left : .left }
+        for column in 0..<count where alignments.count <= column || alignments[column] == nil {
+            let cells = lines.dropFirst().compactMap { $0.cells.count > column ? $0.cells[column].content : nil }
+            if !cells.isEmpty, cells.allSatisfy({ Self.isNumber(text.substring(with: $0)) }) { aligned[column] = .right }
+        }
         let measured = lines.map { line in line.cells.prefix(count).map { styled.attributedSubstring(from: $0.content).size().width } }
-        var widths = (0..<count).map { column in measured.map { $0.count > column ? $0[column] : 0 }.max() ?? 0 }
-        let range = NSRange(location: table.head.range.location - offset, length: NSMaxRange(lines.last!.token) - (table.head.range.location - offset))
-        if Self.touches(range, selection) {
-            if let active, active.head == table.head.range.location, active.widths.count == count {
-                widths = zip(widths, active.widths).map { max($0, $1) }
+        let natural = (0..<count).map { column in (measured.map { $0.count > column ? $0[column] : 0 }.max() ?? 0).rounded(.up) }
+        let gap = (body.pointSize * 1.5).rounded()
+        let room = available - gap * CGFloat(count - 1)
+        // While the selection is in the table its fit holds: one-line columns only widen, wrapped ones keep their widths.
+        let range = NSRange(location: table.head.range.location - offset, length: max(NSMaxRange(headToken.range), NSMaxRange(lines.last!.token)) - (table.head.range.location - offset))
+        let inside = Self.touches(range, selection)
+        var widths = natural
+        let wraps: Bool
+        if inside, let held = active, held.head == table.head.range.location, held.widths.count == count {
+            wraps = held.wraps
+            widths = wraps ? held.widths : zip(natural, held.widths).map { max($0, $1) }
+        } else {
+            wraps = available > 0 && natural.reduce(0, +) > room
+            if wraps {
+                let narrowest = lines.map { line in
+                    line.cells.prefix(count).map { cell in
+                        let code = line.code.filter { NSIntersectionRange($0.range, cell.content) == $0.range }
+                        return Self.least(styled.attributedSubstring(from: cell.content), code: code.map { NSRange(location: $0.range.location - cell.content.location, length: $0.range.length) })
+                    }
+                }
+                var least = (0..<count).map { column in narrowest.map { $0.count > column ? $0[column] : 0 }.max() ?? 0 }
+                if least.reduce(0, +) > room { least = least.map { min($0, room / CGFloat(count)) } }
+                widths = Self.fit(natural, least: least, into: room)
             }
-            active = (table.head.range.location, widths)
+        }
+        if inside {
+            active = (table.head.range.location, widths, wraps)
         } else if active?.head == table.head.range.location {
             active = nil
         }
-        widths = widths.map { $0.rounded(.up) }
 
-        let gap = (MarkdownStyler.bodyFont.pointSize * 1.5).rounded()
-        let room = available - gap * CGFloat(count - 1)
-        let wraps = available > 0 && widths.reduce(0, +) > room
-        if wraps {
-            let narrowest = lines.map { line in
-                line.cells.prefix(count).map { cell in
-                    let code = line.code.filter { NSIntersectionRange($0.range, cell.content) == $0.range }
-                    return Self.least(styled.attributedSubstring(from: cell.content), code: code.map { NSRange(location: $0.range.location - cell.content.location, length: $0.range.length) })
-                }
-            }
-            var least = (0..<count).map { column in narrowest.map { $0.count > column ? $0[column] : 0 }.max() ?? 0 }
-            if least.reduce(0, +) > room { least = least.map { min($0, room / CGFloat(count)) } }
-            widths = Self.fit(widths, least: least, into: room)
-        }
         var starts: [CGFloat] = [0]
         for width in widths.dropLast() { starts.append(starts.last! + width + gap) }
-        let boundaries = starts.dropFirst().map { $0 - gap / 2 }
-        let rule = { (across: Bool, cells: [TableCell]) in
-            BlockLine(.table(TableRule(width: starts.last! + widths.last!, across: across, color: store.color(.quoteRule), cells: cells)))
+        let total = starts.last! + widths.last!
+        let lineHeight = store.bodyLineHeight
+        let place = { (part: NSRange, cells: [(range: NSRange, content: NSRange)], measured: [CGFloat], aligned: [Alignment], font: NSFont, shown: Bool) in
+            Self.place(part, cells: cells, measured: measured, aligned: aligned, starts: starts, widths: widths, gap: gap,
+                pipe: NSAttributedString(string: "|", attributes: [.font: font]).size().width, blank: NSAttributedString(string: " ", attributes: [.font: font]).size().width,
+                color: shown ? store.color(.syntax) : .clear, in: styled)
         }
 
-        for (index, line) in lines.enumerated() {
-            let shown = Self.touches(line.token, selection)
-            var outside = IndexSet(integersIn: Range(line.range)!)
-            for cell in line.cells.prefix(count) { outside.remove(integersIn: Range(cell.content)!) }
-            if shown {
-                revealed.insert(NSRange(location: line.token.location + offset, length: line.token.length))
-                for part in outside.rangeView { styled.addAttribute(.foregroundColor, value: store.color(.syntax), range: NSRange(part)) }
-                if index == 0 { styled.addAttribute(.foregroundColor, value: store.color(.syntax), range: delimiter) }
-                continue
-            }
-            if index == 0, delimiter.length > 0 {
+        if delimiter.length > 0 {
+            let paragraph = text.paragraphRange(for: delimiter)
+            styled.addAttribute(.paragraphStyle, value: store.paragraphStyle(lineHeight: lineHeight / 2), range: paragraph)
+            let source = Self.delimiterLine(header: header, token: headToken.range)
+            let rule: TableRule
+            if Self.touches(source, selection) {
+                revealed.insert(NSRange(location: source.location + offset, length: source.length))
+                // Its dash runs stand in for cells, at the largest half-point size whose ascender to descender fits
+                // its half line.
+                let font = dashFont(for: body, line: lineHeight / 2)
+                styled.addAttributes([.font: font, .foregroundColor: store.color(.syntax)], range: delimiter)
+                let runs = Self.cells(ofDelimiter: delimiter, in: text)
+                let hang = place(delimiter, Array(runs.prefix(count)), runs.prefix(count).map { styled.attributedSubstring(from: $0.content).size().width },
+                    Array(repeating: .left, count: count), font, true)
+                rule = TableRule(width: total, across: false, color: store.color(.quoteRule), kind: .delimiter, hang: hang)
+            } else {
                 styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: delimiter)
-                styled.addAttributes([.dewlineBlock: rule(true, []), .paragraphStyle: RenderedBlocks.collapsedLines], range: text.paragraphRange(for: delimiter))
+                var outside = IndexSet(integersIn: Range(delimiter)!)
+                for run in Self.cells(ofDelimiter: delimiter, in: text) { outside.remove(integersIn: Range(run.content)!) }
+                for part in outside.rangeView { styled.addAttribute(.dewlineSkip, value: true, range: NSRange(part)) }
+                rule = TableRule(width: total, across: true, color: store.color(.quoteRule), kind: .delimiter)
             }
-            let paragraph = text.paragraphRange(for: NSRange(location: line.range.location, length: 0))
-            if wraps {
-                let cells = line.cells.prefix(count).enumerated().map { column, cell in
+            styled.addAttribute(.dewlineBlock, value: BlockLine(.table(rule)), range: paragraph)
+        }
+
+        for (index, row) in lines.enumerated() {
+            let shown = Self.touches(row.token, selection)
+            if shown { revealed.insert(NSRange(location: row.token.location + offset, length: row.token.length)) }
+            let paragraph = text.paragraphRange(for: NSRange(location: row.range.location, length: 0))
+            // Body rows after the first stand half a line apart; the delimiter line spaces the first.
+            let before = index > 1 ? lineHeight / 2 : 0
+            let kind: TableRule.Kind = index == 0 ? .head : .body
+            let color = store.color(index == 0 ? .quoteRule : .rule)
+            if wraps, !shown {
+                var cells = row.cells.prefix(count).enumerated().map { column, cell in
                     let drawn = Self.cell(styled.attributedSubstring(from: cell.content), aligned[column])
-                    return TableCell(x: starts[column], width: widths[column], text: drawn,
+                    return TableCell(x: starts[column], top: 0, width: widths[column], text: drawn,
                         source: NSRange(location: cell.content.location - paragraph.location, length: cell.content.length))
                 }
-                let height = cells.map { $0.text.boundingRect(with: NSSize(width: $0.width, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin).height }
-                styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: line.range)
-                styled.addAttribute(.paragraphStyle, value: store.paragraphStyle(lineHeight: max(height.max() ?? 0, store.bodyLineHeight).rounded(.up)), range: paragraph)
-                styled.addAttribute(.dewlineBlock, value: rule(false, cells), range: paragraph)
+                let heights = cells.map { $0.text.boundingRect(with: NSSize(width: $0.width, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin).height }
+                let height = max(heights.max() ?? 0, lineHeight).rounded(.up)
+                // The head's cells sit on the rule under it.
+                if index == 0 {
+                    cells = zip(cells, heights).map { TableCell(x: $0.x, top: height - $1, width: $0.width, text: $0.text, source: $0.source) }
+                }
+                styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: row.range)
+                styled.addAttribute(.paragraphStyle, value: store.paragraphStyle(lineHeight: height, before: before), range: paragraph)
+                styled.addAttribute(.dewlineBlock, value: BlockLine(.table(TableRule(width: total, across: false, color: color, kind: kind, cells: cells))), range: paragraph)
                 continue
             }
-            for part in outside.rangeView {
-                styled.addAttributes([.font: MarkdownStyler.hiddenFont, .foregroundColor: NSColor.clear], range: NSRange(part))
+            styled.addAttribute(.paragraphStyle, value: store.paragraphStyle(lineHeight: lineHeight, before: before), range: paragraph)
+            let cells = Array(row.cells.prefix(count))
+            guard !wraps else {
+                // The caret's row of a wrapped table shows its source.
+                var outside = IndexSet(integersIn: Range(row.range)!)
+                for cell in cells { outside.remove(integersIn: Range(cell.content)!) }
+                for part in outside.rangeView { styled.addAttribute(.foregroundColor, value: store.color(.syntax), range: NSRange(part)) }
+                continue
             }
-            // Each kern moves the pen from where the text before it ends to where the next cell or rule wants it.
-            var kerns: [Int: CGFloat] = [:]
-            var pen: CGFloat = 0
-            for (column, cell) in line.cells.prefix(count).enumerated() {
-                let pipe = cell.range.location - 1
-                if column > 0, pipe - 1 >= line.range.location {
-                    kerns[pipe - 1, default: 0] += boundaries[column - 1] - pen
-                    pen = boundaries[column - 1]
-                }
-                let width = measured[index][column]
-                let inset: CGFloat = switch aligned[column] {
-                case .left: 0
-                case .center: ((widths[column] - width) / 2).rounded()
-                case .right: widths[column] - width
-                }
-                let target = starts[column] + inset
-                if cell.content.location - 1 >= line.range.location {
-                    kerns[cell.content.location - 1, default: 0] += target - pen
-                    pen = target + width
-                } else {
-                    pen = width
-                }
-            }
-            for (at, kern) in kerns { styled.addAttribute(.kern, value: kern, range: NSRange(location: at, length: 1)) }
-            styled.addAttribute(.dewlineBlock, value: rule(false, []), range: paragraph)
+            let hang = place(row.range, cells, measured[index], aligned, body, shown)
+            styled.addAttribute(.dewlineBlock, value: BlockLine(.table(TableRule(width: total, across: false, color: color, kind: kind, hang: hang))), range: paragraph)
         }
     }
 
-    /// `font` with tabular figures.
-    private static func tabular(_ font: NSFont) -> NSFont {
-        let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: [[
-            NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType, .selectorIdentifier: kMonospacedNumbersSelector,
-        ]]])
-        return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
+    /// Lays out the line `part` on the columns at `starts`, `widths` wide and `gap` apart, for its cells' text
+    /// `measured` wide, and returns how far its leading pipe hangs left of the first column. Each pipe and the blank on
+    /// either side of it keep their room, `pipe` and `blank` wide, in `color`, centering the pipe on its gap; further
+    /// blanks and cells past the columns take no room; none of them is a caret stop. No kern is negative, and none sits
+    /// on the character before a cell's text or on its last glyph unless the source has no blank there: a caret beside
+    /// a kerned character stands in the middle of the kern.
+    private static func place(
+        _ part: NSRange, cells: [(range: NSRange, content: NSRange)], measured: [CGFloat], aligned: [Alignment], starts: [CGFloat], widths: [CGFloat],
+        gap: CGFloat, pipe pipeWidth: CGFloat, blank blankWidth: CGFloat, color: NSColor, in styled: NSMutableAttributedString
+    ) -> CGFloat {
+        let text = styled.mutableString
+        var outside = IndexSet(integersIn: Range(part)!)
+        for cell in cells { outside.remove(integersIn: Range(cell.content)!) }
+        func pipe(_ at: Int) -> Int? {
+            NSLocationInRange(at, part) && text.character(at: at) == 0x7C ? at : nil
+        }
+        func blank(_ at: Int) -> Int? {
+            outside.contains(at) && text.character(at: at) == 0x20 ? at : nil
+        }
+        let leading = cells.first.flatMap { pipe($0.range.location - 1) }
+        let trailing = cells.last.flatMap { pipe(NSMaxRange($0.range)) }
+        // The blank after the pipe before each cell, and the one before the pipe after it.
+        let left = cells.indices.map { $0 > 0 || leading != nil ? blank(cells[$0].range.location) : nil }
+        let right = cells.indices.map { $0 < cells.count - 1 || trailing != nil ? blank(NSMaxRange(cells[$0].range) - 1) : nil }
+        var kept = IndexSet((leading.map { [$0] } ?? []) + cells.dropFirst().map { $0.range.location - 1 } + (trailing.map { [$0] } ?? []))
+        for at in (left + right).compactMap({ $0 }) { kept.insert(at) }
+        // An empty cell's first blank is a caret stop, where its text will start.
+        var skipped = outside
+        for (column, cell) in cells.enumerated() where cell.content.length == 0 {
+            if let blank = left[column] { skipped.remove(blank) }
+        }
+        for at in outside.rangeView {
+            styled.addAttribute(.foregroundColor, value: color, range: NSRange(at))
+        }
+        for at in skipped.rangeView {
+            styled.addAttribute(.dewlineSkip, value: true, range: NSRange(at))
+        }
+        for at in outside.subtracting(kept).rangeView {
+            styled.addAttribute(.font, value: MarkdownStyler.hiddenFont, range: NSRange(at))
+        }
+        let hang = leading == nil ? 0 : gap / 2 + pipeWidth / 2
+        // The pen runs from the line's start, `hang` left of the first column; each kern moves it from where the text
+        // before it ends to where the next pipe or text wants it.
+        var kerns: [Int: CGFloat] = [:]
+        var pen: CGFloat = 0
+        var last: Int?
+        func advance(_ at: Int, _ width: CGFloat) {
+            // An empty cell's one blank stands after the pipe before it and before the pipe after it.
+            guard at != last else { return }
+            pen += width
+            last = at
+        }
+        func move(to x: CGFloat) {
+            guard let last, x > pen else { return }
+            kerns[last, default: 0] += x - pen
+            pen = x
+        }
+        func cross(_ at: Int, after column: Int, center: CGFloat) {
+            if column >= 0, let blank = right[column] { advance(blank, blankWidth) }
+            move(to: hang + center - pipeWidth / 2)
+            advance(at, pipeWidth)
+        }
+        for (column, cell) in cells.enumerated() {
+            let inset: CGFloat = switch aligned[column] {
+            case .left: 0
+            case .center: ((widths[column] - measured[column]) / 2).rounded()
+            case .right: widths[column] - measured[column]
+            }
+            let start = hang + starts[column] + inset
+            if column > 0 || leading != nil {
+                cross(cell.range.location - 1, after: column - 1, center: starts[column] - gap / 2)
+                if let blank = left[column] {
+                    move(to: start - blankWidth)
+                    advance(blank, blankWidth)
+                }
+            }
+            move(to: start)
+            if cell.content.length > 0 { advance(NSMaxRange(cell.content) - 1, measured[column]) }
+        }
+        if let trailing { cross(trailing, after: cells.count - 1, center: starts[cells.count - 1] + widths[cells.count - 1] + gap / 2) }
+        for (at, kern) in kerns {
+            let character = text.rangeOfComposedCharacterSequence(at: at)
+            let current = styled.attribute(.kern, at: character.location, effectiveRange: nil) as? CGFloat ?? 0
+            styled.addAttribute(.kern, value: current + kern, range: character)
+        }
+        return hang
     }
 
-    /// Column widths that fill `room`: each column keeps its `least`, and what is left goes to the columns with the
-    /// widest cells first, each up to its widest cell.
+    /// The delimiter line's dash runs as cells: the text between two pipes, or a line's end, and its dashes and colons.
+    private static func cells(ofDelimiter line: NSRange, in text: NSString) -> [(range: NSRange, content: NSRange)] {
+        var cells: [(range: NSRange, content: NSRange)] = []
+        var start = line.location
+        for at in line.location...NSMaxRange(line) where at == NSMaxRange(line) || text.character(at: at) == 0x7C {
+            let range = NSRange(location: start, length: at - start)
+            start = at + 1
+            var content = range
+            while content.length > 0, [0x20, 0x09].contains(text.character(at: content.location)) { content = NSRange(location: content.location + 1, length: content.length - 1) }
+            while content.length > 0, [0x20, 0x09].contains(text.character(at: NSMaxRange(content) - 1)) { content.length -= 1 }
+            // No cell before a leading pipe or after a trailing one.
+            if content.length > 0 || (at < NSMaxRange(line) && range.location > line.location) { cells.append((range, content)) }
+        }
+        return cells
+    }
+
+    /// The body face at the largest half-point size whose ascender to descender fits `line`.
+    private func dashFont(for body: NSFont, line: CGFloat) -> NSFont {
+        if let dashes, dashes.body == body, dashes.line == line { return dashes.font }
+        let size = (2 * line * body.pointSize / (body.ascender - body.descender)).rounded(.down) / 2
+        let font = NSFont(descriptor: body.fontDescriptor, size: size) ?? body
+        dashes = (body, line, font)
+        return font
+    }
+
+    /// The delimiter line of a head whose token is `token` and header line `header`: past the header's line break,
+    /// so a caret at the header's end is not on it.
+    private static func delimiterLine(header: NSRange, token: NSRange) -> NSRange {
+        NSRange(location: NSMaxRange(header) + 1, length: max(NSMaxRange(token) - NSMaxRange(header) - 1, 0))
+    }
+
+    /// Whether a cell holds a number, optionally signed or with a currency sign, then at most a 3-letter unit or %.
+    static func isNumber(_ cell: String) -> Bool {
+        var rest = Substring(cell)
+        if let sign = rest.first, "+-\u{2212}".contains(sign) { rest = rest.dropFirst() }
+        if let currency = rest.first, "$\u{20AC}\u{00A3}\u{00A5}".contains(currency) { rest = rest.dropFirst() }
+        let number = rest.prefix { $0.isASCII && ($0.isNumber || $0 == "." || $0 == ",") }
+        guard number.first?.isNumber == true, number.last?.isNumber == true else { return false }
+        rest = rest.dropFirst(number.count)
+        if rest.first == " " { rest = rest.dropFirst() }
+        return rest == "%" || (rest.count <= 3 && rest.allSatisfy(\.isLetter))
+    }
+
+    /// Column widths that fill `room`: each column keeps its `least`, and what is left goes to each column in proportion
+    /// to how much wider than that its widest cell is.
     private static func fit(_ widths: [CGFloat], least: [CGFloat], into room: CGFloat) -> [CGFloat] {
-        var fitted = least
-        var slack = max(room - least.reduce(0, +), 0)
-        for column in widths.indices.sorted(by: { widths[$0] > widths[$1] }) {
-            let grow = min(max(widths[column] - fitted[column], 0), slack)
-            fitted[column] += grow
-            slack -= grow
-        }
-        return fitted.map { $0.rounded(.down) }
+        let slack = max(room - least.reduce(0, +), 0)
+        let wanted = zip(widths, least).map { max($0 - $1, 0) }
+        let total = wanted.reduce(0, +)
+        return zip(least, wanted).map { least, wanted in (least + (total > 0 ? min(wanted, slack * wanted / total) : 0)).rounded(.down) }
     }
 
     /// The narrowest a cell draws: all of it when it has 12 characters or fewer, else its longest word, each code span
@@ -264,12 +412,12 @@ final class Tables {
         }
     }
 
-    /// A head's or row's token range, in the document.
-    private static func line(_ block: BlockMap.Block) -> NSRange? {
+    /// The lines of a head, its header and delimiter lines, or a row's, in the document.
+    private static func lines(_ block: BlockMap.Block) -> [NSRange] {
         guard block.kind == .tableHead || block.kind == .tableRow,
-            let token = block.spans.first(where: { $0.kind == .tableHead || $0.kind == .tableRow })
-        else { return nil }
-        return NSRange(location: token.range.location + block.range.location, length: token.range.length)
+            let token = block.spans.first(where: { $0.kind == .tableHead || $0.kind == .tableRow })?.shifted(by: block.range.location)
+        else { return [] }
+        return token.kind == .tableHead ? [token.content, delimiterLine(header: token.content, token: token.range)] : [token.range]
     }
 
     private func block(at location: Int) -> BlockMap.Block? {

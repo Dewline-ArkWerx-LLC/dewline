@@ -404,6 +404,29 @@ struct KeystrokeLatency {
         print("KeystrokeLatency counts: storage edits \(keystrokes.map(\.storageEdits)), restyles \(keystrokes.map(\.restyles)), fonts \(keystrokes.map(\.fonts)), reveal writes \(keystrokes.map(\.revealWrites))")
     }
 
+    /// Typing in a table's cell, a task's label and a nested ordered item, each keystroke restyles once, edits the storage
+    /// once, builds no font from a descriptor and leaves the reveal nothing to write.
+    @Test func countsInStructures() throws {
+        let wraps = try wrapTextSystem()
+        defer { wraps.forEach { $0.restore() } }
+        let editor = try Editor(front: false)
+        defer { editor.close() }
+        editor.open(MarkdownCorpus.structures)
+        for target in ["Most failures", "Load test", "One region"] {
+            let caret = (editor.view.string as NSString).range(of: target).location + 2
+            editor.place(caret)
+            let keystrokes = try (0..<8).map { try editor.keystroke(typing: $0 % 2 == 0, pause: 0) }
+            #expect(editor.view.selectedRange() == NSRange(location: caret, length: 0), "in \(target)")
+            #expect(keystrokes.map(\.wellFormed) == Array(repeating: true, count: 8), "in \(target)")
+            #expect(keystrokes.map(\.restyles) == Array(repeating: 1, count: 8), "in \(target)")
+            #expect(keystrokes.map(\.storageEdits) == Array(repeating: 1, count: 8), "in \(target)")
+            #expect(keystrokes.map(\.revealWrites) == Array(repeating: 0, count: 8), "in \(target)")
+            #expect(keystrokes.map(\.fonts) == Array(repeating: 0, count: 8), "in \(target)")
+            print("KeystrokeLatency counts in \(target): storage edits \(keystrokes.map(\.storageEdits)), restyles \(keystrokes.map(\.restyles)), fonts \(keystrokes.map(\.fonts)), reveal writes \(keystrokes.map(\.revealWrites))")
+        }
+        #expect(editor.view.string == MarkdownCorpus.structures)
+    }
+
     /// Once 1 MB is styled, restyling all of it builds no font from a descriptor.
     @Test func documentRestyle() throws {
         let wraps = try wrapTextSystem()

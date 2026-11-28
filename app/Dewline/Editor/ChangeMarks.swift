@@ -615,7 +615,8 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             rows.append(paragraph)
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
             for cell in rule.cells where NSIntersectionRange(NSRange(location: paragraph.location + cell.source.location, length: cell.source.length), range).length > 0 {
-                cells.append(NSRect(x: frame.minX + fragment.textStart + cell.x, y: frame.minY, width: cell.width, height: frame.height))
+                let top = fragment.lineTop + cell.top
+                cells.append(NSRect(x: frame.minX + fragment.tableStart + cell.x, y: frame.minY + top, width: cell.width, height: frame.height - top))
             }
         }
         return (cells, rows)
@@ -633,7 +634,7 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
         let style = cell.text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         let line = max(style?.minimumLineHeight ?? 0, ceil(font.ascender - font.descender + font.leading))
         // A line taller than its font puts the extra space above the glyphs.
-        return (textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + line + font.descender, line)
+        return (textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + fragment.lineTop + cell.top + line + font.descender, line)
     }
 
     /// The range's line segments in this view's coordinates.
@@ -793,8 +794,12 @@ final class ChangeMarks: NSView, NSViewToolTipOwner {
             for stamp in stamps.values where stamp.view !== primary { stamp.view.isHidden = true }
             let fold = fold(for: id, change)
             setFold(fold)
+            // Before a block, the bar takes the room reserved right above its first line, under the block's own gap.
             let y: CGFloat? = if fold.before {
-                self.fragment(at: fold.target).map { textView.textContainerOrigin.y + $0.layoutFragmentFrame.minY }
+                self.fragment(at: fold.target).map { fragment in
+                    textView.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + (fragment.textLineFragments.first?.typographicBounds.minY ?? 0)
+                        - (ChangeStamp.barHeight + 2 * Self.gap)
+                }
             } else {
                 textBottom(at: fold.last).map { bottom in
                     let paragraph = textView.textStorage!.mutableString.paragraphRange(for: NSRange(location: fold.last, length: 0))

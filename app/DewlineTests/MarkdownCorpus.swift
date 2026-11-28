@@ -24,6 +24,29 @@ struct MarkdownCorpus {
         "cargo test --workspace --locked",
     ]
 
+    /// A note of the structures that lay out across their lines: a table, a task list and a nested ordered list.
+    static let structures = """
+        # Retry queue
+
+        Each subscriber gets its own backoff, with a cap it can lower but never raise.
+
+        | Attempt | Wait | Elapsed | Notes |
+        |--:|--:|--:|---|
+        | 1 | 2 s | 2 s | First retry is fast |
+        | 8 | 256 s | 8.5 min | Most failures clear by here |
+        | 12 | 1 h | 2.1 h | Parked after this attempt |
+
+        - [x] Write the migration
+        - [ ] Load test at peak
+          - [ ] Generate the replay file
+
+        1. Staging for two days
+           1. One region
+           2. Everywhere
+        2. Announce the change
+
+        """
+
     /// At least `bytes` of UTF-8, the same on every run.
     static func text(bytes: Int) -> String {
         var corpus = MarkdownCorpus()

@@ -677,16 +677,20 @@ final class EditorTextView: CaretTextView {
     func hold(_ anchor: Int, at offset: CGFloat) {
         guard let layout = textLayoutManager else { return }
         let visible = visibleRect
-        // TextKit 2 sizes the view and stacks the viewport from estimates it refreshes as it lays the viewport out:
-        // lay out, scroll to the line, lay out again, correct. A refresh can leave the clip view a fraction of a pixel
-        // off the grid, where a scroll to a point lands up to a pixel from it, so the scroll moves by whole pixels and
-        // lands within half of one.
+        // TextKit 2 sizes the view and stacks the viewport from estimates it refreshes as it lays the viewport out, and
+        // places a line below text it has not laid out by that text's estimated height: lay out, scroll to the line, and
+        // repeat until a layout leaves the line where it should be. A refresh can leave the clip view a fraction of a
+        // pixel off the grid, where a scroll to a point lands up to a pixel from it, so the scroll moves by whole pixels
+        // and lands within half of one; at either end of the text the view cannot scroll on.
         let pixel = 1 / (window?.backingScaleFactor ?? 1)
-        for _ in 0..<2 {
+        for _ in 0..<4 {
             layout.textViewportLayoutController.layoutViewport()
             guard let now = baseline(at: anchor) else { return }
             let top = visibleRect.minY
-            scroll(NSPoint(x: visible.minX, y: top + ((now - offset - top) / pixel).rounded() * pixel))
+            let step = ((now - offset - top) / pixel).rounded() * pixel
+            guard step != 0 else { return }
+            scroll(NSPoint(x: visible.minX, y: top + step))
+            guard visibleRect.minY != top else { return }
         }
     }
 
